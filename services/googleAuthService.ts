@@ -41,11 +41,13 @@ try {
   console.warn('Failed to parse cached user', e);
 }
 
+export const DEFAULT_CLIENT_ID = '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com';
+
 export function getCustomClientId(): string {
   return (
     localStorage.getItem(STORAGE_KEY_CLIENT_ID) ||
     (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-    ''
+    DEFAULT_CLIENT_ID
   );
 }
 

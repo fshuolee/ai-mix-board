@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { ProjectMetadata, GoogleUserProfile, SyncStatus } from '../types';
 import { getModelById } from '../services/modelsConfig';
+import { signInWithGooglePopup } from '../services/googleAuthService';
 
 interface TopNavigationProps {
   projects: ProjectMetadata[];
@@ -60,6 +61,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   onClearCanvas,
 }) => {
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [isDirectLoggingIn, setIsDirectLoggingIn] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -75,6 +77,18 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const handleDirectGoogleLogin = async () => {
+    setIsDirectLoggingIn(true);
+    try {
+      await signInWithGooglePopup();
+    } catch (err: any) {
+      console.warn('Direct Google popup login failed, opening modal', err);
+      onOpenAuthModal();
+    } finally {
+      setIsDirectLoggingIn(false);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -312,40 +326,57 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
         </div>
 
         {/* User Account / Settings Button */}
-        <button
-          onClick={onOpenAuthModal}
-          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all shadow-sm ${
-            user
-              ? 'bg-gray-900/90 border-emerald-500/40 text-white hover:border-emerald-400'
-              : 'bg-blue-600 hover:bg-blue-500 border-blue-500 text-white'
-          }`}
-          title="Google 帳號與 API 金鑰設定"
-        >
-          {user ? (
-            <>
-              {user.picture ? (
-                <img
-                  src={user.picture}
-                  alt={user.name}
-                  className="w-5 h-5 rounded-full border border-emerald-400"
-                />
+        {user ? (
+          <button
+            onClick={onOpenAuthModal}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-emerald-500/40 bg-gray-900/90 text-white hover:border-emerald-400 transition-all shadow-sm"
+            title="Google 帳號與 API 金鑰設定"
+          >
+            {user.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="w-5 h-5 rounded-full border border-emerald-400"
+              />
+            ) : (
+              <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-[10px] text-white">
+                {user.name.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate">
+              {user.name}
+            </span>
+            <Settings className="w-3.5 h-3.5 text-gray-400" />
+          </button>
+        ) : (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleDirectGoogleLogin}
+              disabled={isDirectLoggingIn}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white border border-blue-500 shadow-sm transition-all text-xs font-semibold"
+              title="一鍵登入 Google (授權 Google Drive & Sheets)"
+            >
+              {isDirectLoggingIn ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>登入中...</span>
+                </>
               ) : (
-                <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-[10px] text-white">
-                  {user.name.charAt(0).toUpperCase()}
-                </div>
+                <>
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>登入 Google</span>
+                </>
               )}
-              <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate">
-                {user.name}
-              </span>
-              <Settings className="w-3.5 h-3.5 text-gray-400" />
-            </>
-          ) : (
-            <>
-              <LogIn className="w-3.5 h-3.5" />
-              <span className="text-xs font-semibold">登入 Google</span>
-            </>
-          )}
-        </button>
+            </button>
+            <button
+              onClick={onOpenAuthModal}
+              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors border border-gray-800"
+              title="進階帳號與 API 設定"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

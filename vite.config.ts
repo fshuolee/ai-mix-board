@@ -70,9 +70,10 @@ export default defineConfig(({ mode }) => {
       },
     ],
     define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
-      'process.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || ''),
+      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || 'AIzaSyCNLN0m4-bI9OFaz06SCTP4hHzY2w8W9_8'),
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || 'AIzaSyCNLN0m4-bI9OFaz06SCTP4hHzY2w8W9_8'),
+      'process.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com'),
+      'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com'),
     },
     resolve: {
       alias: {
