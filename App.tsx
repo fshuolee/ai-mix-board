@@ -618,10 +618,20 @@ const App: React.FC = () => {
   };
 
   const handleNodeDragStart = (e: React.PointerEvent, nodeId: string) => {
-    let targetSelection = selectedNodeIds;
-    if (!selectedNodeIds.has(nodeId)) {
-      targetSelection = e.shiftKey ? new Set([...selectedNodeIds, nodeId]) : new Set([nodeId]);
+    let targetSelection: Set<string>;
+    if (e.shiftKey) {
+      targetSelection = new Set(selectedNodeIds);
+      if (targetSelection.has(nodeId)) {
+        targetSelection.delete(nodeId);
+      } else {
+        targetSelection.add(nodeId);
+      }
       setSelectedNodeIds(targetSelection);
+    } else if (!selectedNodeIds.has(nodeId)) {
+      targetSelection = new Set([nodeId]);
+      setSelectedNodeIds(targetSelection);
+    } else {
+      targetSelection = selectedNodeIds;
     }
 
     const draggedNodes = currentBoardNodes.filter(n => targetSelection.has(n.id));
