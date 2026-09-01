@@ -1,4 +1,3 @@
-
 export type NodeType = 'text' | 'image';
 
 export interface BaseNode {
@@ -8,6 +7,8 @@ export interface BaseNode {
   width: number;
   height: number;
   rotation: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface TextNode extends BaseNode {
@@ -17,7 +18,58 @@ export interface TextNode extends BaseNode {
 
 export interface ImageNode extends BaseNode {
   type: 'image';
-  content: string; // ID for IndexedDB
+  content: string; // Used as display ID or driveFileId
+  driveFileId?: string; // Google Drive File ID (Points to asset without cloning file)
+  originalFileName?: string;
+  mimeType?: string;
+  driveViewLink?: string;
 }
 
 export type CanvasNode = TextNode | ImageNode;
+
+export interface ViewportState {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface ProjectMetadata {
+  id: string; // Folder ID in Google Drive
+  name: string;
+  folderId: string;
+  spreadsheetId: string;
+  assetsFolderId?: string;
+  webViewLink?: string;
+  sheetViewLink?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type SyncStatus = 'saved' | 'saving' | 'error' | 'offline';
+
+export interface GoogleUserProfile {
+  email: string;
+  name: string;
+  picture?: string;
+  accessToken: string;
+  expiresAt: number;
+}
+
+export interface ModelCapability {
+  supportsImageOutput: boolean;
+  supportsImageInput: boolean;
+  supportsText: boolean;
+  isFast: boolean;
+  isPro: boolean;
+  isRecommended: boolean;
+}
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  category: 'recommended' | 'image' | 'fast' | 'reasoning';
+  description: string;
+  capabilities: ModelCapability;
+  badge: string;
+  tag: string;
+}
