@@ -302,7 +302,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           <button
             onClick={onResetZoom}
             className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            title="重設縮放 (100%)"
+            title="最適視角 / 符合畫面 (Fit to Screen - 快速鍵 F 或 Shift+1)"
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>

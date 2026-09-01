@@ -896,6 +896,64 @@ const App: React.FC = () => {
     view,
   ]);
 
+  const fitToView = useCallback((targetNodes?: CanvasNode[]) => {
+    const nodesToFit = targetNodes && targetNodes.length > 0
+      ? targetNodes
+      : (selectedNodeIds.size > 0
+          ? currentBoardNodes.filter(n => selectedNodeIds.has(n.id))
+          : currentBoardNodes);
+
+    if (!canvasRef.current || nodesToFit.length === 0) {
+      const defaultView = { x: 0, y: 0, zoom: 1 };
+      setView(defaultView);
+      setViewports(prev => ({ ...prev, [currentBoardId]: defaultView }));
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    nodesToFit.forEach(node => {
+      minX = Math.min(minX, node.x);
+      minY = Math.min(minY, node.y);
+      maxX = Math.max(maxX, node.x + node.width);
+      maxY = Math.max(maxY, node.y + node.height);
+    });
+
+    const contentWidth = Math.max(20, maxX - minX);
+    const contentHeight = Math.max(20, maxY - minY);
+    const contentCenterX = (minX + maxX) / 2;
+    const contentCenterY = (minY + maxY) / 2;
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const screenWidth = rect.width || window.innerWidth;
+    const screenHeight = rect.height || window.innerHeight;
+
+    const paddingX = Math.min(120, screenWidth * 0.1);
+    const paddingY = Math.min(100, screenHeight * 0.1);
+    const availableWidth = Math.max(50, screenWidth - paddingX * 2);
+    const availableHeight = Math.max(50, screenHeight - paddingY * 2);
+
+    const zoomX = availableWidth / contentWidth;
+    const zoomY = availableHeight / contentHeight;
+    const optimalZoom = Math.min(zoomX, zoomY, 1.2);
+    const clampedZoom = Math.max(0.04, Math.min(3, optimalZoom));
+
+    const newX = (screenWidth / 2) - (contentCenterX * clampedZoom);
+    const newY = (screenHeight / 2) - (contentCenterY * clampedZoom);
+
+    const newView: ViewportState = {
+      x: Math.round(newX),
+      y: Math.round(newY),
+      zoom: parseFloat(clampedZoom.toFixed(3)),
+    };
+
+    setView(newView);
+    setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
+  }, [currentBoardNodes, selectedNodeIds, currentBoardId]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -928,11 +986,21 @@ const App: React.FC = () => {
           setSelectedNodeIds(new Set());
         }
       }
+
+      // Fit to View (F key or Shift+1)
+      if (
+        (e.shiftKey && e.key === '!') ||
+        (e.key.toLowerCase() === 'f' && !e.metaKey && !e.ctrlKey)
+      ) {
+        if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+        e.preventDefault();
+        fitToView();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleExecute, handleDuplicateNode, selectedNodeIds, currentBoardNodes, updateNodesAndSave]);
+  }, [handleExecute, handleDuplicateNode, fitToView, selectedNodeIds, currentBoardNodes, updateNodesAndSave]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -981,11 +1049,7 @@ const App: React.FC = () => {
           });
         }}
         onUploadImage={file => handleUploadImageFile(file)}
-        onResetZoom={() => {
-          const newView = { x: 0, y: 0, zoom: 1 };
-          setView(newView);
-          setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
-        }}
+        onResetZoom={fitToView}
         onZoomIn={() => {
           const newView = { ...view, zoom: Math.min(5, view.zoom * 1.2) };
           setView(newView);
