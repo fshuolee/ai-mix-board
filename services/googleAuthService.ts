@@ -188,6 +188,12 @@ export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUs
   });
 }
 
+export function isLocalEnvironment(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
+}
+
 /**
  * Set token manually
  */
@@ -200,12 +206,16 @@ export async function setManualAccessToken(token: string, expiresIn = 3600): Pro
  * Attempt to auto-fetch token from local dev server (if gcloud is configured with drive access)
  */
 export async function tryFetchLocalGcloudToken(): Promise<{ success: boolean; profile?: GoogleUserProfile; error?: string }> {
+  if (!isLocalEnvironment()) {
+    return { success: false, error: 'NOT_LOCAL' };
+  }
   try {
     const res = await fetch('/api/gcloud-token');
-    const data = await res.json();
     if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
       return { success: false, error: data.message || data.error || 'gcloud Token 無效' };
     }
+    const data = await res.json();
     if (data.token) {
       const profile = await fetchGoogleProfile(data.token, data.expiresIn || 3600);
       return { success: true, profile };

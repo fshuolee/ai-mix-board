@@ -16,6 +16,7 @@ import {
   getCurrentUser,
   getAccessToken,
   tryFetchLocalGcloudToken,
+  isLocalEnvironment,
 } from './services/googleAuthService';
 import {
   listProjects,
@@ -131,11 +132,15 @@ const App: React.FC = () => {
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitialLoadRef = useRef<boolean>(true);
 
-  // 1. Listen for Google Auth changes and auto-detect gcloud login
+  // 1. Listen for Google Auth changes and auto-detect gcloud login (local dev only)
   useEffect(() => {
     const unsubscribe = subscribeAuth(newUser => {
       setUser(newUser);
     });
+
+    if (!isLocalEnvironment()) {
+      return () => unsubscribe();
+    }
 
     const checkGcloud = async () => {
       if (!getCurrentUser()) {
@@ -145,7 +150,7 @@ const App: React.FC = () => {
 
     checkGcloud();
 
-    // Check on window focus
+    // Check on window focus (local dev only)
     window.addEventListener('focus', checkGcloud);
 
     // Poll every 3 seconds if not authenticated yet (until user logs in)

@@ -21,6 +21,7 @@ import {
   signOutGoogle,
   setManualAccessToken,
   tryFetchLocalGcloudToken,
+  isLocalEnvironment,
 } from '../services/googleAuthService';
 import { getEffectiveApiKey, setCustomApiKey } from '../services/geminiService';
 import { GoogleUserProfile } from '../types';
@@ -238,39 +239,32 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                   <code className="text-emerald-300 font-mono">My Drive / ai-mix-board /</code> 並將畫布節點即時儲存至 Google Sheet。
                 </p>
 
-                {/* gcloud helper prompt */}
-                <div className="p-3 bg-gray-950/60 border border-gray-800 rounded-lg space-y-2">
-                  <div className="flex items-center justify-between text-xs text-gray-300">
-                    <span className="font-semibold flex items-center gap-1.5 text-emerald-400">
-                      <Terminal className="w-4 h-4" />
-                      使用本機 gcloud 授權 (推薦)
-                    </span>
-                    <button
-                      onClick={handleCopyGcloudCmd}
-                      className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>{copiedCmd ? '已複製！' : '複製指令'}</span>
-                    </button>
+                {/* gcloud helper prompt (Only shown in local dev) */}
+                {isLocalEnvironment() && (
+                  <div className="p-3 bg-gray-950/60 border border-gray-800 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-xs text-gray-300">
+                      <span className="font-semibold flex items-center gap-1.5 text-emerald-400">
+                        <Terminal className="w-4 h-4" />
+                        使用本機 gcloud 授權 (本地開發推薦)
+                      </span>
+                      <button
+                        onClick={handleCopyGcloudCmd}
+                        className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>{copiedCmd ? '已複製！' : '複製指令'}</span>
+                      </button>
+                    </div>
+                    <div className="p-2 bg-black/60 rounded border border-gray-800 font-mono text-[11px] text-emerald-300">
+                      gcloud auth login --enable-gdrive-access
+                    </div>
+                    <p className="text-[11px] text-gray-400">
+                      在終端機執行上述指令完成授權後，點擊下方「讀取本機 gcloud Token」即可自動登入。
+                    </p>
                   </div>
-                  <div className="p-2 bg-black/60 rounded border border-gray-800 font-mono text-[11px] text-emerald-300">
-                    gcloud auth login --enable-gdrive-access
-                  </div>
-                  <p className="text-[11px] text-gray-400">
-                    在終端機執行上述指令完成授權後，點擊下方「讀取本機 gcloud Token」即可自動登入。
-                  </p>
-                </div>
+                )}
 
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    onClick={handleFetchLocalGcloud}
-                    disabled={gcloudLoading}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-sm font-medium rounded-lg shadow-md transition-all"
-                  >
-                    <Terminal className="w-4 h-4" />
-                    <span>{gcloudLoading ? '檢測中...' : '讀取本機 gcloud Token'}</span>
-                  </button>
-
                   <button
                     onClick={handleGoogleSignIn}
                     disabled={isSigningIn}
@@ -279,6 +273,17 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                     <LogIn className="w-4 h-4" />
                     <span>{isSigningIn ? '登入中...' : '網頁 Google OAuth 登入'}</span>
                   </button>
+
+                  {isLocalEnvironment() && (
+                    <button
+                      onClick={handleFetchLocalGcloud}
+                      disabled={gcloudLoading}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-sm font-medium rounded-lg shadow-md transition-all"
+                    >
+                      <Terminal className="w-4 h-4" />
+                      <span>{gcloudLoading ? '檢測中...' : '讀取本機 gcloud Token'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
