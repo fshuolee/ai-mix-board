@@ -1,5 +1,5 @@
 import { ProjectMetadata } from '../types';
-import { getImage, storeImage } from './dbService';
+import { getImage, storeImage, deleteImage, calculateBlobHash, getFileIdByHash } from './dbService';
 import { createProjectSpreadsheet } from './googleSheetsService';
 
 const ROOT_FOLDER_NAME = 'ai-mix-board';
@@ -210,6 +210,17 @@ export async function uploadAssetToDrive(
   blob: Blob,
   fileName: string
 ): Promise<{ fileId: string; name: string; webViewLink?: string; thumbnailLink?: string }> {
+  // Check if identical asset already exists by SHA-256 fingerprint
+  const blobHash = await calculateBlobHash(blob);
+  const existingFileId = await getFileIdByHash(blobHash);
+  if (existingFileId) {
+    return {
+      fileId: existingFileId,
+      name: fileName,
+      webViewLink: `https://drive.google.com/file/d/${existingFileId}/view`,
+    };
+  }
+
   const boundary = `-------AIMixBoard${Date.now()}`;
   const mimeType = blob.type || 'image/png';
 
@@ -246,8 +257,8 @@ export async function uploadAssetToDrive(
 
   const fileData = await res.json();
 
-  // Cache locally in IndexedDB for snappy UI
-  await storeImage(fileData.id, blob);
+  // Cache locally in IndexedDB with hash for deduplication
+  await storeImage(fileData.id, blob, blobHash);
 
   return {
     fileId: fileData.id,
@@ -284,6 +295,27 @@ export async function getAssetBlobFromDrive(token: string, fileId: string): Prom
   } catch (err) {
     console.error(`Failed to download asset ${fileId} from Drive:`, err);
     return null;
+  }
+}
+
+/**
+ * Delete image asset file from Google Drive and remove from local cache.
+ */
+export async function deleteAssetFromDrive(token: string, fileId: string): Promise<void> {
+  try {
+    // Delete/trash from Google Drive
+    await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, token, {
+      method: 'DELETE',
+    });
+  } catch (err: any) {
+    console.warn(`Failed to delete asset ${fileId} from Google Drive:`, err.message);
+  }
+
+  // Remove from IndexedDB cache
+  try {
+    await deleteImage(fileId);
+  } catch (e) {
+    console.warn(`Failed to delete local cached asset ${fileId}:`, e);
   }
 }
 

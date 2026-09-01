@@ -24,6 +24,7 @@ import {
   listProjects,
   createProject,
   uploadAssetToDrive,
+  deleteAssetFromDrive,
   ensureAssetsFolder,
 } from './services/googleDriveService';
 import {
@@ -38,7 +39,7 @@ import BoardTabs from './components/BoardTabs';
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
-import { Sparkles, Loader2, UploadCloud } from 'lucide-react';
+import { Sparkles, Loader2, UploadCloud, Trash2 } from 'lucide-react';
 
 const checkOverlap = (
   rect1: { x: number; y: number; width: number; height: number },
@@ -125,6 +126,18 @@ const App: React.FC = () => {
   // Drag-and-drop file upload onto canvas state
   const [isDraggingFileOver, setIsDraggingFileOver] = useState(false);
 
+  // Marquee Box Selection state
+  const [marqueeBox, setMarqueeBox] = useState<{ startX: number; startY: number; curX: number; curY: number } | null>(null);
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+
+  // Orphan Asset Deletion Confirmation Modal state
+  const [orphanAssetModal, setOrphanAssetModal] = useState<{
+    isOpen: boolean;
+    orphanFiles: { fileId: string; fileName: string }[];
+    onConfirmDelete: () => void;
+    onKeepInDrive: () => void;
+  } | null>(null);
+
   // Sync & Generation state
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('offline');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
@@ -139,9 +152,13 @@ const App: React.FC = () => {
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragInfoRef = useRef<{
-    type: 'pan' | 'drag_node';
+    type: 'pan' | 'drag_node' | 'marquee';
     startX: number;
     startY: number;
+    curX?: number;
+    curY?: number;
+    isShift?: boolean;
+    initialSelection?: Set<string>;
     nodes?: Map<string, { x: number; y: number }>;
   } | null>(null);
 
@@ -490,40 +507,124 @@ const App: React.FC = () => {
     [addNode, currentBoardId]
   );
 
-  const handleDeleteNode = useCallback(
-    (nodeId: string) => {
-      updateNodesAndSave(prev => prev.filter(n => n.id !== nodeId));
-      setSelectedNodeIds(prev => {
-        const next = new Set(prev);
-        next.delete(nodeId);
-        return next;
+  const handleDeleteNodes = useCallback(
+    (nodeIdsToDelete: string[]) => {
+      if (nodeIdsToDelete.length === 0) return;
+      const deleteSet = new Set(nodeIdsToDelete);
+
+      // Find deleted ImageNodes
+      const deletedImageNodes = allNodes.filter(
+        n => deleteSet.has(n.id) && n.type === 'image' && (n as ImageNode).driveFileId
+      ) as ImageNode[];
+
+      // Check which driveFileIds will have 0 references across ALL boards in the project
+      const remainingNodes = allNodes.filter(n => !deleteSet.has(n.id));
+      const orphanMap = new Map<string, string>();
+
+      deletedImageNodes.forEach(img => {
+        const fileId = img.driveFileId!;
+        const remainingCount = remainingNodes.filter(
+          n => n.type === 'image' && (n as ImageNode).driveFileId === fileId
+        ).length;
+
+        if (remainingCount === 0 && !orphanMap.has(fileId)) {
+          orphanMap.set(fileId, img.originalFileName || `asset_${fileId.slice(0, 6)}.png`);
+        }
       });
+
+      const executeCanvasDelete = () => {
+        updateNodesAndSave(prev => prev.filter(n => !deleteSet.has(n.id)));
+        setSelectedNodeIds(prev => {
+          const next = new Set(prev);
+          nodeIdsToDelete.forEach(id => next.delete(id));
+          return next;
+        });
+      };
+
+      if (orphanMap.size > 0) {
+        const token = getAccessToken();
+        const orphanList = Array.from(orphanMap.entries()).map(([fileId, fileName]) => ({
+          fileId,
+          fileName,
+        }));
+
+        setOrphanAssetModal({
+          isOpen: true,
+          orphanFiles: orphanList,
+          onConfirmDelete: async () => {
+            setOrphanAssetModal(null);
+            if (token) {
+              for (const orphan of orphanList) {
+                await deleteAssetFromDrive(token, orphan.fileId);
+              }
+            }
+            executeCanvasDelete();
+          },
+          onKeepInDrive: () => {
+            setOrphanAssetModal(null);
+            executeCanvasDelete();
+          },
+        });
+      } else {
+        executeCanvasDelete();
+      }
     },
-    [updateNodesAndSave]
+    [allNodes, updateNodesAndSave]
   );
 
-  // Canvas View & Interactions
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      handleDeleteNodes([nodeId]);
+    },
+    [handleDeleteNodes]
+  );
+
+  // Canvas View & Interactions (Marquee Box Selection & Multi-Node Dragging)
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('.node-renderer')) return;
 
-    if (selectedNodeIds.size > 0) {
-      setSelectedNodeIds(new Set());
+    // Pan mode with spacebar, middle mouse (button 1), or right click (button 2)
+    if (isSpacePressed || e.button === 1 || e.button === 2) {
+      dragInfoRef.current = {
+        type: 'pan',
+        startX: e.clientX,
+        startY: e.clientY,
+      };
+      canvasRef.current?.classList.add('cursor-grabbing');
+      return;
     }
 
-    dragInfoRef.current = {
-      type: 'pan',
-      startX: e.clientX,
-      startY: e.clientY,
-    };
-    canvasRef.current?.classList.add('cursor-grabbing');
+    if (e.button === 0) {
+      // Marquee box selection on left click empty canvas
+      if (!e.shiftKey) {
+        setSelectedNodeIds(new Set());
+      }
+      dragInfoRef.current = {
+        type: 'marquee',
+        startX: e.clientX,
+        startY: e.clientY,
+        curX: e.clientX,
+        curY: e.clientY,
+        isShift: e.shiftKey,
+        initialSelection: new Set(selectedNodeIds),
+      };
+      setMarqueeBox({
+        startX: e.clientX,
+        startY: e.clientY,
+        curX: e.clientX,
+        curY: e.clientY,
+      });
+    }
   };
 
   const handleNodeDragStart = (e: React.PointerEvent, nodeId: string) => {
-    const draggedNodes = selectedNodeIds.has(nodeId)
-      ? currentBoardNodes.filter(n => selectedNodeIds.has(n.id))
-      : ([currentBoardNodes.find(n => n.id === nodeId)].filter(Boolean) as CanvasNode[]);
+    let targetSelection = selectedNodeIds;
+    if (!selectedNodeIds.has(nodeId)) {
+      targetSelection = e.shiftKey ? new Set([...selectedNodeIds, nodeId]) : new Set([nodeId]);
+      setSelectedNodeIds(targetSelection);
+    }
 
+    const draggedNodes = currentBoardNodes.filter(n => targetSelection.has(n.id));
     const nodesMap = new Map(draggedNodes.map(n => [n.id, { x: n.x, y: n.y }]));
 
     dragInfoRef.current = {
@@ -545,11 +646,47 @@ const App: React.FC = () => {
       setView(newView);
       dragInfoRef.current.startX = e.clientX;
       dragInfoRef.current.startY = e.clientY;
+    } else if (dragInfoRef.current.type === 'marquee') {
+      dragInfoRef.current.curX = e.clientX;
+      dragInfoRef.current.curY = e.clientY;
+      setMarqueeBox({
+        startX: dragInfoRef.current.startX,
+        startY: dragInfoRef.current.startY,
+        curX: e.clientX,
+        curY: e.clientY,
+      });
+
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const sx1 = Math.min(dragInfoRef.current.startX, e.clientX) - rect.left;
+      const sy1 = Math.min(dragInfoRef.current.startY, e.clientY) - rect.top;
+      const sx2 = Math.max(dragInfoRef.current.startX, e.clientX) - rect.left;
+      const sy2 = Math.max(dragInfoRef.current.startY, e.clientY) - rect.top;
+
+      const worldMinX = (sx1 - view.x) / view.zoom;
+      const worldMinY = (sy1 - view.y) / view.zoom;
+      const worldMaxX = (sx2 - view.x) / view.zoom;
+      const worldMaxY = (sy2 - view.y) / view.zoom;
+
+      const nextSelection = new Set<string>(dragInfoRef.current.isShift ? dragInfoRef.current.initialSelection : []);
+      currentBoardNodes.forEach(node => {
+        const nodeMaxX = node.x + node.width;
+        const nodeMaxY = node.y + node.height;
+        const isInsideOrIntersect =
+          node.x <= worldMaxX &&
+          nodeMaxX >= worldMinX &&
+          node.y <= worldMaxY &&
+          nodeMaxY >= worldMinY;
+        if (isInsideOrIntersect) {
+          nextSelection.add(node.id);
+        }
+      });
+      setSelectedNodeIds(nextSelection);
     } else if (dragInfoRef.current.type === 'drag_node' && dragInfoRef.current.nodes) {
       dragInfoRef.current.nodes.forEach((startPos, id) => {
         updateNode(id, {
-          x: startPos.x + dx / view.zoom,
-          y: startPos.y + dy / view.zoom,
+          x: Math.round(startPos.x + dx / view.zoom),
+          y: Math.round(startPos.y + dy / view.zoom),
         });
       });
     }
@@ -560,6 +697,7 @@ const App: React.FC = () => {
       setViewports(prev => ({ ...prev, [currentBoardId]: view }));
     }
     dragInfoRef.current = null;
+    setMarqueeBox(null);
     canvasRef.current?.classList.remove('cursor-grabbing');
   };
 
@@ -724,47 +862,97 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCut = useCallback(() => {
+    if (selectedNodeIds.size === 0) return;
+    const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (selectedNodes.length === 0) return;
+
+    setCopiedNodesClipboard(selectedNodes);
+    try {
+      sessionStorage.setItem('ai_mix_board_clipboard', JSON.stringify(selectedNodes));
+    } catch {}
+
+    handleDeleteNodes(Array.from(selectedNodeIds));
+  }, [selectedNodeIds, currentBoardNodes, handleDeleteNodes]);
+
+  const handleCopy = useCallback(() => {
+    if (selectedNodeIds.size === 0) return;
+    const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (selectedNodes.length === 0) return;
+
+    setCopiedNodesClipboard(selectedNodes);
+    try {
+      sessionStorage.setItem('ai_mix_board_clipboard', JSON.stringify(selectedNodes));
+    } catch {}
+  }, [selectedNodeIds, currentBoardNodes]);
+
+  const handlePasteNodes = useCallback(() => {
+    let nodesToPaste = copiedNodesClipboard;
+    if (nodesToPaste.length === 0) {
+      try {
+        const stored = sessionStorage.getItem('ai_mix_board_clipboard');
+        if (stored) nodesToPaste = JSON.parse(stored);
+      } catch {}
+    }
+    if (!nodesToPaste || nodesToPaste.length === 0) return false;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    nodesToPaste.forEach(n => {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + n.width);
+      maxY = Math.max(maxY, n.y + n.height);
+    });
+
+    const origCenterX = (minX + maxX) / 2;
+    const origCenterY = (minY + maxY) / 2;
+    const targetCenter = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+
+    const newSelectedIds = new Set<string>();
+    const newPastedNodes: CanvasNode[] = [];
+
+    nodesToPaste.forEach((node, idx) => {
+      const newId = `${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`;
+      const relX = node.x - origCenterX;
+      const relY = node.y - origCenterY;
+
+      const pastedNode: CanvasNode = {
+        ...node,
+        id: newId,
+        x: Math.round(targetCenter.x + relX),
+        y: Math.round(targetCenter.y + relY),
+        boardId: currentBoardId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      newPastedNodes.push(pastedNode);
+      newSelectedIds.add(newId);
+    });
+
+    updateNodesAndSave(prev => [...prev, ...newPastedNodes]);
+    setSelectedNodeIds(newSelectedIds);
+    return true;
+  }, [copiedNodesClipboard, currentBoardId, getCanvasCoords, updateNodesAndSave]);
+
   const handlePaste = useCallback(
     async (e: ClipboardEvent) => {
       if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') {
         return;
       }
       e.preventDefault();
-      const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
 
-      // Check if copying existing canvas nodes from in-app clipboard
-      if (copiedNodesClipboard.length > 0) {
-        copiedNodesClipboard.forEach((node, idx) => {
-          const shift = (idx + 1) * 30;
-          const newId = (Date.now() + idx).toString();
-          if (node.type === 'image') {
-            const imgNode = node as ImageNode;
-            addNode({
-              ...imgNode,
-              id: newId,
-              x: imgNode.x + shift,
-              y: imgNode.y + shift,
-              boardId: currentBoardId,
-              content: imgNode.content,
-              driveFileId: imgNode.driveFileId,
-              createdAt: Date.now(),
-            });
-          } else {
-            const txtNode = node as TextNode;
-            addNode({
-              ...txtNode,
-              id: newId,
-              x: txtNode.x + shift,
-              y: txtNode.y + shift,
-              boardId: currentBoardId,
-              createdAt: Date.now(),
-            });
-          }
-        });
-        return;
+      // 1. Try pasting copied canvas nodes first (cross-board supported)
+      if (copiedNodesClipboard.length > 0 || sessionStorage.getItem('ai_mix_board_clipboard')) {
+        const didPaste = handlePasteNodes();
+        if (didPaste) return;
       }
 
-      // Check pasted plain text
+      // 2. Check pasted plain text
+      const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
       const text = e.clipboardData?.getData('text/plain');
       if (text) {
         const width = 220;
@@ -785,7 +973,7 @@ const App: React.FC = () => {
         return;
       }
 
-      // Check pasted image
+      // 3. Check pasted image
       const items = e.clipboardData?.items;
       if (items) {
         for (const item of items) {
@@ -799,7 +987,7 @@ const App: React.FC = () => {
         }
       }
     },
-    [currentBoardNodes, copiedNodesClipboard, handleUploadImageFile, addNode, currentBoardId, view]
+    [copiedNodesClipboard, handlePasteNodes, getCanvasCoords, currentBoardNodes, addNode, currentBoardId, handleUploadImageFile]
   );
 
   // Execute Generation
@@ -963,6 +1151,11 @@ const App: React.FC = () => {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Space key for panning cursor
+      if (e.code === 'Space' && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
+        setIsSpacePressed(true);
+      }
+
       // Execute with Shift+Enter
       if (e.key === 'Enter' && e.shiftKey) {
         handleExecute();
@@ -975,21 +1168,30 @@ const App: React.FC = () => {
         selected.forEach(node => handleDuplicateNode(node));
       }
 
+      // Cut with Cmd+X / Ctrl+X
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x') {
+        if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+        e.preventDefault();
+        handleCut();
+      }
+
       // Copy with Cmd+C / Ctrl+C
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
-        const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
-        if (selected.length > 0) {
-          setCopiedNodesClipboard(selected);
-        }
+        handleCopy();
+      }
+
+      // Paste with Cmd+V / Ctrl+V
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+        if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+        // Native paste event handled by window.addEventListener('paste', handlePaste)
       }
 
       // Delete with Delete or Backspace
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
         if (selectedNodeIds.size > 0) {
-          updateNodesAndSave(prev => prev.filter(n => !selectedNodeIds.has(n.id)));
-          setSelectedNodeIds(new Set());
+          handleDeleteNodes(Array.from(selectedNodeIds));
         }
       }
 
@@ -1004,9 +1206,19 @@ const App: React.FC = () => {
       }
     };
 
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false);
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleExecute, handleDuplicateNode, fitToView, selectedNodeIds, currentBoardNodes, updateNodesAndSave]);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -1131,6 +1343,19 @@ const App: React.FC = () => {
             </div>
           ))}
         </div>
+
+        {/* Marquee Selection Rectangle Overlay */}
+        {marqueeBox && (
+          <div
+            className="absolute pointer-events-none z-30 bg-blue-500/15 border border-blue-400/80 rounded-md shadow-sm"
+            style={{
+              left: `${Math.min(marqueeBox.startX, marqueeBox.curX)}px`,
+              top: `${Math.min(marqueeBox.startY, marqueeBox.curY)}px`,
+              width: `${Math.abs(marqueeBox.curX - marqueeBox.startX)}px`,
+              height: `${Math.abs(marqueeBox.curY - marqueeBox.startY)}px`,
+            }}
+          />
+        )}
       </div>
 
       {/* Multi-Board Switcher Tabs Bar (Bottom-Left) */}
@@ -1199,6 +1424,53 @@ const App: React.FC = () => {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* Orphan Asset Deletion Confirmation Modal */}
+      {orphanAssetModal?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-gray-900 border border-gray-700/80 rounded-2xl p-6 max-w-md w-full shadow-2xl text-gray-100 flex flex-col gap-4">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">清理 Google Drive 雲端檔案</h3>
+                <p className="text-xs text-gray-400">檢測到無引用的圖片資產</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-gray-300 leading-relaxed">
+              您刪除的節點包含 <span className="font-semibold text-white">{orphanAssetModal.orphanFiles.length}</span> 個在所有畫布中已無任何其他節點引用的圖片檔案。是否要同步從 Google Drive 雲端硬碟中刪除，以釋放雲端儲存空間？
+            </p>
+
+            <div className="max-h-32 overflow-y-auto bg-gray-950/60 p-2.5 rounded-xl border border-gray-800 space-y-1 text-xs font-mono text-gray-400">
+              {orphanAssetModal.orphanFiles.map((f, i) => (
+                <div key={i} className="truncate flex items-center gap-1.5">
+                  <span className="text-gray-600">•</span>
+                  <span className="text-gray-300">{f.fileName}</span>
+                  <span className="text-gray-500 text-[10px]">({f.fileId.slice(0, 8)}...)</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 mt-2">
+              <button
+                onClick={orphanAssetModal.onKeepInDrive}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-xl transition-colors border border-gray-700"
+              >
+                保留在 Drive
+              </button>
+              <button
+                onClick={orphanAssetModal.onConfirmDelete}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-lg shadow-red-600/30 flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>從 Drive 刪除</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
