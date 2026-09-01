@@ -177,9 +177,6 @@ const App: React.FC = () => {
 
     checkGcloud();
 
-    // Check on window focus (local dev only)
-    window.addEventListener('focus', checkGcloud);
-
     // Poll every 3 seconds if not authenticated yet (until user logs in)
     const pollTimer = setInterval(() => {
       if (!getCurrentUser()) {
@@ -194,7 +191,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // 2. Load projects when user logs in or changes
+  // 2. Load Google Drive Projects
   const loadProjects = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
@@ -203,20 +200,22 @@ const App: React.FC = () => {
     }
 
     setIsLoadingProjects(true);
+    setError(null);
+
     try {
       const list = await listProjects(token);
       setProjects(list);
-
-      // If no project exists yet, create default project
-      if (list.length === 0) {
-        const newProj = await createProject(token, '預設畫布專案');
-        setProjects([newProj]);
-        setCurrentProject(newProj);
-      } else if (!currentProject) {
-        setCurrentProject(list[0]);
+      if (list.length > 0) {
+        if (!currentProject || !list.some(p => p.id === currentProject.id)) {
+          setCurrentProject(list[0]);
+        }
+      } else {
+        const defaultProject = await createProject(token, '預設畫布專案');
+        setProjects([defaultProject]);
+        setCurrentProject(defaultProject);
       }
     } catch (err: any) {
-      console.error('Failed to load projects from Google Drive:', err);
+      console.error('Failed to list Google Drive projects:', err);
       const isScopeError = err.message?.includes('insufficient') || err.message?.includes('scopes') || err.message?.includes('PERMISSION_DENIED');
       if (isScopeError) {
         setError('Google Drive 權限不足。若使用 gcloud，請在終端機執行：gcloud auth login --enable-gdrive-access');
@@ -246,8 +245,13 @@ const App: React.FC = () => {
     const token = getAccessToken();
     if (!token) return;
 
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
     let isMounted = true;
     isInitialLoadRef.current = true;
+    loadedProjectIdRef.current = null;
     setSyncStatus('saving');
 
     loadGraphFromSheet(token, currentProject.spreadsheetId)
@@ -275,10 +279,13 @@ const App: React.FC = () => {
 
         setSyncStatus('saved');
         setLastSavedAt(new Date());
+        loadedProjectIdRef.current = currentProject.id;
 
         setTimeout(() => {
-          isInitialLoadRef.current = false;
-        }, 500);
+          if (isMounted) {
+            isInitialLoadRef.current = false;
+          }
+        }, 300);
       })
       .catch(err => {
         if (!isMounted) return;
@@ -300,9 +307,9 @@ const App: React.FC = () => {
       currentViewports: Record<string, ViewportState>,
       currentModels: Record<string, string>
     ) => {
-      if (isInitialLoadRef.current) return;
+      if (isInitialLoadRef.current || !currentProject || loadedProjectIdRef.current !== currentProject.id) return;
       const token = getAccessToken();
-      if (!token || !currentProject?.spreadsheetId) {
+      if (!token || !currentProject.spreadsheetId) {
         setSyncStatus('offline');
         return;
       }
@@ -331,7 +338,7 @@ const App: React.FC = () => {
         }
       }, 1000);
     },
-    [currentProject?.spreadsheetId]
+    [currentProject?.id, currentProject?.spreadsheetId]
   );
 
   // Trigger auto-save whenever nodes change
@@ -369,13 +376,13 @@ const App: React.FC = () => {
     [updateNodesAndSave, currentBoardId]
   );
 
-  // Multi-Board Operations: Switch, Add, Rename, Delete
+  // Multi-Board Handlers
   const handleSelectBoard = (newBoardId: string) => {
-    if (newBoardId === currentBoardId) return;
+    if (newBoardId === activeBoardId) return;
 
-    // Persist current board's view and model
     const updatedViewports = { ...viewports, [currentBoardId]: view };
     const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
+
     setViewports(updatedViewports);
     setSelectedModels(updatedModels);
 
@@ -387,8 +394,6 @@ const App: React.FC = () => {
 
     const targetModel = updatedModels[newBoardId] || DEFAULT_MODEL_ID;
     setSelectedModelId(targetModel);
-
-    triggerAutoSave(allNodes, boards, updatedViewports, updatedModels);
   };
 
   const handleAddBoard = (name?: string) => {
