@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--no-usage-statistics"
+      ]
+    },
+    "chrome-devtools-auto": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--auto-connect",
+        "--no-usage-statistics"
+      ]
+    },
+    "chrome-devtools-standalone": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--headless",
+        "--viewport",
+        "1440x900",
+        "--no-usage-statistics"
+      ]
+    },
+    "chrome-devtools-headful": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--viewport",
+        "1440x900",
+        "--no-usage-statistics"
+      ]
+    },
+    "chrome-devtools-slim": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--slim",
+        "--headless",
+        "--no-usage-statistics"
+      ]
+    }
+  }
+}
