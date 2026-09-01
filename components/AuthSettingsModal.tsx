@@ -316,6 +316,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 placeholder="AIzaSy..."
+                autoComplete="current-password"
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -330,6 +331,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                 value={clientId}
                 onChange={e => setClientId(e.target.value)}
                 placeholder="例如: 244200756201-xxxx.apps.googleusercontent.com"
+                autoComplete="off"
                 className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -359,6 +361,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                 value={manualToken}
                 onChange={e => setManualToken(e.target.value)}
                 placeholder="ya29.a0..."
+                autoComplete="current-password"
                 className="flex-1 px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500"
               />
               <button
