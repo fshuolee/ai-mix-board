@@ -17,6 +17,7 @@ import {
   getAccessToken,
   tryFetchLocalGcloudToken,
   isLocalEnvironment,
+  handleOAuthCallback,
 } from './services/googleAuthService';
 import {
   listProjects,
@@ -132,11 +133,18 @@ const App: React.FC = () => {
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitialLoadRef = useRef<boolean>(true);
 
-  // 1. Listen for Google Auth changes and auto-detect gcloud login (local dev only)
+  // 1. Listen for Google Auth changes, handle OAuth redirect callback, and auto-detect gcloud login
   useEffect(() => {
     const unsubscribe = subscribeAuth(newUser => {
       setUser(newUser);
     });
+
+    // Handle OAuth redirect callback (PKCE code or implicit hash token)
+    handleOAuthCallback().then(res => {
+      if (res.success && res.profile) {
+        setUser(res.profile);
+      }
+    }).catch(err => console.warn('OAuth callback error', err));
 
     if (!isLocalEnvironment()) {
       return () => unsubscribe();

@@ -9,8 +9,10 @@ declare global {
 const STORAGE_KEY_TOKEN = 'ai_mix_board_gtoken';
 const STORAGE_KEY_USER = 'ai_mix_board_guser';
 const STORAGE_KEY_CLIENT_ID = 'ai_mix_board_client_id';
+const STORAGE_KEY_PKCE_VERIFIER = 'ai_mix_board_pkce_verifier';
+const STORAGE_KEY_PKCE_STATE = 'ai_mix_board_pkce_state';
 
-const SCOPES = [
+export const SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -90,6 +92,29 @@ function notifyListeners() {
 }
 
 /**
+ * Helper to generate random string for PKCE
+ */
+function generateRandomString(length = 64): string {
+  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const values = new Uint8Array(length);
+  crypto.getRandomValues(values);
+  return Array.from(values, x => charset[x % charset.length]).join('');
+}
+
+/**
+ * Helper to calculate SHA-256 base64url challenge for PKCE
+ */
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/**
  * Validate token scopes and fetch user info
  */
 export async function fetchGoogleProfile(accessToken: string, expiresInSeconds = 3600): Promise<GoogleUserProfile> {
@@ -105,7 +130,7 @@ export async function fetchGoogleProfile(accessToken: string, expiresInSeconds =
 
   if (!hasDrive) {
     throw new Error(
-      '此 Token 缺少 Google Drive 存取權限。若使用 gcloud，請在終端機執行：gcloud auth login --enable-gdrive-access'
+      '此 Token 缺少 Google Drive 存取權限。請確認授權時已勾選 Google 雲端硬碟存取權限。'
     );
   }
 
@@ -140,7 +165,156 @@ export async function fetchGoogleProfile(accessToken: string, expiresInSeconds =
 }
 
 /**
- * Login using Google Identity Services (GIS) Token Client popup
+ * 1. OAuth 2.0 PKCE Authorization Code Flow
+ * Initiates redirect to Google OAuth with PKCE parameters
+ */
+export async function initiateOAuthPKCE(customClientId?: string): Promise<void> {
+  const clientId = customClientId || getCustomClientId();
+  if (!clientId) {
+    throw new Error('請先輸入 Google OAuth 2.0 Web Client ID 才能發起登入。');
+  }
+
+  const verifier = generateRandomString(64);
+  const challenge = await generateCodeChallenge(verifier);
+  const state = generateRandomString(32);
+
+  sessionStorage.setItem(STORAGE_KEY_PKCE_VERIFIER, verifier);
+  sessionStorage.setItem(STORAGE_KEY_PKCE_STATE, state);
+
+  const redirectUri = window.location.origin + window.location.pathname;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', SCOPES);
+  authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('access_type', 'online');
+
+  window.location.href = authUrl.toString();
+}
+
+/**
+ * 2. OAuth 2.0 Direct Implicit Redirect Flow (Static SPA fallback)
+ * Redirects to Google and returns token in URL hash (#access_token=...)
+ */
+export function initiateOAuthImplicit(customClientId?: string): void {
+  const clientId = customClientId || getCustomClientId();
+  if (!clientId) {
+    throw new Error('請先輸入 Google OAuth 2.0 Web Client ID 才能發起登入。');
+  }
+
+  const state = generateRandomString(32);
+  sessionStorage.setItem(STORAGE_KEY_PKCE_STATE, state);
+
+  const redirectUri = window.location.origin + window.location.pathname;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'token');
+  authUrl.searchParams.set('scope', SCOPES);
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('prompt', 'consent');
+
+  window.location.href = authUrl.toString();
+}
+
+/**
+ * 3. Handle OAuth Redirect Callback (both PKCE code and Implicit hash)
+ * Call this on application startup
+ */
+export async function handleOAuthCallback(): Promise<{ success: boolean; profile?: GoogleUserProfile; error?: string }> {
+  if (typeof window === 'undefined') return { success: false };
+
+  // Check URL hash (#access_token=...&expires_in=...)
+  if (window.location.hash && window.location.hash.includes('access_token')) {
+    try {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const expiresIn = Number(hashParams.get('expires_in')) || 3600;
+
+      if (accessToken) {
+        // Clean URL hash without reloading
+        window.history.replaceState({}, document.title, window.location.origin + window.location.pathname + window.location.search);
+        const profile = await fetchGoogleProfile(accessToken, expiresIn);
+        return { success: true, profile };
+      }
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  // Check URL query search (?code=...&state=...)
+  const queryParams = new URLSearchParams(window.location.search);
+  const code = queryParams.get('code');
+  const error = queryParams.get('error');
+
+  if (error) {
+    // Clean query
+    window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
+    return { success: false, error: `Google 授權錯誤: ${error}` };
+  }
+
+  if (code) {
+    const savedVerifier = sessionStorage.getItem(STORAGE_KEY_PKCE_VERIFIER);
+    const savedState = sessionStorage.getItem(STORAGE_KEY_PKCE_STATE);
+    const state = queryParams.get('state');
+
+    sessionStorage.removeItem(STORAGE_KEY_PKCE_VERIFIER);
+    sessionStorage.removeItem(STORAGE_KEY_PKCE_STATE);
+
+    // Clean URL
+    window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
+
+    if (savedState && state && savedState !== state) {
+      return { success: false, error: 'OAuth State 驗證失敗，可能存在 CSRF 風險。' };
+    }
+
+    const clientId = getCustomClientId();
+    if (!clientId) {
+      return { success: false, error: '缺少 Client ID，無法完成 Token 交換。' };
+    }
+
+    try {
+      const redirectUri = window.location.origin + window.location.pathname;
+      const body = new URLSearchParams({
+        client_id: clientId,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri,
+        ...(savedVerifier ? { code_verifier: savedVerifier } : {}),
+      });
+
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        return {
+          success: false,
+          error: tokenData.error_description || tokenData.error || 'Token 交換失敗',
+        };
+      }
+
+      const profile = await fetchGoogleProfile(tokenData.access_token, Number(tokenData.expires_in) || 3600);
+      return { success: true, profile };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Token 交換請求失敗' };
+    }
+  }
+
+  return { success: false };
+}
+
+/**
+ * 4. Login using Google Identity Services (GIS) Token Client popup
  */
 export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUserProfile> {
   return new Promise((resolve, reject) => {
@@ -149,7 +323,7 @@ export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUs
     if (!clientId) {
       reject(
         new Error(
-          'Google Client ID 尚未設定。請在設定中輸入 GCP OAuth 2.0 Client ID，或在 .env 中設定 VITE_GOOGLE_CLIENT_ID。'
+          'Google Client ID 尚未設定。請在設定中輸入 GCP OAuth 2.0 Web Client ID。'
         )
       );
       return;
