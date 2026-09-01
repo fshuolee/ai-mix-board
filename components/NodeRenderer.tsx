@@ -128,12 +128,15 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
     window.addEventListener('pointerup', stopResize);
   };
 
+  const outlineWidth = Math.max(1.5, Math.min(5, 2 / zoom));
+  const outlineOffset = Math.max(1, Math.min(4, 2 / zoom));
+
   const commonStyle: React.CSSProperties = {
     width: `${node.width}px`,
     height: `${node.height}px`,
     transform: `translate(${node.x}px, ${node.y}px)`,
-    outline: isSelected ? '2px solid #3b82f6' : '1px solid rgba(75, 85, 99, 0.4)',
-    outlineOffset: '2px',
+    outline: isSelected ? `${outlineWidth}px solid #3b82f6` : '1px solid rgba(75, 85, 99, 0.4)',
+    outlineOffset: `${outlineOffset}px`,
   };
 
   const imageNode = node.type === 'image' ? (node as ImageNode) : null;
@@ -156,11 +159,10 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             onBlur={handleTextBlur}
             autoFocus
             onFocus={e => e.target.select()}
-            className="w-full h-full p-3 text-white bg-transparent border-0 rounded-xl resize-none focus:ring-0 focus:outline-none font-sans"
-            style={{ fontSize: `${Math.max(12, 16 / Math.sqrt(zoom))}px` }}
+            className="w-full h-full p-3 text-white bg-transparent border-0 rounded-xl resize-none focus:ring-0 focus:outline-none font-sans text-sm leading-relaxed"
           />
         ) : (
-          <div className="w-full h-full p-3 overflow-hidden whitespace-pre-wrap text-gray-100 text-sm leading-relaxed">
+          <div className="w-full h-full p-3 overflow-hidden whitespace-pre-wrap text-gray-100 text-sm leading-relaxed font-sans">
             {(node as TextNode).content}
           </div>
         ))}
@@ -188,7 +190,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           {/* Drive Asset Indicator */}
           {imageNode?.driveFileId && (
             <div
-              className="absolute bottom-1 left-1.5 px-1.5 py-0.5 rounded bg-gray-900/80 backdrop-blur-sm border border-gray-700 text-[10px] text-emerald-400 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-gray-900/85 backdrop-blur-sm border border-gray-700 text-[10px] text-emerald-400 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
               title={`Google Drive 檔案: ${imageNode.driveFileId}`}
             >
               <HardDrive className="w-3 h-3" />
@@ -200,16 +202,20 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         </div>
       )}
 
-      {/* Floating Action Menu when Selected */}
+      {/* Floating Action Menu when Selected - Inverse scaled so it stays 100% constant size */}
       {isSelected && (
         <div
-          className="absolute -top-10 left-0 flex items-center gap-1 bg-gray-900/90 backdrop-blur-md border border-gray-700 px-2 py-1 rounded-lg shadow-lg z-30"
+          className="absolute -top-3 left-0 flex items-center gap-1 bg-gray-900/95 backdrop-blur-md border border-gray-700 px-2.5 py-1.5 rounded-xl shadow-2xl z-30 pointer-events-auto"
+          style={{
+            transform: `translateY(-100%) scale(${1 / zoom})`,
+            transformOrigin: 'bottom left',
+          }}
           onPointerDown={e => e.stopPropagation()}
         >
           {onDuplicateNode && (
             <button
               onClick={() => onDuplicateNode(node)}
-              className="p-1 text-gray-300 hover:text-white hover:bg-gray-800 rounded transition-colors flex items-center gap-1 text-[11px]"
+              className="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium whitespace-nowrap"
               title="複製節點 (指向同一個 Drive Asset)"
             >
               <Copy className="w-3.5 h-3.5 text-blue-400" />
@@ -222,7 +228,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               href={imageNode.driveViewLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="p-1 text-gray-300 hover:text-emerald-400 hover:bg-gray-800 rounded transition-colors text-[11px] flex items-center gap-1"
+              className="p-1.5 text-gray-300 hover:text-emerald-400 hover:bg-gray-800 rounded-lg transition-colors text-xs flex items-center gap-1"
               title="在 Google Drive 開啟此檔案"
             >
               <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
@@ -232,7 +238,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           {onDeleteNode && (
             <button
               onClick={() => onDeleteNode(node.id)}
-              className="p-1 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded transition-colors"
+              className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"
               title="刪除節點"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -241,11 +247,15 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         </div>
       )}
 
-      {/* Resize Handle */}
+      {/* Resize Handle - Inverse scaled to stay constant size and easily grabbable */}
       {isSelected && (
         <div
           ref={resizeHandleRef}
-          className="absolute -bottom-2 -right-2 w-4 h-4 bg-blue-500 border-2 border-gray-950 rounded-full cursor-nwse-resize shadow-md"
+          className="absolute -bottom-1.5 -right-1.5 w-4 h-4 bg-blue-500 border-2 border-white rounded-full cursor-nwse-resize shadow-lg z-30"
+          style={{
+            transform: `scale(${1 / zoom})`,
+            transformOrigin: 'center center',
+          }}
           onPointerDown={startResize}
         />
       )}

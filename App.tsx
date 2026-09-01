@@ -550,12 +550,8 @@ const App: React.FC = () => {
   };
 
   const handlePointerUp = () => {
-    if (dragInfoRef.current?.type === 'pan' || dragInfoRef.current?.type === 'drag_node') {
-      const updatedViewports = { ...viewports, [currentBoardId]: view };
-      const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
-      setViewports(updatedViewports);
-      setSelectedModels(updatedModels);
-      triggerAutoSave(allNodes, boards, updatedViewports, updatedModels);
+    if (dragInfoRef.current?.type === 'pan') {
+      setViewports(prev => ({ ...prev, [currentBoardId]: view }));
     }
     dragInfoRef.current = null;
     canvasRef.current?.classList.remove('cursor-grabbing');
@@ -579,10 +575,7 @@ const App: React.FC = () => {
 
     const newView = { x: newX, y: newY, zoom: clampedZoom };
     setView(newView);
-
-    const updatedViewports = { ...viewports, [currentBoardId]: newView };
-    setViewports(updatedViewports);
-    triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+    setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
   };
 
   const handleSelectNode = (id: string, shiftKey: boolean) => {
@@ -991,23 +984,17 @@ const App: React.FC = () => {
         onResetZoom={() => {
           const newView = { x: 0, y: 0, zoom: 1 };
           setView(newView);
-          const updatedViewports = { ...viewports, [currentBoardId]: newView };
-          setViewports(updatedViewports);
-          triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+          setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onZoomIn={() => {
           const newView = { ...view, zoom: Math.min(5, view.zoom * 1.2) };
           setView(newView);
-          const updatedViewports = { ...viewports, [currentBoardId]: newView };
-          setViewports(updatedViewports);
-          triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+          setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onZoomOut={() => {
           const newView = { ...view, zoom: Math.max(0.1, view.zoom / 1.2) };
           setView(newView);
-          const updatedViewports = { ...viewports, [currentBoardId]: newView };
-          setViewports(updatedViewports);
-          triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+          setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onClearCanvas={() => {
           if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
