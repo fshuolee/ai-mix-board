@@ -291,6 +291,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
 
           {/* Section 2: Gemini API Key */}
           <form onSubmit={handleSaveKeys} className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-4">
+            <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Key className="w-5 h-5 text-amber-400" />
@@ -308,10 +309,12 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5">
+              <label htmlFor="geminiApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
                 GEMINI_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 檔案填寫或在此貼上)
               </label>
               <input
+                id="geminiApiKeyInput"
+                name="geminiApiKey"
                 type="password"
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
@@ -323,10 +326,12 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
 
             {/* Optional OAuth Client ID */}
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5">
+              <label htmlFor="googleClientIdInput" className="block text-xs text-gray-400 mb-1.5">
                 Google OAuth 2.0 Web Client ID (選填，若使用網頁 OAuth 登入)
               </label>
               <input
+                id="googleClientIdInput"
+                name="googleClientId"
                 type="text"
                 value={clientId}
                 onChange={e => setClientId(e.target.value)}
@@ -352,11 +357,14 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
 
           {/* Section 3: Direct Access Token (Optional Advanced Fallback) */}
           <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-2">
-            <h4 className="text-xs font-semibold text-gray-400 flex items-center gap-1.5">
-              <span>進階：手動貼上 OAuth Access Token (含 Drive 權限)</span>
-            </h4>
+            <label htmlFor="manualTokenInput" className="block text-xs font-semibold text-gray-400">
+              進階：手動貼上 OAuth Access Token (含 Drive 權限)
+            </label>
             <form onSubmit={handleManualTokenSubmit} className="flex gap-2">
+              <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
               <input
+                id="manualTokenInput"
+                name="manualToken"
                 type="password"
                 value={manualToken}
                 onChange={e => setManualToken(e.target.value)}
