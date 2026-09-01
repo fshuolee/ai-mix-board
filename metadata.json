@@ -1,0 +1,6 @@
+{
+  "name": "Infinity Canvas with Gemini",
+  "description": "An infinite canvas where users can paste and create text and image nodes. Select multiple nodes and use Gemini to generate a new image from them.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
