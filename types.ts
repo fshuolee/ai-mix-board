@@ -7,6 +7,7 @@ export interface BaseNode {
   width: number;
   height: number;
   rotation: number;
+  boardId?: string; // Links node to specific board/canvas within project
   createdAt?: number;
   updatedAt?: number;
 }
@@ -33,6 +34,20 @@ export interface ViewportState {
   zoom: number;
 }
 
+export interface BoardMetadata {
+  id: string;
+  name: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BoardCanvasData {
+  boardId: string;
+  nodes: CanvasNode[];
+  viewport: ViewportState;
+  selectedModel?: string;
+}
+
 export interface ProjectMetadata {
   id: string; // Folder ID in Google Drive
   name: string;
@@ -41,6 +56,8 @@ export interface ProjectMetadata {
   assetsFolderId?: string;
   webViewLink?: string;
   sheetViewLink?: string;
+  boards?: BoardMetadata[];
+  activeBoardId?: string;
   createdAt?: string;
   updatedAt?: string;
 }

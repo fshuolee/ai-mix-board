@@ -1,4 +1,4 @@
-import { CanvasNode, ImageNode, TextNode, ViewportState } from '../types';
+import { BoardMetadata, CanvasNode, ImageNode, TextNode, ViewportState } from '../types';
 
 async function sheetsFetch(url: string, token: string, options: RequestInit = {}) {
   const headers = {
@@ -45,12 +45,13 @@ export async function findProjectSpreadsheet(
 }
 
 /**
- * Create a new Google Spreadsheet configured for AI Mix Board graph storage
+ * Create a new Google Spreadsheet configured for AI Mix Board multi-board storage
  */
 export async function createProjectSpreadsheet(
   token: string,
   projectFolderId: string,
-  projectName: string
+  projectName: string,
+  initialBoards: BoardMetadata[] = [{ id: 'board_main', name: 'MAIN', createdAt: new Date().toISOString() }]
 ): Promise<{ spreadsheetId: string; sheetViewLink?: string }> {
   // 1. Create Spreadsheet with predefined sheets
   const createPayload = {
@@ -61,22 +62,29 @@ export async function createProjectSpreadsheet(
       {
         properties: {
           sheetId: 0,
-          title: 'Nodes',
-          gridProperties: { rowCount: 100, columnCount: 12, frozenRowCount: 1 },
+          title: 'Boards',
+          gridProperties: { rowCount: 50, columnCount: 6, frozenRowCount: 1 },
         },
       },
       {
         properties: {
           sheetId: 1,
-          title: 'Viewport',
-          gridProperties: { rowCount: 10, columnCount: 6, frozenRowCount: 1 },
+          title: 'Nodes',
+          gridProperties: { rowCount: 200, columnCount: 14, frozenRowCount: 1 },
         },
       },
       {
         properties: {
           sheetId: 2,
+          title: 'Viewport',
+          gridProperties: { rowCount: 50, columnCount: 8, frozenRowCount: 1 },
+        },
+      },
+      {
+        properties: {
+          sheetId: 3,
           title: 'AssetReferences',
-          gridProperties: { rowCount: 100, columnCount: 8, frozenRowCount: 1 },
+          gridProperties: { rowCount: 200, columnCount: 8, frozenRowCount: 1 },
         },
       },
     ],
@@ -102,7 +110,7 @@ export async function createProjectSpreadsheet(
   const moveData = await moveRes.json();
 
   // 3. Initialize Headers in Sheets
-  await initializeSheetHeaders(token, spreadsheetId);
+  await initializeSheetHeaders(token, spreadsheetId, initialBoards);
 
   return {
     spreadsheetId,
@@ -113,7 +121,17 @@ export async function createProjectSpreadsheet(
 /**
  * Initialize headers and initial styling
  */
-async function initializeSheetHeaders(token: string, spreadsheetId: string) {
+async function initializeSheetHeaders(
+  token: string,
+  spreadsheetId: string,
+  initialBoards: BoardMetadata[] = [{ id: 'board_main', name: 'MAIN', createdAt: new Date().toISOString() }]
+) {
+  const boardHeaders = ['BoardId', 'Name', 'CreatedAt', 'UpdatedAt'];
+  const boardRows = [
+    boardHeaders,
+    ...initialBoards.map(b => [b.id, b.name, b.createdAt || new Date().toISOString(), new Date().toISOString()]),
+  ];
+
   const nodeHeaders = [
     'NodeId',
     'Type',
@@ -127,9 +145,14 @@ async function initializeSheetHeaders(token: string, spreadsheetId: string) {
     'OriginalFileName',
     'CreatedAt',
     'UpdatedAt',
+    'BoardId',
   ];
 
-  const viewportHeaders = ['PanX', 'PanY', 'Zoom', 'SelectedModel', 'UpdatedAt'];
+  const viewportHeaders = ['BoardId', 'PanX', 'PanY', 'Zoom', 'SelectedModel', 'UpdatedAt'];
+  const viewportRows = [
+    viewportHeaders,
+    ...initialBoards.map(b => [b.id, 0, 0, 1, 'gemini-2.5-flash-image', new Date().toISOString()]),
+  ];
 
   const assetHeaders = [
     'DriveFileId',
@@ -149,12 +172,16 @@ async function initializeSheetHeaders(token: string, spreadsheetId: string) {
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: 'Nodes!A1:L1',
+            range: `Boards!A1:D${boardRows.length}`,
+            values: boardRows,
+          },
+          {
+            range: 'Nodes!A1:M1',
             values: [nodeHeaders],
           },
           {
-            range: 'Viewport!A1:E2',
-            values: [viewportHeaders, [0, 0, 1, 'gemini-2.5-flash-image', new Date().toISOString()]],
+            range: `Viewport!A1:F${viewportRows.length}`,
+            values: viewportRows,
           },
           {
             range: 'AssetReferences!A1:E1',
@@ -167,20 +194,88 @@ async function initializeSheetHeaders(token: string, spreadsheetId: string) {
 }
 
 /**
- * Save full canvas graph to Google Sheet
+ * Ensure 'Boards' sheet exists in a spreadsheet (for backward compatibility)
+ */
+async function ensureSheetsStructure(token: string, spreadsheetId: string) {
+  try {
+    const metaRes = await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(title))`,
+      token
+    );
+    const meta = await metaRes.json();
+    const sheetTitles = (meta.sheets || []).map((s: any) => s.properties?.title);
+
+    const requests: any[] = [];
+    if (!sheetTitles.includes('Boards')) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: 'Boards',
+            gridProperties: { rowCount: 50, columnCount: 6, frozenRowCount: 1 },
+          },
+        },
+      });
+    }
+
+    if (requests.length > 0) {
+      await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests }),
+      });
+    }
+  } catch (err) {
+    console.warn('Could not verify/add Boards sheet structure:', err);
+  }
+}
+
+/**
+ * Save full multi-board canvas graph to Google Sheet
  */
 export async function saveGraphToSheet(
   token: string,
   spreadsheetId: string,
   nodes: CanvasNode[],
-  viewport: ViewportState,
-  selectedModel: string
+  boardsOrViewport: BoardMetadata[] | ViewportState,
+  viewportsOrModel?: Record<string, ViewportState> | string,
+  modelsMap?: Record<string, string>
 ): Promise<void> {
   if (!spreadsheetId) {
     throw new Error('Spreadsheet ID is missing for this project');
   }
 
-  // 1. Prepare Nodes Rows
+  // Handle single-board legacy call signature vs multi-board signature
+  let boards: BoardMetadata[] = [];
+  let viewports: Record<string, ViewportState> = {};
+  let selectedModels: Record<string, string> = {};
+
+  if (Array.isArray(boardsOrViewport)) {
+    boards = boardsOrViewport;
+    viewports = (viewportsOrModel as Record<string, ViewportState>) || {};
+    selectedModels = modelsMap || {};
+  } else {
+    // Legacy single-board invocation: saveGraphToSheet(token, spreadsheetId, nodes, viewport, selectedModel)
+    const singleViewport = boardsOrViewport as ViewportState;
+    const singleModel = (viewportsOrModel as string) || 'gemini-2.5-flash-image';
+    boards = [{ id: 'board_main', name: 'MAIN', createdAt: new Date().toISOString() }];
+    viewports = { board_main: singleViewport };
+    selectedModels = { board_main: singleModel };
+  }
+
+  if (boards.length === 0) {
+    boards = [{ id: 'board_main', name: 'MAIN', createdAt: new Date().toISOString() }];
+  }
+
+  const defaultBoardId = boards[0].id;
+
+  // 1. Prepare Boards Rows
+  const boardHeaders = ['BoardId', 'Name', 'CreatedAt', 'UpdatedAt'];
+  const boardRows: any[][] = [boardHeaders];
+  boards.forEach(b => {
+    boardRows.push([b.id, b.name, b.createdAt || new Date().toISOString(), new Date().toISOString()]);
+  });
+
+  // 2. Prepare Nodes Rows (with BoardId at col M / index 12)
   const nodeHeaders = [
     'NodeId',
     'Type',
@@ -194,6 +289,7 @@ export async function saveGraphToSheet(
     'OriginalFileName',
     'CreatedAt',
     'UpdatedAt',
+    'BoardId',
   ];
 
   const nodeRows: any[][] = [nodeHeaders];
@@ -203,6 +299,7 @@ export async function saveGraphToSheet(
     const isImage = node.type === 'image';
     const imageNode = isImage ? (node as ImageNode) : null;
     const driveFileId = imageNode?.driveFileId || (isImage ? node.content : '');
+    const nodeBoardId = node.boardId || defaultBoardId;
 
     if (isImage && driveFileId) {
       const existing = assetRefMap.get(driveFileId) || { count: 0, name: imageNode?.originalFileName };
@@ -223,23 +320,27 @@ export async function saveGraphToSheet(
       imageNode?.originalFileName || '',
       node.createdAt || '',
       new Date().toISOString(),
+      nodeBoardId,
     ]);
   });
 
-  // 2. Prepare Viewport Rows
-  const viewportHeaders = ['PanX', 'PanY', 'Zoom', 'SelectedModel', 'UpdatedAt'];
-  const viewportRows = [
-    viewportHeaders,
-    [
-      Math.round(viewport.x),
-      Math.round(viewport.y),
-      parseFloat(viewport.zoom.toFixed(3)),
-      selectedModel,
+  // 3. Prepare Viewport Rows
+  const viewportHeaders = ['BoardId', 'PanX', 'PanY', 'Zoom', 'SelectedModel', 'UpdatedAt'];
+  const viewportRows: any[][] = [viewportHeaders];
+  boards.forEach(b => {
+    const vp = viewports[b.id] || { x: 0, y: 0, zoom: 1 };
+    const mod = selectedModels[b.id] || 'gemini-2.5-flash-image';
+    viewportRows.push([
+      b.id,
+      Math.round(vp.x),
+      Math.round(vp.y),
+      parseFloat(vp.zoom.toFixed(3)),
+      mod,
       new Date().toISOString(),
-    ],
-  ];
+    ]);
+  });
 
-  // 3. Prepare Asset References Rows (Asset Deduplication Index)
+  // 4. Prepare Asset References Rows
   const assetHeaders = [
     'DriveFileId',
     'FileName',
@@ -258,15 +359,28 @@ export async function saveGraphToSheet(
     ]);
   });
 
-  // Clear existing nodes content first so deleted nodes aren't left behind
+  // Ensure Boards sheet exists
+  await ensureSheetsStructure(token, spreadsheetId);
+
+  // Clear existing content first so deleted items aren't left behind
   try {
     await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Nodes!A1:Z500:clear`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Boards!A1:Z100:clear`,
       token,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
     );
     await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AssetReferences!A1:Z500:clear`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Nodes!A1:Z2000:clear`,
+      token,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+    );
+    await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Viewport!A1:Z50:clear`,
+      token,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+    );
+    await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AssetReferences!A1:Z1000:clear`,
       token,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
     );
@@ -274,7 +388,7 @@ export async function saveGraphToSheet(
     console.warn('Error clearing sheet rows', e);
   }
 
-  // Write updated data
+  // Write updated data in batch
   await sheetsFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
     token,
@@ -285,11 +399,15 @@ export async function saveGraphToSheet(
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: `Nodes!A1:L${nodeRows.length}`,
+            range: `Boards!A1:D${boardRows.length}`,
+            values: boardRows,
+          },
+          {
+            range: `Nodes!A1:M${nodeRows.length}`,
             values: nodeRows,
           },
           {
-            range: 'Viewport!A1:E2',
+            range: `Viewport!A1:F${viewportRows.length}`,
             values: viewportRows,
           },
           {
@@ -303,28 +421,75 @@ export async function saveGraphToSheet(
 }
 
 /**
- * Load canvas graph from Google Sheet
+ * Load canvas graph and all boards from Google Sheet
  */
 export async function loadGraphFromSheet(
   token: string,
   spreadsheetId: string
 ): Promise<{
+  boards: BoardMetadata[];
   nodes: CanvasNode[];
+  viewports: Record<string, ViewportState>;
+  selectedModels: Record<string, string>;
   viewport: ViewportState;
-  selectedModel?: string;
+  selectedModel: string;
 }> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=Nodes!A1:L500&ranges=Viewport!A1:E5`;
+  // Query Boards, Nodes, Viewport
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=Boards!A1:D100&ranges=Nodes!A1:M2000&ranges=Viewport!A1:F50`;
 
-  const res = await sheetsFetch(url, token);
+  let res: Response;
+  try {
+    res = await sheetsFetch(url, token);
+  } catch (e) {
+    // If Boards sheet doesn't exist yet (legacy sheet), fallback to legacy ranges
+    const fallbackUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=Nodes!A1:L500&ranges=Viewport!A1:E5`;
+    res = await sheetsFetch(fallbackUrl, token);
+  }
+
   const data = await res.json();
-
   const valueRanges = data.valueRanges || [];
-  const nodeValues: any[][] = valueRanges[0]?.values || [];
-  const viewportValues: any[][] = valueRanges[1]?.values || [];
 
+  let boardValues: any[][] = [];
+  let nodeValues: any[][] = [];
+  let viewportValues: any[][] = [];
+
+  if (valueRanges.length === 3) {
+    boardValues = valueRanges[0]?.values || [];
+    nodeValues = valueRanges[1]?.values || [];
+    viewportValues = valueRanges[2]?.values || [];
+  } else if (valueRanges.length === 2) {
+    nodeValues = valueRanges[0]?.values || [];
+    viewportValues = valueRanges[1]?.values || [];
+  }
+
+  // 1. Parse Boards
+  const boards: BoardMetadata[] = [];
+  if (boardValues.length > 1) {
+    for (let i = 1; i < boardValues.length; i++) {
+      const row = boardValues[i];
+      if (!row || !row[0]) continue;
+      boards.push({
+        id: String(row[0]),
+        name: String(row[1] || `Board ${i}`),
+        createdAt: row[2] ? String(row[2]) : undefined,
+        updatedAt: row[3] ? String(row[3]) : undefined,
+      });
+    }
+  }
+
+  // Default board if none found in sheet
+  if (boards.length === 0) {
+    boards.push({
+      id: 'board_main',
+      name: 'MAIN',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  const defaultBoardId = boards[0].id;
+
+  // 2. Parse Nodes
   const nodes: CanvasNode[] = [];
-
-  // Parse Nodes (skip row 0 header)
   if (nodeValues.length > 1) {
     for (let i = 1; i < nodeValues.length; i++) {
       const row = nodeValues[i];
@@ -342,6 +507,8 @@ export async function loadGraphFromSheet(
         driveFileId,
         origFileName,
         createdAtStr,
+        ,
+        boardIdCol,
       ] = row;
 
       const x = Number(xStr) || 0;
@@ -349,6 +516,7 @@ export async function loadGraphFromSheet(
       const width = Number(widthStr) || 200;
       const height = Number(heightStr) || 100;
       const rotation = Number(rotStr) || 0;
+      const nodeBoardId = boardIdCol ? String(boardIdCol) : defaultBoardId;
 
       if (type === 'image') {
         const fileId = driveFileId || content || id;
@@ -360,6 +528,7 @@ export async function loadGraphFromSheet(
           width,
           height,
           rotation,
+          boardId: nodeBoardId,
           content: fileId,
           driveFileId: fileId,
           originalFileName: origFileName || undefined,
@@ -376,6 +545,7 @@ export async function loadGraphFromSheet(
           width,
           height,
           rotation,
+          boardId: nodeBoardId,
           content: content ? String(content) : '',
           createdAt: Number(createdAtStr) || undefined,
         };
@@ -384,21 +554,52 @@ export async function loadGraphFromSheet(
     }
   }
 
-  // Parse Viewport
-  let viewport: ViewportState = { x: 0, y: 0, zoom: 1 };
-  let selectedModel = 'gemini-2.5-flash-image';
+  // 3. Parse Viewports & Selected Models
+  const viewports: Record<string, ViewportState> = {};
+  const selectedModels: Record<string, string> = {};
 
-  if (viewportValues.length > 1 && viewportValues[1]) {
-    const row = viewportValues[1];
-    viewport = {
-      x: Number(row[0]) || 0,
-      y: Number(row[1]) || 0,
-      zoom: Math.max(0.1, Math.min(5, Number(row[2]) || 1)),
-    };
-    if (row[3]) {
-      selectedModel = String(row[3]);
+  if (viewportValues.length > 1) {
+    for (let i = 1; i < viewportValues.length; i++) {
+      const row = viewportValues[i];
+      if (!row || row.length === 0) continue;
+
+      // Handle legacy format [PanX, PanY, Zoom, SelectedModel, UpdatedAt]
+      // vs new format [BoardId, PanX, PanY, Zoom, SelectedModel, UpdatedAt]
+      let boardId = defaultBoardId;
+      let panX = 0;
+      let panY = 0;
+      let zoom = 1;
+      let model = 'gemini-2.5-flash-image';
+
+      if (row.length >= 6 || isNaN(Number(row[0]))) {
+        boardId = String(row[0]);
+        panX = Number(row[1]) || 0;
+        panY = Number(row[2]) || 0;
+        zoom = Math.max(0.1, Math.min(5, Number(row[3]) || 1));
+        if (row[4]) model = String(row[4]);
+      } else {
+        // Legacy 5-column row
+        panX = Number(row[0]) || 0;
+        panY = Number(row[1]) || 0;
+        zoom = Math.max(0.1, Math.min(5, Number(row[2]) || 1));
+        if (row[3]) model = String(row[3]);
+      }
+
+      viewports[boardId] = { x: panX, y: panY, zoom };
+      selectedModels[boardId] = model;
     }
   }
 
-  return { nodes, viewport, selectedModel };
+  const primaryViewport = viewports[defaultBoardId] || { x: 0, y: 0, zoom: 1 };
+  const primaryModel = selectedModels[defaultBoardId] || 'gemini-2.5-flash-image';
+
+  return {
+    boards,
+    nodes,
+    viewports,
+    selectedModels,
+    viewport: primaryViewport,
+    selectedModel: primaryModel,
+  };
 }
+

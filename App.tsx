@@ -3,6 +3,7 @@ import type {
   CanvasNode,
   ImageNode,
   TextNode,
+  BoardMetadata,
   ProjectMetadata,
   GoogleUserProfile,
   SyncStatus,
@@ -33,10 +34,11 @@ import { DEFAULT_MODEL_ID, getModelById } from './services/modelsConfig';
 
 import NodeRenderer from './components/NodeRenderer';
 import TopNavigation from './components/TopNavigation';
+import BoardTabs from './components/BoardTabs';
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Sparkles, Loader2, UploadCloud } from 'lucide-react';
 
 const checkOverlap = (
   rect1: { x: number; y: number; width: number; height: number },
@@ -95,6 +97,8 @@ const findOpenPosition = (
   return { x: startX, y: startY + height + 50 };
 };
 
+const DEFAULT_BOARD_ID = 'board_main';
+
 const App: React.FC = () => {
   // Auth state
   const [user, setUser] = useState<GoogleUserProfile | null>(getCurrentUser());
@@ -104,11 +108,22 @@ const App: React.FC = () => {
   const [currentProject, setCurrentProject] = useState<ProjectMetadata | null>(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
 
-  // Canvas state
-  const [nodes, setNodes] = useState<CanvasNode[]>([]);
+  // Multi-Board state
+  const [boards, setBoards] = useState<BoardMetadata[]>([
+    { id: DEFAULT_BOARD_ID, name: 'MAIN', createdAt: new Date().toISOString() },
+  ]);
+  const [activeBoardId, setActiveBoardId] = useState<string>(DEFAULT_BOARD_ID);
+  const [allNodes, setAllNodes] = useState<CanvasNode[]>([]);
+  const [viewports, setViewports] = useState<Record<string, ViewportState>>({});
+  const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
+
+  // Active Canvas View & Selection
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [view, setView] = useState<ViewportState>({ x: 0, y: 0, zoom: 1 });
   const [selectedModelId, setSelectedModelId] = useState<string>(DEFAULT_MODEL_ID);
+
+  // Drag-and-drop file upload onto canvas state
+  const [isDraggingFileOver, setIsDraggingFileOver] = useState(false);
 
   // Sync & Generation state
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('offline');
@@ -132,6 +147,10 @@ const App: React.FC = () => {
 
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitialLoadRef = useRef<boolean>(true);
+
+  // Filter nodes for the current active board
+  const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
+  const currentBoardNodes = allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId);
 
   // 1. Listen for Google Auth changes, handle OAuth redirect callback, and auto-detect gcloud login
   useEffect(() => {
@@ -220,7 +239,7 @@ const App: React.FC = () => {
     }
   }, [user]);
 
-  // 3. Load graph data from Google Sheet when current project changes
+  // 3. Load multi-board graph data from Google Sheet when current project changes
   useEffect(() => {
     if (!currentProject || !currentProject.spreadsheetId) return;
 
@@ -232,18 +251,31 @@ const App: React.FC = () => {
     setSyncStatus('saving');
 
     loadGraphFromSheet(token, currentProject.spreadsheetId)
-      .then(({ nodes: loadedNodes, viewport: loadedViewport, selectedModel: loadedModel }) => {
+      .then(loadedData => {
         if (!isMounted) return;
-        setNodes(loadedNodes);
-        if (loadedViewport) {
-          setView(loadedViewport);
-        }
-        if (loadedModel) {
-          setSelectedModelId(loadedModel);
-        }
+
+        const loadedBoards = loadedData.boards.length > 0
+          ? loadedData.boards
+          : [{ id: DEFAULT_BOARD_ID, name: 'MAIN', createdAt: new Date().toISOString() }];
+
+        const initialBoardId = loadedBoards[0].id;
+
+        setBoards(loadedBoards);
+        setActiveBoardId(initialBoardId);
+        setAllNodes(loadedData.nodes);
+        setViewports(loadedData.viewports);
+        setSelectedModels(loadedData.selectedModels);
+        setSelectedNodeIds(new Set());
+
+        const initialView = loadedData.viewports[initialBoardId] || { x: 0, y: 0, zoom: 1 };
+        setView(initialView);
+
+        const initialModel = loadedData.selectedModels[initialBoardId] || DEFAULT_MODEL_ID;
+        setSelectedModelId(initialModel);
+
         setSyncStatus('saved');
         setLastSavedAt(new Date());
-        // Allow auto-save after initial load is settled
+
         setTimeout(() => {
           isInitialLoadRef.current = false;
         }, 500);
@@ -263,9 +295,10 @@ const App: React.FC = () => {
   // 4. Auto-save graph to Google Sheet (Debounced)
   const triggerAutoSave = useCallback(
     (
-      currentNodes: CanvasNode[],
-      currentView: ViewportState,
-      currentModel: string
+      currentAllNodes: CanvasNode[],
+      currentBoards: BoardMetadata[],
+      currentViewports: Record<string, ViewportState>,
+      currentModels: Record<string, string>
     ) => {
       if (isInitialLoadRef.current) return;
       const token = getAccessToken();
@@ -285,9 +318,10 @@ const App: React.FC = () => {
           await saveGraphToSheet(
             token,
             currentProject.spreadsheetId,
-            currentNodes,
-            currentView,
-            currentModel
+            currentAllNodes,
+            currentBoards,
+            currentViewports,
+            currentModels
           );
           setSyncStatus('saved');
           setLastSavedAt(new Date());
@@ -300,16 +334,18 @@ const App: React.FC = () => {
     [currentProject?.spreadsheetId]
   );
 
-  // Trigger auto-save whenever nodes, view, or model changes
+  // Trigger auto-save whenever nodes change
   const updateNodesAndSave = useCallback(
     (updater: (prev: CanvasNode[]) => CanvasNode[]) => {
-      setNodes(prev => {
-        const next = updater(prev);
-        triggerAutoSave(next, view, selectedModelId);
-        return next;
+      setAllNodes(prevAll => {
+        const nextAll = updater(prevAll);
+        const updatedViewports = { ...viewports, [currentBoardId]: view };
+        const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
+        triggerAutoSave(nextAll, boards, updatedViewports, updatedModels);
+        return nextAll;
       });
     },
-    [triggerAutoSave, view, selectedModelId]
+    [triggerAutoSave, boards, viewports, selectedModels, currentBoardId, view, selectedModelId]
   );
 
   const updateNode = useCallback(
@@ -323,11 +359,93 @@ const App: React.FC = () => {
 
   const addNode = useCallback(
     <T extends CanvasNode>(newNode: T) => {
-      updateNodesAndSave(prev => [...prev, newNode]);
+      const nodeWithBoard: CanvasNode = {
+        ...newNode,
+        boardId: newNode.boardId || currentBoardId,
+      };
+      updateNodesAndSave(prev => [...prev, nodeWithBoard]);
       setSelectedNodeIds(new Set([newNode.id]));
     },
-    [updateNodesAndSave]
+    [updateNodesAndSave, currentBoardId]
   );
+
+  // Multi-Board Operations: Switch, Add, Rename, Delete
+  const handleSelectBoard = (newBoardId: string) => {
+    if (newBoardId === currentBoardId) return;
+
+    // Persist current board's view and model
+    const updatedViewports = { ...viewports, [currentBoardId]: view };
+    const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
+    setViewports(updatedViewports);
+    setSelectedModels(updatedModels);
+
+    setActiveBoardId(newBoardId);
+    setSelectedNodeIds(new Set());
+
+    const targetView = updatedViewports[newBoardId] || { x: 0, y: 0, zoom: 1 };
+    setView(targetView);
+
+    const targetModel = updatedModels[newBoardId] || DEFAULT_MODEL_ID;
+    setSelectedModelId(targetModel);
+
+    triggerAutoSave(allNodes, boards, updatedViewports, updatedModels);
+  };
+
+  const handleAddBoard = (name?: string) => {
+    const newId = `board_${Date.now()}`;
+    const newName = name?.trim() || `Board ${boards.length + 1}`;
+    const newBoard: BoardMetadata = {
+      id: newId,
+      name: newName,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedBoards = [...boards, newBoard];
+    const updatedViewports = { ...viewports, [currentBoardId]: view, [newId]: { x: 0, y: 0, zoom: 1 } };
+    const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId, [newId]: DEFAULT_MODEL_ID };
+
+    setBoards(updatedBoards);
+    setViewports(updatedViewports);
+    setSelectedModels(updatedModels);
+    setActiveBoardId(newId);
+    setView({ x: 0, y: 0, zoom: 1 });
+    setSelectedModelId(DEFAULT_MODEL_ID);
+    setSelectedNodeIds(new Set());
+
+    triggerAutoSave(allNodes, updatedBoards, updatedViewports, updatedModels);
+  };
+
+  const handleRenameBoard = (boardId: string, newName: string) => {
+    const updatedBoards = boards.map(b => (b.id === boardId ? { ...b, name: newName, updatedAt: new Date().toISOString() } : b));
+    setBoards(updatedBoards);
+    triggerAutoSave(allNodes, updatedBoards, viewports, selectedModels);
+  };
+
+  const handleDeleteBoard = (boardId: string) => {
+    if (boards.length <= 1) return;
+
+    const updatedBoards = boards.filter(b => b.id !== boardId);
+    const updatedNodes = allNodes.filter(n => (n.boardId || boards[0]?.id) !== boardId);
+    const remainingViewports = { ...viewports };
+    delete remainingViewports[boardId];
+    const remainingModels = { ...selectedModels };
+    delete remainingModels[boardId];
+
+    setBoards(updatedBoards);
+    setAllNodes(updatedNodes);
+    setViewports(remainingViewports);
+    setSelectedModels(remainingModels);
+
+    if (currentBoardId === boardId) {
+      const nextActiveId = updatedBoards[0].id;
+      setActiveBoardId(nextActiveId);
+      setView(remainingViewports[nextActiveId] || { x: 0, y: 0, zoom: 1 });
+      setSelectedModelId(remainingModels[nextActiveId] || DEFAULT_MODEL_ID);
+      setSelectedNodeIds(new Set());
+    }
+
+    triggerAutoSave(updatedNodes, updatedBoards, remainingViewports, remainingModels);
+  };
 
   // Duplicate node: creates a new node pointing to the EXACT same asset without cloning file
   const handleDuplicateNode = useCallback(
@@ -342,7 +460,7 @@ const App: React.FC = () => {
           id: newId,
           x: img.x + shift,
           y: img.y + shift,
-          // Point to the EXACT SAME Google Drive file ID without cloning file in Drive
+          boardId: currentBoardId,
           content: img.content,
           driveFileId: img.driveFileId,
           originalFileName: img.originalFileName,
@@ -357,12 +475,13 @@ const App: React.FC = () => {
           id: newId,
           x: txt.x + shift,
           y: txt.y + shift,
+          boardId: currentBoardId,
           createdAt: Date.now(),
         };
         addNode(duplicatedTextNode);
       }
     },
-    [addNode]
+    [addNode, currentBoardId]
   );
 
   const handleDeleteNode = useCallback(
@@ -377,7 +496,7 @@ const App: React.FC = () => {
     [updateNodesAndSave]
   );
 
-  // Canvas Interactions
+  // Canvas View & Interactions
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('.node-renderer')) return;
@@ -396,8 +515,8 @@ const App: React.FC = () => {
 
   const handleNodeDragStart = (e: React.PointerEvent, nodeId: string) => {
     const draggedNodes = selectedNodeIds.has(nodeId)
-      ? nodes.filter(n => selectedNodeIds.has(n.id))
-      : ([nodes.find(n => n.id === nodeId)].filter(Boolean) as CanvasNode[]);
+      ? currentBoardNodes.filter(n => selectedNodeIds.has(n.id))
+      : ([currentBoardNodes.find(n => n.id === nodeId)].filter(Boolean) as CanvasNode[]);
 
     const nodesMap = new Map(draggedNodes.map(n => [n.id, { x: n.x, y: n.y }]));
 
@@ -432,7 +551,11 @@ const App: React.FC = () => {
 
   const handlePointerUp = () => {
     if (dragInfoRef.current?.type === 'pan' || dragInfoRef.current?.type === 'drag_node') {
-      triggerAutoSave(nodes, view, selectedModelId);
+      const updatedViewports = { ...viewports, [currentBoardId]: view };
+      const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
+      setViewports(updatedViewports);
+      setSelectedModels(updatedModels);
+      triggerAutoSave(allNodes, boards, updatedViewports, updatedModels);
     }
     dragInfoRef.current = null;
     canvasRef.current?.classList.remove('cursor-grabbing');
@@ -456,7 +579,10 @@ const App: React.FC = () => {
 
     const newView = { x: newX, y: newY, zoom: clampedZoom };
     setView(newView);
-    triggerAutoSave(nodes, newView, selectedModelId);
+
+    const updatedViewports = { ...viewports, [currentBoardId]: newView };
+    setViewports(updatedViewports);
+    triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
   };
 
   const handleSelectNode = (id: string, shiftKey: boolean) => {
@@ -495,16 +621,18 @@ const App: React.FC = () => {
       width: 220,
       height: 70,
       rotation: 0,
+      boardId: currentBoardId,
       content: '點此輸入提示詞或文字...',
       createdAt: Date.now(),
     };
     addNode(newNode);
   };
 
+  // Upload image file at specific canvas coords (or center if omitted)
   const handleUploadImageFile = useCallback(
-    async (file: File) => {
+    async (file: File, targetCoords?: { x: number; y: number }) => {
       const token = getAccessToken();
-      const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+      const initialCoords = targetCoords || getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
       const id = Date.now().toString();
 
       // Store locally in IndexedDB first for instant UI response
@@ -515,7 +643,7 @@ const App: React.FC = () => {
       img.onload = async () => {
         const width = img.width > 480 ? 480 : img.width;
         const height = img.width > 480 ? (480 / img.width) * img.height : img.height;
-        const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, nodes);
+        const { x, y } = targetCoords || findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
 
         let driveFileId = id;
         let driveViewLink: string | undefined;
@@ -547,6 +675,7 @@ const App: React.FC = () => {
           width,
           height,
           rotation: 0,
+          boardId: currentBoardId,
           content: driveFileId,
           driveFileId,
           originalFileName: file.name,
@@ -558,8 +687,43 @@ const App: React.FC = () => {
       };
       img.src = base64;
     },
-    [nodes, currentProject, addNode, view]
+    [currentBoardNodes, currentProject, addNode, currentBoardId, view]
   );
+
+  // Drag-and-Drop Image Files onto Canvas
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDraggingFileOver(true);
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDraggingFileOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFileOver(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+
+    const dropCoords = getCanvasCoords(e.clientX, e.clientY);
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const offset = i * 35;
+      const targetCoords = { x: dropCoords.x + offset, y: dropCoords.y + offset };
+      await handleUploadImageFile(file, targetCoords);
+    }
+  };
 
   const handlePaste = useCallback(
     async (e: ClipboardEvent) => {
@@ -581,6 +745,7 @@ const App: React.FC = () => {
               id: newId,
               x: imgNode.x + shift,
               y: imgNode.y + shift,
+              boardId: currentBoardId,
               content: imgNode.content,
               driveFileId: imgNode.driveFileId,
               createdAt: Date.now(),
@@ -592,6 +757,7 @@ const App: React.FC = () => {
               id: newId,
               x: txtNode.x + shift,
               y: txtNode.y + shift,
+              boardId: currentBoardId,
               createdAt: Date.now(),
             });
           }
@@ -604,7 +770,7 @@ const App: React.FC = () => {
       if (text) {
         const width = 220;
         const height = 100;
-        const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, nodes);
+        const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
         addNode({
           id: Date.now().toString(),
           type: 'text',
@@ -613,6 +779,7 @@ const App: React.FC = () => {
           width,
           height,
           rotation: 0,
+          boardId: currentBoardId,
           content: text,
           createdAt: Date.now(),
         });
@@ -633,7 +800,7 @@ const App: React.FC = () => {
         }
       }
     },
-    [nodes, copiedNodesClipboard, handleUploadImageFile, addNode, view]
+    [currentBoardNodes, copiedNodesClipboard, handleUploadImageFile, addNode, currentBoardId, view]
   );
 
   // Execute Generation
@@ -643,7 +810,7 @@ const App: React.FC = () => {
     setError(null);
 
     const token = getAccessToken();
-    const selectedNodes = nodes.filter(n => selectedNodeIds.has(n.id));
+    const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
 
     try {
       const result = await generateFromNodes(selectedNodes, selectedModelId);
@@ -682,7 +849,7 @@ const App: React.FC = () => {
         img.onload = () => {
           const width = img.width > 480 ? 480 : img.width;
           const height = img.width > 480 ? (480 / img.width) * img.height : img.height;
-          const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, nodes);
+          const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
 
           addNode({
             id,
@@ -692,6 +859,7 @@ const App: React.FC = () => {
             width,
             height,
             rotation: 0,
+            boardId: currentBoardId,
             content: driveFileId,
             driveFileId,
             originalFileName: `generated_${id}.png`,
@@ -704,7 +872,7 @@ const App: React.FC = () => {
         // Text output from reasoning model
         const width = 280;
         const height = 140;
-        const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, nodes);
+        const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
         addNode({
           id: Date.now().toString(),
           type: 'text',
@@ -713,6 +881,7 @@ const App: React.FC = () => {
           width,
           height,
           rotation: 0,
+          boardId: currentBoardId,
           content: result.text,
           createdAt: Date.now(),
         });
@@ -726,10 +895,11 @@ const App: React.FC = () => {
   }, [
     isGenerating,
     selectedNodeIds,
-    nodes,
+    currentBoardNodes,
     selectedModelId,
     currentProject,
     addNode,
+    currentBoardId,
     view,
   ]);
 
@@ -744,14 +914,14 @@ const App: React.FC = () => {
       // Duplicate selected with Cmd+D / Ctrl+D
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
-        const selected = nodes.filter(n => selectedNodeIds.has(n.id));
+        const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
         selected.forEach(node => handleDuplicateNode(node));
       }
 
       // Copy with Cmd+C / Ctrl+C
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
-        const selected = nodes.filter(n => selectedNodeIds.has(n.id));
+        const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
         if (selected.length > 0) {
           setCopiedNodesClipboard(selected);
         }
@@ -769,7 +939,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleExecute, handleDuplicateNode, selectedNodeIds, nodes, updateNodesAndSave]);
+  }, [handleExecute, handleDuplicateNode, selectedNodeIds, currentBoardNodes, updateNodesAndSave]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -812,23 +982,42 @@ const App: React.FC = () => {
             width: 220,
             height: 70,
             rotation: 0,
+            boardId: currentBoardId,
             content: '輸入文字提示詞...',
             createdAt: Date.now(),
           });
         }}
-        onUploadImage={handleUploadImageFile}
-        onResetZoom={() => setView({ x: 0, y: 0, zoom: 1 })}
-        onZoomIn={() => setView(v => ({ ...v, zoom: Math.min(5, v.zoom * 1.2) }))}
-        onZoomOut={() => setView(v => ({ ...v, zoom: Math.max(0.1, v.zoom / 1.2) }))}
+        onUploadImage={file => handleUploadImageFile(file)}
+        onResetZoom={() => {
+          const newView = { x: 0, y: 0, zoom: 1 };
+          setView(newView);
+          const updatedViewports = { ...viewports, [currentBoardId]: newView };
+          setViewports(updatedViewports);
+          triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+        }}
+        onZoomIn={() => {
+          const newView = { ...view, zoom: Math.min(5, view.zoom * 1.2) };
+          setView(newView);
+          const updatedViewports = { ...viewports, [currentBoardId]: newView };
+          setViewports(updatedViewports);
+          triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+        }}
+        onZoomOut={() => {
+          const newView = { ...view, zoom: Math.max(0.1, view.zoom / 1.2) };
+          setView(newView);
+          const updatedViewports = { ...viewports, [currentBoardId]: newView };
+          setViewports(updatedViewports);
+          triggerAutoSave(allNodes, boards, updatedViewports, selectedModels);
+        }}
         onClearCanvas={() => {
-          if (window.confirm('確定要清空畫布上的所有節點嗎？')) {
-            updateNodesAndSave(() => []);
+          if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
+            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId));
             setSelectedNodeIds(new Set());
           }
         }}
       />
 
-      {/* Infinite Canvas */}
+      {/* Infinite Canvas with Drag-and-Drop Image File Support */}
       <div
         className="w-full h-full relative overflow-hidden"
         ref={canvasRef}
@@ -838,9 +1027,29 @@ const App: React.FC = () => {
         onPointerLeave={handlePointerUp}
         onWheel={handleWheel}
         onDoubleClick={handleCanvasDoubleClick}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         {/* Canvas Background Grid */}
         <div className="absolute inset-0 bg-gray-950 bg-[linear-gradient(to_right,#37415125_1px,transparent_1px),linear-gradient(to_bottom,#37415125_1px,transparent_1px)] bg-[size:20px_20px]" />
+
+        {/* Drag Over Overlay Indicator */}
+        {isDraggingFileOver && (
+          <div className="absolute inset-4 z-40 bg-blue-600/15 backdrop-blur-[2px] border-3 border-dashed border-blue-400 rounded-3xl flex flex-col items-center justify-center gap-3 pointer-events-none animate-pulse shadow-2xl">
+            <div className="p-4 bg-gray-900/90 border border-blue-500/50 text-white rounded-2xl shadow-2xl flex items-center gap-3.5">
+              <div className="p-3 bg-blue-600/30 rounded-xl text-blue-400 border border-blue-500/40">
+                <UploadCloud className="w-8 h-8" />
+              </div>
+              <div>
+                <div className="font-bold text-sm text-white">放開以將圖片新增至目前畫布</div>
+                <div className="text-xs text-blue-300 font-mono mt-0.5">
+                  支援 PNG, JPG, WEBP, GIF 等格式拖放放置
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Nodes Layer */}
         <div
@@ -850,7 +1059,7 @@ const App: React.FC = () => {
             transformOrigin: '0 0',
           }}
         >
-          {nodes.map(node => (
+          {currentBoardNodes.map(node => (
             <div key={node.id} className="node-renderer">
               <NodeRenderer
                 node={node}
@@ -867,7 +1076,18 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Floating Bottom Action Bar */}
+      {/* Multi-Board Switcher Tabs Bar (Bottom-Left) */}
+      <BoardTabs
+        boards={boards}
+        activeBoardId={currentBoardId}
+        onSelectBoard={handleSelectBoard}
+        onAddBoard={handleAddBoard}
+        onRenameBoard={handleRenameBoard}
+        onDeleteBoard={handleDeleteBoard}
+        allNodes={allNodes}
+      />
+
+      {/* Floating Bottom Right Action Bar */}
       <div
         className="absolute bottom-6 right-6 z-20 flex items-center gap-3"
         onPointerDown={e => e.stopPropagation()}
@@ -932,7 +1152,9 @@ const App: React.FC = () => {
         selectedModelId={selectedModelId}
         onSelectModel={id => {
           setSelectedModelId(id);
-          triggerAutoSave(nodes, view, id);
+          const updatedModels = { ...selectedModels, [currentBoardId]: id };
+          setSelectedModels(updatedModels);
+          triggerAutoSave(allNodes, boards, viewports, updatedModels);
         }}
       />
 
