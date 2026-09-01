@@ -147,6 +147,7 @@ const App: React.FC = () => {
 
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitialLoadRef = useRef<boolean>(true);
+  const loadedProjectIdRef = useRef<string | null>(null);
 
   // Filter nodes for the current active board
   const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
