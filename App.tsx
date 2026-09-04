@@ -40,6 +40,15 @@ import BoardTabs from './components/BoardTabs';
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
+import ContextMenu from './components/ContextMenu';
+import MultiSelectionBar from './components/MultiSelectionBar';
+import {
+  getDefaultNodeSize,
+  setDefaultNodeSize,
+  resetNodesAspectRatio,
+  applyOptimalSizeToNodes,
+  autoArrangeNodes,
+} from './services/nodeSizingService';
 import { Sparkles, Loader2, UploadCloud, Trash2 } from 'lucide-react';
 
 const checkOverlap = (
@@ -296,7 +305,14 @@ const App: React.FC = () => {
           ? loadedData.boards
           : [{ id: DEFAULT_BOARD_ID, name: 'MAIN', createdAt: new Date().toISOString() }];
 
-        const initialBoardId = loadedBoards[0].id;
+        let savedBoardId: string | null = null;
+        try {
+          savedBoardId = localStorage.getItem(`ai_mix_board_last_board_${currentProject.id}`);
+        } catch {}
+
+        const initialBoardId = (savedBoardId && loadedBoards.some(b => b.id === savedBoardId))
+          ? savedBoardId
+          : loadedBoards[0].id;
 
         setBoards(loadedBoards);
         setActiveBoardId(initialBoardId);
@@ -402,6 +418,19 @@ const App: React.FC = () => {
     [updateNodesAndSave]
   );
 
+  const updateMultipleNodes = useCallback(
+    (batchUpdates: { id: string; updates: Partial<CanvasNode> }[]) => {
+      const updateMap = new Map(batchUpdates.map(u => [u.id, u.updates]));
+      updateNodesAndSave(prevNodes =>
+        prevNodes.map(n => {
+          const upd = updateMap.get(n.id);
+          return upd ? ({ ...n, ...upd, updatedAt: Date.now() } as CanvasNode) : n;
+        })
+      );
+    },
+    [updateNodesAndSave]
+  );
+
   const addNode = useCallback(
     <T extends CanvasNode>(newNode: T) => {
       const nodeWithBoard: CanvasNode = {
@@ -417,6 +446,12 @@ const App: React.FC = () => {
   // Multi-Board Handlers
   const handleSelectBoard = (newBoardId: string) => {
     if (newBoardId === activeBoardId) return;
+
+    if (currentProject) {
+      try {
+        localStorage.setItem(`ai_mix_board_last_board_${currentProject.id}`, newBoardId);
+      } catch {}
+    }
 
     const updatedViewports = { ...viewports, [currentBoardId]: view };
     const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
@@ -442,6 +477,12 @@ const App: React.FC = () => {
       name: newName,
       createdAt: new Date().toISOString(),
     };
+
+    if (currentProject) {
+      try {
+        localStorage.setItem(`ai_mix_board_last_board_${currentProject.id}`, newId);
+      } catch {}
+    }
 
     const updatedBoards = [...boards, newBoard];
     const updatedViewports = { ...viewports, [currentBoardId]: view, [newId]: { x: 0, y: 0, zoom: 1 } };
@@ -481,6 +522,11 @@ const App: React.FC = () => {
 
     if (currentBoardId === boardId) {
       const nextActiveId = updatedBoards[0].id;
+      if (currentProject) {
+        try {
+          localStorage.setItem(`ai_mix_board_last_board_${currentProject.id}`, nextActiveId);
+        } catch {}
+      }
       setActiveBoardId(nextActiveId);
       setView(remainingViewports[nextActiveId] || { x: 0, y: 0, zoom: 1 });
       setSelectedModelId(remainingModels[nextActiveId] || DEFAULT_MODEL_ID);
@@ -808,8 +854,10 @@ const App: React.FC = () => {
       const base64 = await blobToBase64(file);
       const img = new Image();
       img.onload = async () => {
-        const width = img.width > 480 ? 480 : img.width;
-        const height = img.width > 480 ? (480 / img.width) * img.height : img.height;
+        const defaultSize = getDefaultNodeSize();
+        const maxWidth = defaultSize.width || 360;
+        const width = img.width > maxWidth ? maxWidth : img.width;
+        const height = Math.round((width / img.width) * img.height);
         const { x, y } = targetCoords || findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
 
         let driveFileId = id;
@@ -1064,8 +1112,10 @@ const App: React.FC = () => {
         const base64 = await blobToBase64(newImageBlob);
         const img = new Image();
         img.onload = () => {
-          const width = img.width > 480 ? 480 : img.width;
-          const height = img.width > 480 ? (480 / img.width) * img.height : img.height;
+          const defaultSize = getDefaultNodeSize();
+          const maxWidth = defaultSize.width || 360;
+          const width = img.width > maxWidth ? maxWidth : img.width;
+          const height = Math.round((width / img.width) * img.height);
           const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
 
           addNode({
@@ -1234,6 +1284,29 @@ const App: React.FC = () => {
         e.preventDefault();
         fitToView();
       }
+
+      // Select All (Cmd+A / Ctrl+A)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+        e.preventDefault();
+        setSelectedNodeIds(new Set(currentBoardNodes.map(n => n.id)));
+      }
+
+      // Escape to Deselect All & Close Context Menu
+      if (e.key === 'Escape') {
+        setSelectedNodeIds(new Set());
+        setContextMenu(prev => ({ ...prev, isOpen: false }));
+      }
+
+      // Auto Arrange (Alt+G)
+      if (e.altKey && e.key.toLowerCase() === 'g') {
+        if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+        e.preventDefault();
+        const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+        if (selected.length > 1) {
+          autoArrangeNodes(selected, 'grid', updateMultipleNodes);
+        }
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -1248,7 +1321,7 @@ const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes]);
+  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -1264,6 +1337,114 @@ const App: React.FC = () => {
     setProjects(prev => [created, ...prev]);
     setCurrentProject(created);
   };
+
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{
+    isOpen: boolean;
+    position: { x: number; y: number };
+    targetType: 'node' | 'canvas';
+  }>({
+    isOpen: false,
+    position: { x: 0, y: 0 },
+    targetType: 'canvas',
+  });
+
+  const canvasFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleNodeContextMenu = useCallback(
+    (e: React.MouseEvent, nodeId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (!selectedNodeIds.has(nodeId)) {
+        setSelectedNodeIds(new Set([nodeId]));
+      }
+
+      setContextMenu({
+        isOpen: true,
+        position: { x: e.clientX, y: e.clientY },
+        targetType: 'node',
+      });
+    },
+    [selectedNodeIds]
+  );
+
+  const handleCanvasContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({
+      isOpen: true,
+      position: { x: e.clientX, y: e.clientY },
+      targetType: 'canvas',
+    });
+  }, []);
+
+  const handleAutoArrange = useCallback(
+    (layout: 'grid' | 'horizontal' | 'vertical') => {
+      const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+      if (selected.length === 0) return;
+      autoArrangeNodes(selected, layout, updateMultipleNodes);
+    },
+    [currentBoardNodes, selectedNodeIds, updateMultipleNodes]
+  );
+
+  const handleResetAspect = useCallback(() => {
+    const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (selected.length === 0) return;
+    resetNodesAspectRatio(selected, updateMultipleNodes);
+  }, [currentBoardNodes, selectedNodeIds, updateMultipleNodes]);
+
+  const handleApplyDefaultSize = useCallback(() => {
+    const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (selected.length === 0) return;
+    applyOptimalSizeToNodes(selected, updateMultipleNodes);
+  }, [currentBoardNodes, selectedNodeIds, updateMultipleNodes]);
+
+  const handleSaveAsDefaultSize = useCallback(() => {
+    const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (selected.length === 0) return;
+    const firstNode = selected[0];
+    setDefaultNodeSize({ width: firstNode.width, height: firstNode.height });
+  }, [currentBoardNodes, selectedNodeIds]);
+
+  const handleBringToFront = useCallback(() => {
+    const idSet = new Set(selectedNodeIds);
+    updateNodesAndSave(prevNodes => {
+      const remaining = prevNodes.filter(n => !idSet.has(n.id));
+      const moving = prevNodes.filter(n => idSet.has(n.id));
+      return [...remaining, ...moving];
+    });
+  }, [selectedNodeIds, updateNodesAndSave]);
+
+  const handleSendToBack = useCallback(() => {
+    const idSet = new Set(selectedNodeIds);
+    updateNodesAndSave(prevNodes => {
+      const moving = prevNodes.filter(n => idSet.has(n.id));
+      const remaining = prevNodes.filter(n => !idSet.has(n.id));
+      return [...moving, ...remaining];
+    });
+  }, [selectedNodeIds, updateNodesAndSave]);
+
+  const handleDuplicateSelected = useCallback(() => {
+    if (selectedNodeIds.size === 0) return;
+    const toDuplicate = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    const newNodes: CanvasNode[] = toDuplicate.map(node => {
+      const newId = `${node.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      return {
+        ...node,
+        id: newId,
+        x: node.x + 30,
+        y: node.y + 30,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+    });
+    updateNodesAndSave(prev => [...prev, ...newNodes]);
+    setSelectedNodeIds(new Set(newNodes.map(n => n.id)));
+  }, [selectedNodeIds, currentBoardNodes, updateNodesAndSave]);
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedNodeIds(new Set(currentBoardNodes.map(n => n.id)));
+  }, [currentBoardNodes]);
 
   const currentModelInfo = getModelById(selectedModelId);
 
@@ -1329,6 +1510,7 @@ const App: React.FC = () => {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onContextMenu={handleCanvasContextMenu}
       >
         {/* Canvas Background Grid */}
         <div className="absolute inset-0 bg-gray-950 bg-[linear-gradient(to_right,#37415125_1px,transparent_1px),linear-gradient(to_bottom,#37415125_1px,transparent_1px)] bg-[size:20px_20px]" />
@@ -1364,11 +1546,13 @@ const App: React.FC = () => {
                 node={node}
                 zoom={view.zoom}
                 isSelected={selectedNodeIds.has(node.id)}
+                isMultiSelecting={selectedNodeIds.size > 1}
                 onNodeUpdate={updateNode}
                 onSelect={handleSelectNode}
                 onDragStart={handleNodeDragStart}
                 onDuplicateNode={handleDuplicateNode}
                 onDeleteNode={handleDeleteNode}
+                onContextMenu={handleNodeContextMenu}
               />
             </div>
           ))}
@@ -1503,6 +1687,80 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Redesigned Multi-Selection Bar HUD */}
+      <MultiSelectionBar
+        selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
+        onAutoArrange={handleAutoArrange}
+        onResetAspect={handleResetAspect}
+        onApplyDefaultSize={handleApplyDefaultSize}
+        onSaveAsDefaultSize={handleSaveAsDefaultSize}
+        onDuplicate={handleDuplicateSelected}
+        onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
+        onDeselectAll={() => setSelectedNodeIds(new Set())}
+        onGenerate={handleExecute}
+      />
+
+      {/* Context Menu (Right Click) */}
+      <ContextMenu
+        isOpen={contextMenu.isOpen}
+        position={contextMenu.position}
+        targetType={contextMenu.targetType}
+        selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
+        onClose={() => setContextMenu(prev => ({ ...prev, isOpen: false }))}
+        onAutoArrange={handleAutoArrange}
+        onResetAspect={handleResetAspect}
+        onApplyDefaultSize={handleApplyDefaultSize}
+        onSaveAsDefaultSize={handleSaveAsDefaultSize}
+        onDuplicate={handleDuplicateSelected}
+        onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
+        onBringToFront={handleBringToFront}
+        onSendToBack={handleSendToBack}
+        onGenerate={handleExecute}
+        onAddText={() => {
+          const coords = getCanvasCoords(contextMenu.position.x, contextMenu.position.y);
+          addNode({
+            id: Date.now().toString(),
+            type: 'text',
+            x: coords.x,
+            y: coords.y,
+            width: 220,
+            height: 70,
+            rotation: 0,
+            boardId: currentBoardId,
+            content: '點此輸入提示詞或文字...',
+            createdAt: Date.now(),
+          });
+        }}
+        onUploadImage={() => canvasFileInputRef.current?.click()}
+        onSelectAll={handleSelectAll}
+        onFitToScreen={fitToView}
+        onClearCanvas={() => {
+          if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
+            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId));
+            setSelectedNodeIds(new Set());
+          }
+        }}
+      />
+
+      {/* Hidden File Input for Canvas Context Menu */}
+      <input
+        ref={canvasFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) {
+            const coords = getCanvasCoords(
+              contextMenu.position.x || window.innerWidth / 2,
+              contextMenu.position.y || window.innerHeight / 2
+            );
+            handleUploadImageFile(file, coords);
+          }
+          e.target.value = '';
+        }}
+      />
 
       {/* Modals */}
       <ModelSelectorModal

@@ -14,6 +14,8 @@ interface NodeRendererProps {
   onDragStart: (e: React.PointerEvent, nodeId: string) => void;
   onDuplicateNode?: (node: CanvasNode) => void;
   onDeleteNode?: (nodeId: string) => void;
+  isMultiSelecting?: boolean;
+  onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
 }
 
 const NodeRenderer: React.FC<NodeRendererProps> = ({
@@ -25,6 +27,8 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDragStart,
   onDuplicateNode,
   onDeleteNode,
+  isMultiSelecting,
+  onContextMenu,
 }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -148,6 +152,11 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
       style={commonStyle}
       onPointerDown={handlePointerDown}
       onDoubleClick={handleDoubleClick}
+      onContextMenu={e => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu?.(e, node.id);
+      }}
       data-node-id={node.id}
     >
       {/* Node Content */}
@@ -202,8 +211,8 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         </div>
       )}
 
-      {/* Floating Action Menu when Selected - Inverse scaled so it stays 100% constant size */}
-      {isSelected && (
+      {/* Floating Action Menu when Single Node Selected - Inverse scaled so it stays 100% constant size */}
+      {isSelected && !isMultiSelecting && (
         <div
           className="absolute -top-3 left-0 flex items-center gap-1 bg-gray-900/95 backdrop-blur-md border border-gray-700 px-2.5 py-1.5 rounded-xl shadow-2xl z-30 pointer-events-auto"
           style={{
@@ -244,6 +253,19 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
+        </div>
+      )}
+
+      {/* Multi-Selection Indicator Badge - Clean indicator without cluttered buttons */}
+      {isSelected && isMultiSelecting && (
+        <div
+          className="absolute -top-2.5 -left-2.5 w-5 h-5 rounded-full bg-blue-600 text-white font-mono text-[10px] font-bold shadow-md z-30 flex items-center justify-center pointer-events-none ring-2 ring-gray-900 animate-in zoom-in-75 duration-100"
+          style={{
+            transform: `scale(${1 / zoom})`,
+            transformOrigin: 'top left',
+          }}
+        >
+          ✓
         </div>
       )}
 
