@@ -12,6 +12,7 @@ import {
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
   Layers,
+  ClipboardCopy,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -22,6 +23,7 @@ export interface MultiSelectionBarProps {
   onResetAspect: () => void;
   onApplyDefaultSize: () => void;
   onSaveAsDefaultSize: () => void;
+  onCopyToClipboard?: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
   onDeselectAll: () => void;
@@ -34,6 +36,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   onResetAspect,
   onApplyDefaultSize,
   onSaveAsDefaultSize,
+  onCopyToClipboard,
   onDuplicate,
   onDelete,
   onDeselectAll,
@@ -149,14 +152,26 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
 
       <div className="w-px h-5 bg-gray-700/80 mx-0.5" />
 
+      {/* Copy to Clipboard */}
+      {onCopyToClipboard && (
+        <button
+          onClick={onCopyToClipboard}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
+          title="複製所選節點至剪貼簿 (Ctrl+C)"
+        >
+          <ClipboardCopy className="w-3.5 h-3.5 text-blue-400" />
+          <span className="hidden sm:inline">複製</span>
+        </button>
+      )}
+
       {/* Duplicate */}
       <button
         onClick={onDuplicate}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
-        title="複製所選節點"
+        title="在畫布上製作複本 (Ctrl+D)"
       >
-        <Copy className="w-3.5 h-3.5 text-blue-400" />
-        <span className="hidden sm:inline">複製</span>
+        <Copy className="w-3.5 h-3.5 text-gray-400" />
+        <span className="hidden sm:inline">複本</span>
       </button>
 
       {/* Delete */}

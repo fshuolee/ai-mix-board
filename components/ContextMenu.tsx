@@ -6,6 +6,8 @@ import {
   Ruler,
   Bookmark,
   Copy,
+  ClipboardCopy,
+  Clipboard,
   Trash2,
   ArrowUp,
   ArrowDown,
@@ -31,11 +33,13 @@ export interface ContextMenuProps {
   onResetAspect: () => void;
   onApplyDefaultSize: () => void;
   onSaveAsDefaultSize: () => void;
+  onCopyToClipboard: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
   onBringToFront: () => void;
   onSendToBack: () => void;
   onGenerate: () => void;
+  onPaste?: () => void;
   onAddText: () => void;
   onUploadImage: () => void;
   onSelectAll: () => void;
@@ -53,11 +57,13 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onResetAspect,
   onApplyDefaultSize,
   onSaveAsDefaultSize,
+  onCopyToClipboard,
   onDuplicate,
   onDelete,
   onBringToFront,
   onSendToBack,
   onGenerate,
+  onPaste,
   onAddText,
   onUploadImage,
   onSelectAll,
@@ -95,7 +101,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
 
   // Calculate smart positioned coordinates so it never overflows offscreen
   const menuWidth = 240;
-  const menuHeight = targetType === 'node' ? 380 : 260;
+  const menuHeight = targetType === 'node' ? 440 : 280;
   const safeX = Math.min(position.x, window.innerWidth - menuWidth - 12);
   const safeY = Math.min(position.y, window.innerHeight - menuHeight - 12);
 
@@ -258,14 +264,34 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
           <div className="py-1">
             <button
               onClick={() => {
+                onCopyToClipboard();
+                onClose();
+              }}
+              className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-blue-600/20 hover:text-blue-300 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <ClipboardCopy className="w-4 h-4 text-blue-400" />
+                <span>
+                  {count === 1 && selectedNodes[0]?.type === 'image'
+                    ? '複製圖片到剪貼簿'
+                    : count === 1 && selectedNodes[0]?.type === 'text'
+                    ? '複製文字到剪貼簿'
+                    : '複製所選物件到剪貼簿'}
+                </span>
+              </div>
+              <span className="text-[10px] text-gray-400 font-mono">Ctrl+C</span>
+            </button>
+
+            <button
+              onClick={() => {
                 onDuplicate();
                 onClose();
               }}
               className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-gray-800 text-gray-300 hover:text-white transition-colors text-left"
             >
               <div className="flex items-center gap-2">
-                <Copy className="w-4 h-4 text-blue-400" />
-                <span>複製所選物件</span>
+                <Copy className="w-4 h-4 text-gray-400" />
+                <span>在畫布上製作複本</span>
               </div>
               <span className="text-[10px] text-gray-500 font-mono">Ctrl+D</span>
             </button>
@@ -308,6 +334,22 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
           </div>
 
           <div className="py-1">
+            {onPaste && (
+              <button
+                onClick={() => {
+                  onPaste();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-blue-600/20 hover:text-blue-300 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <Clipboard className="w-4 h-4 text-blue-400" />
+                  <span>貼上剪貼簿內容</span>
+                </div>
+                <span className="text-[10px] text-gray-400 font-mono">Ctrl+V</span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 onAddText();
@@ -333,7 +375,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                 <ImageIcon className="w-4 h-4 text-purple-400" />
                 <span>上傳/新增圖片</span>
               </div>
-              <span className="text-[10px] text-gray-500 font-mono">Ctrl+V</span>
+              <span className="text-[10px] text-gray-500 font-mono">拖放亦可</span>
             </button>
           </div>
 

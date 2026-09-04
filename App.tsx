@@ -50,7 +50,8 @@ import {
   autoArrangeNodes,
   fitDimensions,
 } from './services/nodeSizingService';
-import { Sparkles, Loader2, UploadCloud, Trash2 } from 'lucide-react';
+import { copyNodesToClipboard } from './services/clipboardService';
+import { Sparkles, Loader2, UploadCloud, Trash2, ClipboardCheck } from 'lucide-react';
 
 const checkOverlap = (
   rect1: { x: number; y: number; width: number; height: number },
@@ -155,6 +156,16 @@ const App: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedNodesClipboard, setCopiedNodesClipboard] = useState<CanvasNode[]>([]);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToastMessage(message);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 2200);
+  }, []);
 
   // Modals state
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
@@ -975,31 +986,30 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCut = useCallback(() => {
+  const handleCut = useCallback(async () => {
     if (selectedNodeIds.size === 0) return;
     const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     if (selectedNodes.length === 0) return;
 
     setCopiedNodesClipboard(selectedNodes);
-    try {
-      sessionStorage.setItem('ai_mix_board_clipboard', JSON.stringify(selectedNodes));
-    } catch {}
-
+    await copyNodesToClipboard(selectedNodes);
+    showToast(`已剪下 ${selectedNodes.length} 個物件`);
     handleDeleteNodes(Array.from(selectedNodeIds));
-  }, [selectedNodeIds, currentBoardNodes, handleDeleteNodes]);
+  }, [selectedNodeIds, currentBoardNodes, handleDeleteNodes, showToast]);
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     if (selectedNodeIds.size === 0) return;
     const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     if (selectedNodes.length === 0) return;
 
     setCopiedNodesClipboard(selectedNodes);
-    try {
-      sessionStorage.setItem('ai_mix_board_clipboard', JSON.stringify(selectedNodes));
-    } catch {}
-  }, [selectedNodeIds, currentBoardNodes]);
+    const res = await copyNodesToClipboard(selectedNodes);
+    if (res.message) {
+      showToast(res.message);
+    }
+  }, [selectedNodeIds, currentBoardNodes, showToast]);
 
-  const handlePasteNodes = useCallback(() => {
+  const handlePasteNodes = useCallback((targetCoords?: { x: number; y: number }) => {
     let nodesToPaste = copiedNodesClipboard;
     if (nodesToPaste.length === 0) {
       try {
@@ -1023,7 +1033,7 @@ const App: React.FC = () => {
 
     const origCenterX = (minX + maxX) / 2;
     const origCenterY = (minY + maxY) / 2;
-    const targetCenter = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+    const targetCenter = targetCoords || getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
 
     const newSelectedIds = new Set<string>();
     const newPastedNodes: CanvasNode[] = [];
@@ -1050,6 +1060,54 @@ const App: React.FC = () => {
     setSelectedNodeIds(newSelectedIds);
     return true;
   }, [copiedNodesClipboard, currentBoardId, getCanvasCoords, updateNodesAndSave]);
+
+  const handlePasteFromContextMenu = useCallback(async () => {
+    const coords = getCanvasCoords(contextMenu.position.x, contextMenu.position.y);
+    const didPasteNodes = handlePasteNodes(coords);
+    if (didPasteNodes) {
+      showToast('已貼上物件');
+      return;
+    }
+
+    // Fallback: try reading system clipboard
+    try {
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              const file = new File([blob], `pasted_${Date.now()}.png`, { type });
+              await handleUploadImageFile(file, coords);
+              showToast('已貼上圖片');
+              return;
+            }
+          }
+        }
+      }
+      if (navigator.clipboard?.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          addNode({
+            id: Date.now().toString(),
+            type: 'text',
+            x: coords.x,
+            y: coords.y,
+            width: 220,
+            height: 100,
+            rotation: 0,
+            boardId: currentBoardId,
+            content: text.trim(),
+            createdAt: Date.now(),
+          });
+          showToast('已貼上文字');
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Clipboard paste failed:', err);
+    }
+  }, [contextMenu.position, getCanvasCoords, handlePasteNodes, handleUploadImageFile, addNode, currentBoardId, showToast]);
 
   const handlePaste = useCallback(
     async (e: ClipboardEvent) => {
@@ -1734,6 +1792,7 @@ const App: React.FC = () => {
           onResetAspect={handleResetAspect}
           onApplyDefaultSize={handleApplyDefaultSize}
           onSaveAsDefaultSize={handleSaveAsDefaultSize}
+          onCopyToClipboard={handleCopy}
           onDuplicate={handleDuplicateSelected}
           onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
           onDeselectAll={() => setSelectedNodeIds(new Set())}
@@ -1752,11 +1811,13 @@ const App: React.FC = () => {
         onResetAspect={handleResetAspect}
         onApplyDefaultSize={handleApplyDefaultSize}
         onSaveAsDefaultSize={handleSaveAsDefaultSize}
+        onCopyToClipboard={handleCopy}
         onDuplicate={handleDuplicateSelected}
         onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
         onBringToFront={handleBringToFront}
         onSendToBack={handleSendToBack}
         onGenerate={handleExecute}
+        onPaste={handlePasteFromContextMenu}
         onAddText={() => {
           const coords = getCanvasCoords(contextMenu.position.x, contextMenu.position.y);
           addNode({
@@ -1782,6 +1843,17 @@ const App: React.FC = () => {
           }
         }}
       />
+
+      {/* Floating Toast Notification Banner */}
+      {toastMessage && (
+        <div
+          role="status"
+          className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-gray-900/95 backdrop-blur-xl border border-blue-500/40 text-blue-300 text-xs font-medium rounded-full shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150 pointer-events-none select-none"
+        >
+          <ClipboardCheck className="w-4 h-4 text-blue-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
       {/* Hidden File Input for Canvas Context Menu */}
       <input
