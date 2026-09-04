@@ -32,7 +32,7 @@ import {
   saveGraphToSheet,
   loadGraphFromSheet,
 } from './services/googleSheetsService';
-import { DEFAULT_MODEL_ID, getModelById } from './services/modelsConfig';
+import { DEFAULT_MODEL_ID, getModelById, migrateOldModelId } from './services/modelsConfig';
 
 import NodeRenderer from './components/NodeRenderer';
 import TopNavigation from './components/TopNavigation';
@@ -302,13 +302,17 @@ const App: React.FC = () => {
         setActiveBoardId(initialBoardId);
         setAllNodes(loadedData.nodes);
         setViewports(loadedData.viewports);
-        setSelectedModels(loadedData.selectedModels);
+        const migratedModels: Record<string, string> = {};
+        Object.entries(loadedData.selectedModels || {}).forEach(([bId, mId]) => {
+          migratedModels[bId] = migrateOldModelId(mId);
+        });
+        setSelectedModels(migratedModels);
         setSelectedNodeIds(new Set());
 
         const initialView = loadedData.viewports[initialBoardId] || { x: 0, y: 0, zoom: 1 };
         setView(initialView);
 
-        const initialModel = loadedData.selectedModels[initialBoardId] || DEFAULT_MODEL_ID;
+        const initialModel = migratedModels[initialBoardId] || DEFAULT_MODEL_ID;
         setSelectedModelId(initialModel);
 
         setSyncStatus('saved');
@@ -426,7 +430,7 @@ const App: React.FC = () => {
     const targetView = updatedViewports[newBoardId] || { x: 0, y: 0, zoom: 1 };
     setView(targetView);
 
-    const targetModel = updatedModels[newBoardId] || DEFAULT_MODEL_ID;
+    const targetModel = migrateOldModelId(updatedModels[newBoardId] || DEFAULT_MODEL_ID);
     setSelectedModelId(targetModel);
   };
 

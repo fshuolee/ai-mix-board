@@ -525,9 +525,22 @@ export function getModelById(modelId: string): ModelInfo {
   };
 }
 
+/**
+ * Automatically migrate legacy 2.5/1.5 default models saved in older board sheets to modern 3.x counterparts.
+ */
+export function migrateOldModelId(modelId?: string): string {
+  if (!modelId) return DEFAULT_MODEL_ID;
+  const cleanId = modelId.replace(/^models\//, '');
+  if (cleanId === 'gemini-2.5-flash-image' || cleanId === 'nano-banana') return 'gemini-3.1-flash-image';
+  if (cleanId === 'gemini-2.5-flash') return 'gemini-3.8-flash';
+  if (cleanId === 'gemini-2.5-pro') return 'gemini-3.1-pro-preview';
+  return cleanId;
+}
+
 // Automatically trigger background fetch on load if in browser
 if (typeof window !== 'undefined') {
   setTimeout(() => {
     fetchModelsFromApi().catch(() => {});
   }, 300);
 }
+
