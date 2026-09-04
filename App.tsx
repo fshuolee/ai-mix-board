@@ -172,6 +172,17 @@ const App: React.FC = () => {
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{
+    isOpen: boolean;
+    position: { x: number; y: number };
+    targetType: 'node' | 'canvas';
+  }>({
+    isOpen: false,
+    position: { x: 0, y: 0 },
+    targetType: 'canvas',
+  });
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragInfoRef = useRef<{
     type: 'pan' | 'drag_node' | 'marquee';
@@ -1430,17 +1441,6 @@ const App: React.FC = () => {
     setProjects(prev => [created, ...prev]);
     setCurrentProject(created);
   };
-
-  // Context Menu State
-  const [contextMenu, setContextMenu] = useState<{
-    isOpen: boolean;
-    position: { x: number; y: number };
-    targetType: 'node' | 'canvas';
-  }>({
-    isOpen: false,
-    position: { x: 0, y: 0 },
-    targetType: 'canvas',
-  });
 
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
 
