@@ -200,7 +200,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                 <Ruler className="w-4 h-4 text-purple-400" />
                 <span>套用最佳預設尺寸</span>
               </div>
-              <span className="text-[10px] text-gray-400 font-mono">{defaultSize.width}px</span>
+              <span className="text-[10px] text-gray-400 font-mono">{defaultSize.width}×{defaultSize.height}</span>
             </button>
 
             {count === 1 && (

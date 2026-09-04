@@ -131,7 +131,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <button
         onClick={onApplyDefaultSize}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-purple-300 hover:text-purple-200 transition-colors"
-        title={`套用最佳預設尺寸 (${defaultSize.width}px 寬度，等比縮放)`}
+        title={`套用最佳預設尺寸 (${defaultSize.width}×${defaultSize.height}，等比例限制寬高)`}
       >
         <Ruler className="w-3.5 h-3.5 text-purple-400" />
         <span>最適尺寸</span>

@@ -48,6 +48,7 @@ import {
   resetNodesAspectRatio,
   applyOptimalSizeToNodes,
   autoArrangeNodes,
+  fitDimensions,
 } from './services/nodeSizingService';
 import { Sparkles, Loader2, UploadCloud, Trash2 } from 'lucide-react';
 
@@ -651,6 +652,9 @@ const App: React.FC = () => {
 
     // Pan mode with spacebar, middle mouse (button 1), or right click (button 2)
     if (isSpacePressed || e.button === 1 || e.button === 2) {
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      } catch {}
       dragInfoRef.current = {
         type: 'pan',
         startX: e.clientX,
@@ -661,6 +665,12 @@ const App: React.FC = () => {
     }
 
     if (e.button === 0) {
+      // Capture pointer so marquee selection continues smoothly even when
+      // moving over bottom toolbars, tabs, or outside canvas area
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      } catch {}
+
       // Marquee box selection on left click empty canvas
       if (!e.shiftKey) {
         setSelectedNodeIds(new Set());
@@ -768,7 +778,14 @@ const App: React.FC = () => {
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: React.PointerEvent) => {
+    if (e && canvasRef.current && typeof e.pointerId === 'number') {
+      try {
+        if (canvasRef.current.hasPointerCapture?.(e.pointerId)) {
+          canvasRef.current.releasePointerCapture(e.pointerId);
+        }
+      } catch {}
+    }
     if (dragInfoRef.current?.type === 'pan') {
       setViewports(prev => ({ ...prev, [currentBoardId]: view }));
     }
@@ -776,6 +793,24 @@ const App: React.FC = () => {
     setMarqueeBox(null);
     canvasRef.current?.classList.remove('cursor-grabbing');
   };
+
+  // Global pointerup fallback ensuring drag gestures are always cleaned up properly
+  useEffect(() => {
+    const handleGlobalPointerUp = () => {
+      if (dragInfoRef.current) {
+        if (dragInfoRef.current.type === 'pan') {
+          setViewports(prev => ({ ...prev, [currentBoardId]: view }));
+        }
+        dragInfoRef.current = null;
+        setMarqueeBox(null);
+        canvasRef.current?.classList.remove('cursor-grabbing');
+      }
+    };
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+    };
+  }, [currentBoardId, view]);
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -855,9 +890,9 @@ const App: React.FC = () => {
       const img = new Image();
       img.onload = async () => {
         const defaultSize = getDefaultNodeSize();
-        const maxWidth = defaultSize.width || 360;
-        const width = img.width > maxWidth ? maxWidth : img.width;
-        const height = Math.round((width / img.width) * img.height);
+        const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+        const width = fitted.width;
+        const height = fitted.height;
         const { x, y } = targetCoords || findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
 
         let driveFileId = id;
@@ -1113,9 +1148,9 @@ const App: React.FC = () => {
         const img = new Image();
         img.onload = () => {
           const defaultSize = getDefaultNodeSize();
-          const maxWidth = defaultSize.width || 360;
-          const width = img.width > maxWidth ? maxWidth : img.width;
-          const height = Math.round((width / img.width) * img.height);
+          const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+          const width = fitted.width;
+          const height = fitted.height;
           const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
 
           addNode({
@@ -1504,7 +1539,6 @@ const App: React.FC = () => {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
         onWheel={handleWheel}
         onDoubleClick={handleCanvasDoubleClick}
         onDragOver={handleDragOver}
@@ -1573,19 +1607,23 @@ const App: React.FC = () => {
       </div>
 
       {/* Multi-Board Switcher Tabs Bar (Bottom-Left) */}
-      <BoardTabs
-        boards={boards}
-        activeBoardId={currentBoardId}
-        onSelectBoard={handleSelectBoard}
-        onAddBoard={handleAddBoard}
-        onRenameBoard={handleRenameBoard}
-        onDeleteBoard={handleDeleteBoard}
-        allNodes={allNodes}
-      />
+      <div className={marqueeBox ? 'pointer-events-none select-none' : ''}>
+        <BoardTabs
+          boards={boards}
+          activeBoardId={currentBoardId}
+          onSelectBoard={handleSelectBoard}
+          onAddBoard={handleAddBoard}
+          onRenameBoard={handleRenameBoard}
+          onDeleteBoard={handleDeleteBoard}
+          allNodes={allNodes}
+        />
+      </div>
 
       {/* Floating Bottom Right Action Bar */}
       <div
-        className="absolute bottom-6 right-6 z-20 flex items-center gap-3"
+        className={`absolute bottom-6 right-6 z-20 flex items-center gap-3 ${
+          marqueeBox ? 'pointer-events-none select-none' : ''
+        }`}
         onPointerDown={e => e.stopPropagation()}
       >
         {/* Model quick indicator */}
@@ -1689,17 +1727,19 @@ const App: React.FC = () => {
       )}
 
       {/* Redesigned Multi-Selection Bar HUD */}
-      <MultiSelectionBar
-        selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
-        onAutoArrange={handleAutoArrange}
-        onResetAspect={handleResetAspect}
-        onApplyDefaultSize={handleApplyDefaultSize}
-        onSaveAsDefaultSize={handleSaveAsDefaultSize}
-        onDuplicate={handleDuplicateSelected}
-        onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
-        onDeselectAll={() => setSelectedNodeIds(new Set())}
-        onGenerate={handleExecute}
-      />
+      <div className={marqueeBox ? 'pointer-events-none select-none' : ''}>
+        <MultiSelectionBar
+          selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
+          onAutoArrange={handleAutoArrange}
+          onResetAspect={handleResetAspect}
+          onApplyDefaultSize={handleApplyDefaultSize}
+          onSaveAsDefaultSize={handleSaveAsDefaultSize}
+          onDuplicate={handleDuplicateSelected}
+          onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
+          onDeselectAll={() => setSelectedNodeIds(new Set())}
+          onGenerate={handleExecute}
+        />
+      </div>
 
       {/* Context Menu (Right Click) */}
       <ContextMenu

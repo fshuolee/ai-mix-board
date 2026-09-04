@@ -116,7 +116,31 @@ export async function resetNodesAspectRatio(
 }
 
 /**
- * Apply optimal default size to selected nodes
+ * Proportionally fit dimensions within bounding box [maxWidth, maxHeight]
+ * preserving the natural aspect ratio.
+ */
+export function fitDimensions(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxWidth: number,
+  maxHeight: number,
+  allowUpscale: boolean = true
+): { width: number; height: number } {
+  if (!naturalWidth || !naturalHeight || naturalWidth <= 0 || naturalHeight <= 0) {
+    return { width: Math.round(maxWidth), height: Math.round(maxHeight) };
+  }
+  let scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight);
+  if (!allowUpscale && scale > 1) {
+    scale = 1;
+  }
+  return {
+    width: Math.max(50, Math.round(naturalWidth * scale)),
+    height: Math.max(50, Math.round(naturalHeight * scale)),
+  };
+}
+
+/**
+ * Apply optimal default size to selected nodes, constraining both width and height
  */
 export async function applyOptimalSizeToNodes(
   nodes: CanvasNode[],
@@ -129,26 +153,27 @@ export async function applyOptimalSizeToNodes(
     if (node.type === 'image') {
       const natural = await getNaturalImageDimensions(node as ImageNode);
       if (natural && natural.width > 0 && natural.height > 0) {
-        // Scale to defaultSize.width while preserving natural aspect ratio
-        const w = defaultSize.width;
-        const h = Math.max(50, Math.round((w / natural.width) * natural.height));
+        // Fit within both width and height bounds preserving aspect ratio
+        const fitted = fitDimensions(natural.width, natural.height, defaultSize.width, defaultSize.height, true);
         updates.push({
           id: node.id,
-          updates: { width: w, height: h },
+          updates: { width: fitted.width, height: fitted.height },
         });
       } else {
+        // Fallback using node's current aspect ratio
+        const fitted = fitDimensions(node.width, node.height, defaultSize.width, defaultSize.height, true);
         updates.push({
           id: node.id,
-          updates: { width: defaultSize.width, height: defaultSize.height },
+          updates: { width: fitted.width, height: fitted.height },
         });
       }
     } else {
-      // Text node standard size
+      // Text node standard size, bounded by defaultSize
       updates.push({
         id: node.id,
         updates: {
-          width: Math.min(node.width, 320),
-          height: Math.max(100, Math.min(node.height, 220)),
+          width: Math.min(node.width, Math.max(180, defaultSize.width)),
+          height: Math.max(60, Math.min(node.height, Math.round(defaultSize.height * 0.4))),
         },
       });
     }
