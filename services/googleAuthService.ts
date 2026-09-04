@@ -23,23 +23,8 @@ type AuthListener = (user: GoogleUserProfile | null) => void;
 const listeners: Set<AuthListener> = new Set();
 
 let currentUser: GoogleUserProfile | null = null;
-
-// Initialize user from storage on load
-try {
-  const savedUser = localStorage.getItem(STORAGE_KEY_USER);
-  const savedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
-  if (savedUser && savedToken) {
-    const parsed = JSON.parse(savedUser);
-    if (parsed.expiresAt > Date.now()) {
-      currentUser = parsed;
-    } else {
-      localStorage.removeItem(STORAGE_KEY_USER);
-      localStorage.removeItem(STORAGE_KEY_TOKEN);
-    }
-  }
-} catch (e) {
-  console.warn('Failed to parse cached user', e);
-}
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let isRefreshingPromise: Promise<string | null> | null = null;
 
 export const DEFAULT_CLIENT_ID = '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com';
 
@@ -59,12 +44,64 @@ export function setCustomClientId(clientId: string): void {
   }
 }
 
+/**
+ * Schedule a proactive background refresh before the token expires
+ */
+function scheduleTokenRefresh(expiresAt: number) {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+  const timeUntilExpiry = expiresAt - Date.now();
+  if (timeUntilExpiry <= 0) return;
+
+  // Refresh 5 minutes before expiry, or 20% before expiry if remaining time is small
+  const leadTime = timeUntilExpiry > 6 * 60 * 1000
+    ? 5 * 60 * 1000
+    : Math.max(5000, Math.floor(timeUntilExpiry * 0.2));
+
+  const delay = Math.max(3000, timeUntilExpiry - leadTime);
+
+  refreshTimer = setTimeout(() => {
+    refreshGoogleToken().catch(err => {
+      console.warn('Proactive background token refresh failed:', err);
+    });
+  }, delay);
+}
+
+// Initialize user from storage on load - PRESERVE user info and never nuke storage on startup
+try {
+  const savedUser = localStorage.getItem(STORAGE_KEY_USER);
+  const savedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+  if (savedUser) {
+    const parsed = JSON.parse(savedUser) as GoogleUserProfile;
+    if (savedToken) {
+      parsed.accessToken = savedToken;
+    }
+    if (parsed.expiresAt && parsed.expiresAt > Date.now()) {
+      parsed.isExpired = false;
+      currentUser = parsed;
+      scheduleTokenRefresh(parsed.expiresAt);
+    } else {
+      // Token expired, but PRESERVE user session so app can silently refresh or 1-click reconnect
+      parsed.isExpired = true;
+      currentUser = parsed;
+      // Trigger background silent refresh shortly after initialization
+      setTimeout(() => {
+        refreshGoogleToken().catch(() => {});
+      }, 300);
+    }
+  }
+} catch (e) {
+  console.warn('Failed to parse cached user', e);
+}
+
 export function getCurrentUser(): GoogleUserProfile | null {
-  if (currentUser && currentUser.expiresAt <= Date.now()) {
-    currentUser = null;
-    localStorage.removeItem(STORAGE_KEY_USER);
-    localStorage.removeItem(STORAGE_KEY_TOKEN);
-    notifyListeners();
+  if (currentUser) {
+    if (currentUser.expiresAt <= Date.now() && !currentUser.isExpired) {
+      currentUser = { ...currentUser, isExpired: true };
+      refreshGoogleToken().catch(() => {});
+    }
   }
   return currentUser;
 }
@@ -72,6 +109,19 @@ export function getCurrentUser(): GoogleUserProfile | null {
 export function getAccessToken(): string | null {
   const user = getCurrentUser();
   return user ? user.accessToken : null;
+}
+
+/**
+ * Ensures a valid access token is returned, attempting refresh if expired
+ */
+export async function getValidAccessToken(): Promise<string | null> {
+  const user = getCurrentUser();
+  if (!user) return null;
+  if (user.expiresAt > Date.now() && !user.isExpired) {
+    return user.accessToken;
+  }
+  const refreshed = await refreshGoogleToken();
+  return refreshed || user.accessToken;
 }
 
 export function subscribeAuth(listener: AuthListener): () => void {
@@ -90,6 +140,27 @@ function notifyListeners() {
     } catch (err) {
       console.error('Error in auth listener', err);
     }
+  });
+}
+
+/**
+ * Wait for Google Identity Services SDK (window.google.accounts.oauth2) to load
+ */
+export function waitForGIS(timeoutMs = 5000): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if (window.google?.accounts?.oauth2) return Promise.resolve(true);
+
+  return new Promise(resolve => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (window.google?.accounts?.oauth2) {
+        clearInterval(interval);
+        resolve(true);
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(interval);
+        resolve(false);
+      }
+    }, 100);
   });
 }
 
@@ -119,7 +190,11 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
 /**
  * Validate token scopes and fetch user info
  */
-export async function fetchGoogleProfile(accessToken: string, expiresInSeconds = 3600): Promise<GoogleUserProfile> {
+export async function fetchGoogleProfile(
+  accessToken: string,
+  expiresInSeconds = 3600,
+  authMethod?: 'gis' | 'gcloud' | 'oauth' | 'manual'
+): Promise<GoogleUserProfile> {
   // 1. Verify token scopes via tokeninfo
   const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${accessToken}`);
   if (!tokenInfoRes.ok) {
@@ -148,7 +223,10 @@ export async function fetchGoogleProfile(accessToken: string, expiresInSeconds =
   }
 
   const data = await res.json();
-  const expiresAt = Date.now() + (expiresInSeconds - 60) * 1000;
+  const actualExpiresIn = Number(tokenInfo.expires_in) || expiresInSeconds;
+  const bufferSeconds = Math.min(60, Math.max(0, Math.floor(actualExpiresIn * 0.1)));
+  const validSeconds = Math.max(10, actualExpiresIn - bufferSeconds);
+  const expiresAt = Date.now() + validSeconds * 1000;
 
   const profile: GoogleUserProfile = {
     email: data.email || tokenInfo.email || 'user@gmail.com',
@@ -156,14 +234,134 @@ export async function fetchGoogleProfile(accessToken: string, expiresInSeconds =
     picture: data.picture,
     accessToken,
     expiresAt,
+    isExpired: false,
+    authMethod: authMethod || currentUser?.authMethod || (isLocalEnvironment() ? 'gcloud' : 'gis'),
   };
 
   currentUser = profile;
   localStorage.setItem(STORAGE_KEY_TOKEN, accessToken);
   localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(profile));
+  scheduleTokenRefresh(expiresAt);
   notifyListeners();
 
   return profile;
+}
+
+/**
+ * Request GIS Token silently (without prompt or popup)
+ */
+function requestGISTokenSilent(
+  clientId: string,
+  hintEmail?: string
+): Promise<{ accessToken: string; expiresIn: number }> {
+  return new Promise((resolve, reject) => {
+    if (!window.google?.accounts?.oauth2) {
+      reject(new Error('Google Identity Services SDK 尚未就緒'));
+      return;
+    }
+
+    let isDone = false;
+    const timer = setTimeout(() => {
+      if (!isDone) {
+        isDone = true;
+        reject(new Error('GIS 背景靜默重新整理逾時'));
+      }
+    }, 10000);
+
+    try {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: SCOPES,
+        hint: hintEmail,
+        callback: (response: any) => {
+          if (isDone) return;
+          isDone = true;
+          clearTimeout(timer);
+          if (response.error) {
+            reject(new Error(response.error_description || response.error));
+            return;
+          }
+          const expiresIn = Number(response.expires_in) || 3600;
+          resolve({ accessToken: response.access_token, expiresIn });
+        },
+        error_callback: (err: any) => {
+          if (isDone) return;
+          isDone = true;
+          clearTimeout(timer);
+          reject(new Error(err?.message || 'GIS 靜默重新整理失敗'));
+        },
+      });
+
+      client.requestAccessToken({
+        prompt: '', // Silent request without popup
+        hint: hintEmail,
+      });
+    } catch (e) {
+      if (!isDone) {
+        isDone = true;
+        clearTimeout(timer);
+        reject(e);
+      }
+    }
+  });
+}
+
+/**
+ * Refresh Google Access Token in the background.
+ * Deduplicates concurrent calls.
+ */
+export async function refreshGoogleToken(): Promise<string | null> {
+  if (isRefreshingPromise) {
+    return isRefreshingPromise;
+  }
+
+  isRefreshingPromise = (async () => {
+    try {
+      // 1. If in local environment, attempt gcloud auto-token first
+      if (isLocalEnvironment()) {
+        try {
+          const gcloudRes = await tryFetchLocalGcloudToken();
+          if (gcloudRes.success && gcloudRes.profile?.accessToken) {
+            return gcloudRes.profile.accessToken;
+          }
+        } catch (e) {
+          console.warn('gcloud local refresh failed:', e);
+        }
+      }
+
+      // 2. Try GIS silent refresh if clientId & user are available
+      const user = currentUser;
+      const clientId = getCustomClientId();
+      if (clientId && user?.email) {
+        const gisReady = await waitForGIS(3000);
+        if (gisReady && window.google?.accounts?.oauth2) {
+          try {
+            const res = await requestGISTokenSilent(clientId, user.email);
+            if (res.accessToken) {
+              const updatedProfile = await fetchGoogleProfile(res.accessToken, res.expiresIn, 'gis');
+              return updatedProfile.accessToken;
+            }
+          } catch (gisErr) {
+            console.warn('GIS silent refresh failed (requires user interaction):', gisErr);
+          }
+        }
+      }
+
+      // 3. If refresh could not complete silently, mark user as expired but preserve their identity
+      if (currentUser && !currentUser.isExpired) {
+        currentUser = { ...currentUser, isExpired: true };
+        try {
+          localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+        } catch {}
+        notifyListeners();
+      }
+      return null;
+    } finally {
+      isRefreshingPromise = null;
+    }
+  })();
+
+  return isRefreshingPromise;
 }
 
 /**
@@ -242,7 +440,7 @@ export async function handleOAuthCallback(): Promise<{ success: boolean; profile
       if (accessToken) {
         // Clean URL hash without reloading
         window.history.replaceState({}, document.title, window.location.origin + window.location.pathname + window.location.search);
-        const profile = await fetchGoogleProfile(accessToken, expiresIn);
+        const profile = await fetchGoogleProfile(accessToken, expiresIn, 'oauth');
         return { success: true, profile };
       }
     } catch (e: any) {
@@ -256,7 +454,6 @@ export async function handleOAuthCallback(): Promise<{ success: boolean; profile
   const error = queryParams.get('error');
 
   if (error) {
-    // Clean query
     window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
     return { success: false, error: `Google 授權錯誤: ${error}` };
   }
@@ -269,7 +466,6 @@ export async function handleOAuthCallback(): Promise<{ success: boolean; profile
     sessionStorage.removeItem(STORAGE_KEY_PKCE_VERIFIER);
     sessionStorage.removeItem(STORAGE_KEY_PKCE_STATE);
 
-    // Clean URL
     window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
 
     if (savedState && state && savedState !== state) {
@@ -305,7 +501,7 @@ export async function handleOAuthCallback(): Promise<{ success: boolean; profile
         };
       }
 
-      const profile = await fetchGoogleProfile(tokenData.access_token, Number(tokenData.expires_in) || 3600);
+      const profile = await fetchGoogleProfile(tokenData.access_token, Number(tokenData.expires_in) || 3600, 'oauth');
       return { success: true, profile };
     } catch (err: any) {
       return { success: false, error: err.message || 'Token 交換請求失敗' };
@@ -318,7 +514,7 @@ export async function handleOAuthCallback(): Promise<{ success: boolean; profile
 /**
  * 4. Login using Google Identity Services (GIS) Token Client popup
  */
-export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUserProfile> {
+export function signInWithGooglePopup(customClientId?: string, hintEmail?: string): Promise<GoogleUserProfile> {
   return new Promise((resolve, reject) => {
     const clientId = customClientId || getCustomClientId();
 
@@ -340,6 +536,7 @@ export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUs
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: SCOPES,
+        hint: hintEmail,
         callback: async (response: any) => {
           if (response.error) {
             console.error('Google Auth Error:', response);
@@ -349,7 +546,7 @@ export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUs
 
           try {
             const expiresIn = Number(response.expires_in) || 3600;
-            const profile = await fetchGoogleProfile(response.access_token, expiresIn);
+            const profile = await fetchGoogleProfile(response.access_token, expiresIn, 'gis');
             resolve(profile);
           } catch (fetchErr) {
             reject(fetchErr);
@@ -357,7 +554,11 @@ export function signInWithGooglePopup(customClientId?: string): Promise<GoogleUs
         },
       });
 
-      client.requestAccessToken({ prompt: 'consent' });
+      // If user provided hintEmail, skip account chooser
+      client.requestAccessToken({
+        prompt: hintEmail ? '' : 'consent',
+        hint: hintEmail,
+      });
     } catch (err: any) {
       reject(err);
     }
@@ -374,7 +575,7 @@ export function isLocalEnvironment(): boolean {
  * Set token manually
  */
 export async function setManualAccessToken(token: string, expiresIn = 3600): Promise<GoogleUserProfile> {
-  const profile = await fetchGoogleProfile(token.trim(), expiresIn);
+  const profile = await fetchGoogleProfile(token.trim(), expiresIn, 'manual');
   return profile;
 }
 
@@ -393,7 +594,7 @@ export async function tryFetchLocalGcloudToken(): Promise<{ success: boolean; pr
     }
     const data = await res.json();
     if (data.token) {
-      const profile = await fetchGoogleProfile(data.token, data.expiresIn || 3600);
+      const profile = await fetchGoogleProfile(data.token, data.expiresIn || 3600, 'gcloud');
       return { success: true, profile };
     }
   } catch (e: any) {
@@ -403,6 +604,10 @@ export async function tryFetchLocalGcloudToken(): Promise<{ success: boolean; pr
 }
 
 export function signOutGoogle(): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
   currentUser = null;
   localStorage.removeItem(STORAGE_KEY_TOKEN);
   localStorage.removeItem(STORAGE_KEY_USER);

@@ -70,6 +70,23 @@ export interface GoogleUserProfile {
   picture?: string;
   accessToken: string;
   expiresAt: number;
+  isExpired?: boolean;
+  authMethod?: 'gis' | 'gcloud' | 'oauth' | 'manual';
+}
+
+export interface RawApiModelInfo {
+  name: string;
+  version?: string;
+  displayName?: string;
+  description?: string;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  supportedGenerationMethods?: string[];
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  maxTemperature?: number;
+  thinking?: boolean;
 }
 
 export interface ModelCapability {
@@ -89,4 +106,10 @@ export interface ModelInfo {
   capabilities: ModelCapability;
   badge: string;
   tag: string;
+  apiData?: RawApiModelInfo;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  supportedGenerationMethods?: string[];
+  version?: string;
+  thinking?: boolean;
 }

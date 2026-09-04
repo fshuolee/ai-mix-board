@@ -1,12 +1,31 @@
 import { BoardMetadata, CanvasNode, ImageNode, TextNode, ViewportState } from '../types';
+import { refreshGoogleToken } from './googleAuthService';
 
-async function sheetsFetch(url: string, token: string, options: RequestInit = {}) {
+async function sheetsFetch(
+  url: string,
+  token: string,
+  options: RequestInit = {},
+  hasRetried = false
+): Promise<Response> {
   const headers = {
     Authorization: `Bearer ${token}`,
     ...(options.headers || {}),
   };
 
   const response = await fetch(url, { ...options, headers });
+
+  // If unauthorized and hasn't retried, attempt silent token refresh and retry
+  if (response.status === 401 && !hasRetried) {
+    try {
+      const refreshedToken = await refreshGoogleToken();
+      if (refreshedToken) {
+        return sheetsFetch(url, refreshedToken, options, true);
+      }
+    } catch (refreshErr) {
+      console.warn('Failed to refresh token after 401 in sheetsFetch:', refreshErr);
+    }
+  }
+
   if (!response.ok) {
     const errorText = await response.text();
     let errorJson;

@@ -21,6 +21,7 @@ import {
   getCustomClientId,
   setCustomClientId,
   signInWithGooglePopup,
+  refreshGoogleToken,
   initiateOAuthPKCE,
   initiateOAuthImplicit,
   signOutGoogle,
@@ -48,6 +49,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   const [clientId, setClientId] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [gcloudLoading, setGcloudLoading] = useState(false);
@@ -63,13 +65,13 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen && !isSigningIn) {
+      if (e.key === 'Escape' && isOpen && !isSigningIn && !isRefreshing) {
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSigningIn, onClose]);
+  }, [isOpen, isSigningIn, isRefreshing, onClose]);
 
   if (!isOpen) return null;
 
@@ -89,13 +91,30 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
       if (clientId.trim()) {
         setCustomClientId(clientId);
       }
-      await signInWithGooglePopup(clientId.trim() || undefined);
+      await signInWithGooglePopup(clientId.trim() || undefined, user?.email);
       onAuthChange();
       onClose();
     } catch (err: any) {
       setError(err.message || 'Google 登入失敗');
     } finally {
       setIsSigningIn(false);
+    }
+  };
+
+  const handleRefreshToken = async () => {
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      const token = await refreshGoogleToken();
+      if (token) {
+        onAuthChange();
+      } else {
+        await handleGooglePopupSignIn();
+      }
+    } catch (err: any) {
+      setError(err.message || '重新整理連線失敗');
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -247,10 +266,17 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                 <h3 className="text-sm font-semibold text-white">Google 雲端硬碟 & 試算表連線</h3>
               </div>
               {user ? (
-                <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  已連線 Google Drive
-                </span>
+                user.isExpired ? (
+                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    連線已逾期 (需重新驗證)
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    已連線 Google Drive (自動維持中)
+                  </span>
+                )
               ) : (
                 <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
                   尚未連線 (離線暫存模式)
@@ -259,31 +285,80 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
             </div>
 
             {user ? (
-              <div className="flex items-center justify-between p-3 bg-gray-900/80 rounded-lg border border-gray-700">
-                <div className="flex items-center gap-3">
-                  {user.picture ? (
-                    <img
-                      src={user.picture}
-                      alt={user.name}
-                      className="w-10 h-10 rounded-full border border-gray-600"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white text-sm">
-                      {user.name.charAt(0).toUpperCase()}
+              <div className="p-3 bg-gray-900/80 rounded-lg border border-gray-700 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      {user.picture ? (
+                        <img
+                          src={user.picture}
+                          alt={user.name}
+                          className={`w-10 h-10 rounded-full border ${user.isExpired ? 'border-amber-400' : 'border-gray-600'}`}
+                        />
+                      ) : (
+                        <div
+                          className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm ${
+                            user.isExpired ? 'bg-amber-600' : 'bg-blue-600'
+                          }`}
+                        >
+                          {user.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      {user.isExpired && (
+                        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-400 ring-2 ring-gray-900 animate-pulse" />
+                      )}
                     </div>
-                  )}
-                  <div>
-                    <div className="font-semibold text-sm text-white">{user.name}</div>
-                    <div className="text-xs text-gray-400 font-mono">{user.email}</div>
+                    <div>
+                      <div className="font-semibold text-sm text-white flex items-center gap-2">
+                        <span>{user.name}</span>
+                        {user.isExpired && (
+                          <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-medium border border-amber-500/30">
+                            憑證已過期
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-400 font-mono">{user.email}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {user.isExpired ? (
+                      <button
+                        onClick={handleRefreshToken}
+                        disabled={isRefreshing || isSigningIn}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium transition-colors shadow-sm"
+                      >
+                        {isRefreshing ? (
+                          <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <LogIn className="w-3.5 h-3.5" />
+                        )}
+                        <span>{isRefreshing ? '重新整理中...' : '立即重新連線'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleRefreshToken}
+                        disabled={isRefreshing}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-colors"
+                        title="手動刷新 Access Token"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                        <span>{isRefreshing ? '刷新中...' : '刷新 Token'}</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={handleSignOut}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-700/60 text-red-300 rounded-lg text-xs transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>中斷連線</span>
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={handleSignOut}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-700/60 text-red-300 rounded-lg text-xs transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>中斷連線</span>
-                </button>
+                {user.isExpired && (
+                  <p className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-800/60 rounded px-2.5 py-1.5 leading-relaxed">
+                    Google 存取憑證已過期。畫布本機內容已為您保留，請點擊「立即重新連線」以繼續自動同步 Google Drive 與 Google Sheets。
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-4">

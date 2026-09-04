@@ -78,10 +78,10 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleDirectGoogleLogin = async () => {
+  const handleDirectGoogleLogin = async (hintEmail?: string) => {
     setIsDirectLoggingIn(true);
     try {
-      await signInWithGooglePopup();
+      await signInWithGooglePopup(undefined, hintEmail || user?.email);
     } catch (err: any) {
       console.warn('Direct Google popup login failed, opening modal', err);
       onOpenAuthModal();
@@ -326,32 +326,64 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
         </div>
 
         {/* User Account / Settings Button */}
+        {/* User Account / Settings Button */}
         {user ? (
-          <button
-            onClick={onOpenAuthModal}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-emerald-500/40 bg-gray-900/90 text-white hover:border-emerald-400 transition-all shadow-sm"
-            title="Google 帳號與 API 金鑰設定"
-          >
-            {user.picture ? (
-              <img
-                src={user.picture}
-                alt={user.name}
-                className="w-5 h-5 rounded-full border border-emerald-400"
-              />
-            ) : (
-              <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-[10px] text-white">
-                {user.name.charAt(0).toUpperCase()}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={user.isExpired ? () => handleDirectGoogleLogin(user.email) : onOpenAuthModal}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all shadow-sm ${
+                user.isExpired
+                  ? 'border-amber-500/50 bg-amber-950/40 text-amber-200 hover:border-amber-400 hover:bg-amber-900/40'
+                  : 'border-emerald-500/40 bg-gray-900/90 text-white hover:border-emerald-400'
+              }`}
+              title={user.isExpired ? 'Google 憑證已過期，點擊立即重新連線' : 'Google 帳號與 API 金鑰設定'}
+            >
+              <div className="relative flex items-center justify-center">
+                {user.picture ? (
+                  <img
+                    src={user.picture}
+                    alt={user.name}
+                    className={`w-5 h-5 rounded-full border ${user.isExpired ? 'border-amber-400' : 'border-emerald-400'}`}
+                  />
+                ) : (
+                  <div
+                    className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] text-white ${
+                      user.isExpired ? 'bg-amber-600' : 'bg-emerald-600'
+                    }`}
+                  >
+                    {user.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                {user.isExpired && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-gray-950 animate-pulse" />
+                )}
               </div>
+              <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate">
+                {user.name}
+              </span>
+              {user.isExpired ? (
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                  {isDirectLoggingIn && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                  <span>重新連線</span>
+                </span>
+              ) : (
+                <Settings className="w-3.5 h-3.5 text-gray-400" />
+              )}
+            </button>
+            {user.isExpired && (
+              <button
+                onClick={onOpenAuthModal}
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors border border-gray-800"
+                title="帳號與 API 設定"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
             )}
-            <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate">
-              {user.name}
-            </span>
-            <Settings className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+          </div>
         ) : (
           <div className="flex items-center gap-1">
             <button
-              onClick={handleDirectGoogleLogin}
+              onClick={() => handleDirectGoogleLogin()}
               disabled={isDirectLoggingIn}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white border border-blue-500 shadow-sm transition-all text-xs font-semibold"
               title="一鍵登入 Google (授權 Google Drive & Sheets)"

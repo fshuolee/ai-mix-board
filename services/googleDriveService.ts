@@ -1,19 +1,38 @@
 import { ProjectMetadata } from '../types';
 import { getImage, storeImage, deleteImage, calculateBlobHash, getFileIdByHash } from './dbService';
 import { createProjectSpreadsheet } from './googleSheetsService';
+import { refreshGoogleToken } from './googleAuthService';
 
 const ROOT_FOLDER_NAME = 'ai-mix-board';
 
 /**
  * Helper to call Google Drive API with Bearer token authentication
  */
-async function driveFetch(url: string, token: string, options: RequestInit = {}) {
+async function driveFetch(
+  url: string,
+  token: string,
+  options: RequestInit = {},
+  hasRetried = false
+): Promise<Response> {
   const headers = {
     Authorization: `Bearer ${token}`,
     ...(options.headers || {}),
   };
 
   const response = await fetch(url, { ...options, headers });
+
+  // If unauthorized and hasn't retried, attempt silent token refresh and retry
+  if (response.status === 401 && !hasRetried) {
+    try {
+      const refreshedToken = await refreshGoogleToken();
+      if (refreshedToken) {
+        return driveFetch(url, refreshedToken, options, true);
+      }
+    } catch (refreshErr) {
+      console.warn('Failed to refresh token after 401 in driveFetch:', refreshErr);
+    }
+  }
+
   if (!response.ok) {
     const errorText = await response.text();
     let errorJson: any;

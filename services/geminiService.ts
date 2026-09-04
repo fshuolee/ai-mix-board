@@ -2,7 +2,7 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import { CanvasNode, ImageNode, TextNode } from '../types';
 import { getImage } from './dbService';
 import { blobToBase64 } from '../utils/canvasUtils';
-import { getModelById, DEFAULT_MODEL_ID } from './modelsConfig';
+import { getModelById, DEFAULT_MODEL_ID, fetchModelsFromApi } from './modelsConfig';
 import { getAssetBlobFromDrive } from './googleDriveService';
 import { getAccessToken } from './googleAuthService';
 
@@ -18,6 +18,7 @@ export function setCustomApiKey(key: string): void {
   if (typeof localStorage !== 'undefined') {
     if (key) {
       localStorage.setItem('ai_mix_board_api_key', key.trim());
+      fetchModelsFromApi(key.trim()).catch(() => {});
     } else {
       localStorage.removeItem('ai_mix_board_api_key');
     }
@@ -158,6 +159,9 @@ export const generateFromNodes = async (
           const blob = await res.blob();
           return { type: 'image', blob };
         }
+      }
+      if (response.text) {
+        return { type: 'text', text: response.text };
       }
       throw new Error('模型未回傳圖像，請嘗試調整提示詞或切換模型');
     } catch (error: any) {

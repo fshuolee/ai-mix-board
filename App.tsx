@@ -16,6 +16,7 @@ import {
   subscribeAuth,
   getCurrentUser,
   getAccessToken,
+  refreshGoogleToken,
   tryFetchLocalGcloudToken,
   isLocalEnvironment,
   handleOAuthCallback,
@@ -170,7 +171,7 @@ const App: React.FC = () => {
   const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
   const currentBoardNodes = allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId);
 
-  // 1. Listen for Google Auth changes, handle OAuth redirect callback, and auto-detect gcloud login
+  // 1. Listen for Google Auth changes, handle OAuth redirect callback, and maintain active login state
   useEffect(() => {
     const unsubscribe = subscribeAuth(newUser => {
       setUser(newUser);
@@ -183,29 +184,39 @@ const App: React.FC = () => {
       }
     }).catch(err => console.warn('OAuth callback error', err));
 
-    if (!isLocalEnvironment()) {
-      return () => unsubscribe();
-    }
-
-    const checkGcloud = async () => {
-      if (!getCurrentUser()) {
-        await tryFetchLocalGcloudToken().catch(() => {});
+    // Proactively verify or refresh on window focus and visibility change
+    const checkAndMaintainAuth = () => {
+      const u = getCurrentUser();
+      if (u) {
+        if (u.isExpired || u.expiresAt <= Date.now() + 180000) {
+          refreshGoogleToken().catch(() => {});
+        }
+      } else if (isLocalEnvironment()) {
+        tryFetchLocalGcloudToken().catch(() => {});
       }
     };
 
-    checkGcloud();
+    window.addEventListener('focus', checkAndMaintainAuth);
+    document.addEventListener('visibilitychange', checkAndMaintainAuth);
 
-    // Poll every 3 seconds if not authenticated yet (until user logs in)
-    const pollTimer = setInterval(() => {
-      if (!getCurrentUser()) {
-        checkGcloud();
-      }
-    }, 3000);
+    // Initial check
+    checkAndMaintainAuth();
+
+    // In local environment, poll every 5 seconds if not authenticated yet to auto-detect gcloud
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    if (isLocalEnvironment()) {
+      pollTimer = setInterval(() => {
+        if (!getCurrentUser()) {
+          tryFetchLocalGcloudToken().catch(() => {});
+        }
+      }, 5000);
+    }
 
     return () => {
       unsubscribe();
-      window.removeEventListener('focus', checkGcloud);
-      clearInterval(pollTimer);
+      window.removeEventListener('focus', checkAndMaintainAuth);
+      document.removeEventListener('visibilitychange', checkAndMaintainAuth);
+      if (pollTimer) clearInterval(pollTimer);
     };
   }, []);
 
@@ -224,9 +235,12 @@ const App: React.FC = () => {
       const list = await listProjects(token);
       setProjects(list);
       if (list.length > 0) {
-        if (!currentProject || !list.some(p => p.id === currentProject.id)) {
-          setCurrentProject(list[0]);
-        }
+        setCurrentProject(prev => {
+          if (!prev || !list.some(p => p.id === prev.id)) {
+            return list[0];
+          }
+          return prev;
+        });
       } else {
         const defaultProject = await createProject(token, '預設畫布專案');
         setProjects([defaultProject]);
@@ -244,17 +258,19 @@ const App: React.FC = () => {
     } finally {
       setIsLoadingProjects(false);
     }
-  }, [currentProject]);
+  }, []);
+
+  const userEmail = user?.email;
 
   useEffect(() => {
-    if (user) {
+    if (userEmail) {
       loadProjects();
     } else {
       setProjects([]);
       setCurrentProject(null);
       setSyncStatus('offline');
     }
-  }, [user]);
+  }, [userEmail, loadProjects]);
 
   // 3. Load multi-board graph data from Google Sheet when current project changes
   useEffect(() => {
