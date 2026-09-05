@@ -20,6 +20,9 @@ interface NodeRendererProps {
   isSpacePressed?: boolean;
 }
 
+// Session-level in-memory ObjectURL cache to prevent GC thrashing and image flicker
+const nodeObjectUrlCache = new Map<string, string>();
+
 const NodeRenderer: React.FC<NodeRendererProps> = ({
   node,
   zoom,
@@ -37,23 +40,28 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   const nodeRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const fileId = node.type === 'image' ? ((node as ImageNode).driveFileId || (node as ImageNode).content || node.id) : null;
+  const [imageUrl, setImageUrl] = useState<string | null>(fileId ? nodeObjectUrlCache.get(fileId) || null : null);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
 
   useEffect(() => {
-    let objectUrl: string | null = null;
     let isCancelled = false;
 
     if (node.type === 'image') {
       const imageNode = node as ImageNode;
-      const fileId = imageNode.driveFileId || imageNode.content || node.id;
+      const targetFileId = imageNode.driveFileId || imageNode.content || node.id;
+
+      if (nodeObjectUrlCache.has(targetFileId)) {
+        setImageUrl(nodeObjectUrlCache.get(targetFileId)!);
+        return;
+      }
 
       setIsLoadingImage(true);
 
       const loadImage = async () => {
         try {
           // 1. Try local cache first
-          let blob = await getImage(fileId);
+          let blob = await getImage(targetFileId);
 
           // 2. If not found locally and we have driveFileId + token, fetch from Google Drive
           if (!blob && imageNode.driveFileId) {
@@ -66,8 +74,9 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           if (isCancelled) return;
 
           if (blob) {
-            objectUrl = URL.createObjectURL(blob);
-            setImageUrl(objectUrl);
+            const url = URL.createObjectURL(blob);
+            nodeObjectUrlCache.set(targetFileId, url);
+            setImageUrl(url);
           } else {
             setImageUrl(null);
           }
@@ -83,12 +92,9 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
 
       return () => {
         isCancelled = true;
-        if (objectUrl) {
-          URL.revokeObjectURL(objectUrl);
-        }
       };
     }
-  }, [node.id, node.content, (node as ImageNode).driveFileId, node.type]);
+  }, [node.id, (node as ImageNode).driveFileId, node.type]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (isSpacePressed) return;
@@ -145,7 +151,9 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   const commonStyle: React.CSSProperties = {
     width: `${node.width}px`,
     height: `${node.height}px`,
-    transform: `translate(${node.x}px, ${node.y}px)`,
+    transform: `translate3d(${node.x}px, ${node.y}px, 0)`,
+    willChange: isSelected ? 'transform' : 'auto',
+    contain: 'layout style',
     outline: isSelected ? `${outlineWidth}px solid #3b82f6` : '1px solid rgba(75, 85, 99, 0.4)',
     outlineOffset: `${outlineOffset}px`,
   };
@@ -155,7 +163,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   return (
     <div
       ref={nodeRef}
-      className={`absolute bg-gray-800/95 border border-gray-700/80 rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
+      className={`node-renderer absolute bg-gray-800/95 border border-gray-700/80 rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
         isSpacePressed ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'
       }`}
       style={commonStyle}
@@ -322,4 +330,4 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   );
 };
 
-export default NodeRenderer;
+export default React.memo(NodeRenderer);

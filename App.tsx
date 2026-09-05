@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type {
   CanvasNode,
   ImageNode,
@@ -252,7 +252,32 @@ const App: React.FC = () => {
 
   // Filter nodes for the current active board
   const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
-  const currentBoardNodes = allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId);
+  const currentBoardNodes = useMemo(
+    () => allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId),
+    [allNodes, boards, currentBoardId]
+  );
+
+  // Performance & State synchronization refs
+  const allNodesRef = useRef(allNodes);
+  allNodesRef.current = allNodes;
+  const boardsRef = useRef(boards);
+  boardsRef.current = boards;
+  const viewportsRef = useRef(viewports);
+  viewportsRef.current = viewports;
+  const selectedModelsRef = useRef(selectedModels);
+  selectedModelsRef.current = selectedModels;
+  const currentBoardIdRef = useRef(currentBoardId);
+  currentBoardIdRef.current = currentBoardId;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const selectedModelIdRef = useRef(selectedModelId);
+  selectedModelIdRef.current = selectedModelId;
+  const selectedNodeIdsRef = useRef(selectedNodeIds);
+  selectedNodeIdsRef.current = selectedNodeIds;
+  const isProjectBusyRef = useRef(isProjectBusy);
+  isProjectBusyRef.current = isProjectBusy;
+  const currentProjectRef = useRef(currentProject);
+  currentProjectRef.current = currentProject;
 
   // 1. Listen for Google Auth changes, handle OAuth redirect callback, and maintain active login state
   useEffect(() => {
@@ -461,9 +486,10 @@ const App: React.FC = () => {
       currentViewports: Record<string, ViewportState>,
       currentModels: Record<string, string>
     ) => {
-      if (isProjectBusy || isInitialLoadRef.current || !currentProject || loadedProjectIdRef.current !== currentProject.id) return;
+      const proj = currentProjectRef.current;
+      if (isProjectBusyRef.current || isInitialLoadRef.current || !proj || loadedProjectIdRef.current !== proj.id) return;
       const token = getAccessToken();
-      if (!token || !currentProject.spreadsheetId) {
+      if (!token || !proj.spreadsheetId) {
         setSyncStatus('offline');
         return;
       }
@@ -478,7 +504,7 @@ const App: React.FC = () => {
         try {
           await saveGraphToSheet(
             token,
-            currentProject.spreadsheetId,
+            proj.spreadsheetId,
             currentAllNodes,
             currentBoards,
             currentViewports,
@@ -492,22 +518,22 @@ const App: React.FC = () => {
         }
       }, 1000);
     },
-    [currentProject?.id, currentProject?.spreadsheetId]
+    []
   );
 
   // Trigger auto-save whenever nodes change
   const updateNodesAndSave = useCallback(
     (updater: (prev: CanvasNode[]) => CanvasNode[]) => {
-      if (isProjectBusy) return;
+      if (isProjectBusyRef.current) return;
       setAllNodes(prevAll => {
         const nextAll = updater(prevAll);
-        const updatedViewports = { ...viewports, [currentBoardId]: view };
-        const updatedModels = { ...selectedModels, [currentBoardId]: selectedModelId };
-        triggerAutoSave(nextAll, boards, updatedViewports, updatedModels);
+        const updatedViewports = { ...viewportsRef.current, [currentBoardIdRef.current]: viewRef.current };
+        const updatedModels = { ...selectedModelsRef.current, [currentBoardIdRef.current]: selectedModelIdRef.current };
+        triggerAutoSave(nextAll, boardsRef.current, updatedViewports, updatedModels);
         return nextAll;
       });
     },
-    [isProjectBusy, triggerAutoSave, boards, viewports, selectedModels, currentBoardId, view, selectedModelId]
+    [triggerAutoSave]
   );
 
   const updateNode = useCallback(
@@ -536,12 +562,12 @@ const App: React.FC = () => {
     <T extends CanvasNode>(newNode: T) => {
       const nodeWithBoard: CanvasNode = {
         ...newNode,
-        boardId: newNode.boardId || currentBoardId,
+        boardId: newNode.boardId || currentBoardIdRef.current,
       };
       updateNodesAndSave(prev => [...prev, nodeWithBoard]);
       setSelectedNodeIds(new Set([newNode.id]));
     },
-    [updateNodesAndSave, currentBoardId]
+    [updateNodesAndSave]
   );
 
   // Multi-Board Handlers
@@ -644,6 +670,7 @@ const App: React.FC = () => {
     (nodeToDuplicate: CanvasNode) => {
       const newId = Date.now().toString();
       const shift = 30;
+      const boardId = currentBoardIdRef.current;
 
       if (nodeToDuplicate.type === 'image') {
         const img = nodeToDuplicate as ImageNode;
@@ -652,7 +679,7 @@ const App: React.FC = () => {
           id: newId,
           x: img.x + shift,
           y: img.y + shift,
-          boardId: currentBoardId,
+          boardId,
           content: img.content,
           driveFileId: img.driveFileId,
           originalFileName: img.originalFileName,
@@ -667,27 +694,28 @@ const App: React.FC = () => {
           id: newId,
           x: txt.x + shift,
           y: txt.y + shift,
-          boardId: currentBoardId,
+          boardId,
           createdAt: Date.now(),
         };
         addNode(duplicatedTextNode);
       }
     },
-    [addNode, currentBoardId]
+    [addNode]
   );
 
   const handleDeleteNodes = useCallback(
     (nodeIdsToDelete: string[]) => {
       if (nodeIdsToDelete.length === 0) return;
       const deleteSet = new Set(nodeIdsToDelete);
+      const curAllNodes = allNodesRef.current;
 
       // Find deleted ImageNodes
-      const deletedImageNodes = allNodes.filter(
+      const deletedImageNodes = curAllNodes.filter(
         n => deleteSet.has(n.id) && n.type === 'image' && (n as ImageNode).driveFileId
       ) as ImageNode[];
 
       // Check which driveFileIds will have 0 references across ALL boards in the project
-      const remainingNodes = allNodes.filter(n => !deleteSet.has(n.id));
+      const remainingNodes = curAllNodes.filter(n => !deleteSet.has(n.id));
       const orphanMap = new Map<string, string>();
 
       deletedImageNodes.forEach(img => {
@@ -738,7 +766,7 @@ const App: React.FC = () => {
         executeCanvasDelete();
       }
     },
-    [allNodes, updateNodesAndSave]
+    [updateNodesAndSave]
   );
 
   const handleDeleteNode = useCallback(
@@ -749,11 +777,15 @@ const App: React.FC = () => {
   );
 
   // Canvas View & Interactions (Marquee Box Selection & Multi-Node Dragging)
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (isProjectBusy) return;
+  const rafIdRef = useRef<number | null>(null);
+  const pointerPosRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const wheelSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (isProjectBusyRef.current) return;
 
     // Pan mode with spacebar (any mouse button), middle mouse (button 1), or right click (button 2)
-    if (isSpacePressedRef.current || isSpacePressed || e.button === 1 || e.button === 2) {
+    if (isSpacePressedRef.current || e.button === 1 || e.button === 2) {
       try {
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       } catch {}
@@ -786,7 +818,7 @@ const App: React.FC = () => {
         curX: e.clientX,
         curY: e.clientY,
         isShift: e.shiftKey,
-        initialSelection: new Set(selectedNodeIds),
+        initialSelection: new Set(selectedNodeIdsRef.current),
       };
       setMarqueeBox({
         startX: e.clientX,
@@ -795,27 +827,31 @@ const App: React.FC = () => {
         curY: e.clientY,
       });
     }
-  };
+  }, []);
 
-  const handleNodeDragStart = (e: React.PointerEvent, nodeId: string) => {
-    if (isSpacePressedRef.current || isSpacePressed) return;
+  const handleNodeDragStart = useCallback((e: React.PointerEvent, nodeId: string) => {
+    if (isSpacePressedRef.current) return;
+    const currentSelected = selectedNodeIdsRef.current;
     let targetSelection: Set<string>;
     if (e.shiftKey) {
-      targetSelection = new Set(selectedNodeIds);
+      targetSelection = new Set(currentSelected);
       if (targetSelection.has(nodeId)) {
         targetSelection.delete(nodeId);
       } else {
         targetSelection.add(nodeId);
       }
       setSelectedNodeIds(targetSelection);
-    } else if (!selectedNodeIds.has(nodeId)) {
+    } else if (!currentSelected.has(nodeId)) {
       targetSelection = new Set([nodeId]);
       setSelectedNodeIds(targetSelection);
     } else {
-      targetSelection = selectedNodeIds;
+      targetSelection = currentSelected;
     }
 
-    const draggedNodes = currentBoardNodes.filter(n => targetSelection.has(n.id));
+    const cBoardId = currentBoardIdRef.current;
+    const bId = boardsRef.current[0]?.id || DEFAULT_BOARD_ID;
+    const cNodes = allNodesRef.current.filter(n => (n.boardId || bId) === cBoardId);
+    const draggedNodes = cNodes.filter(n => targetSelection.has(n.id));
     const nodesMap = new Map(draggedNodes.map(n => [n.id, { x: n.x, y: n.y }]));
 
     dragInfoRef.current = {
@@ -824,43 +860,53 @@ const App: React.FC = () => {
       startY: e.clientY,
       nodes: nodesMap,
     };
-  };
+  }, []);
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!dragInfoRef.current) return;
+  const processPointerMove = useCallback(() => {
+    rafIdRef.current = null;
+    const pos = pointerPosRef.current;
+    const drag = dragInfoRef.current;
+    if (!pos || !drag) return;
 
-    const dx = e.clientX - dragInfoRef.current.startX;
-    const dy = e.clientY - dragInfoRef.current.startY;
+    const dx = pos.clientX - drag.startX;
+    const dy = pos.clientY - drag.startY;
 
-    if (dragInfoRef.current.type === 'pan') {
-      const newView = { ...view, x: view.x + dx, y: view.y + dy };
+    if (drag.type === 'pan') {
+      const curView = viewRef.current;
+      const newView = { ...curView, x: curView.x + dx, y: curView.y + dy };
+      viewRef.current = newView;
       setView(newView);
-      dragInfoRef.current.startX = e.clientX;
-      dragInfoRef.current.startY = e.clientY;
-    } else if (dragInfoRef.current.type === 'marquee') {
-      dragInfoRef.current.curX = e.clientX;
-      dragInfoRef.current.curY = e.clientY;
+      drag.startX = pos.clientX;
+      drag.startY = pos.clientY;
+    } else if (drag.type === 'marquee') {
+      drag.curX = pos.clientX;
+      drag.curY = pos.clientY;
       setMarqueeBox({
-        startX: dragInfoRef.current.startX,
-        startY: dragInfoRef.current.startY,
-        curX: e.clientX,
-        curY: e.clientY,
+        startX: drag.startX,
+        startY: drag.startY,
+        curX: pos.clientX,
+        curY: pos.clientY,
       });
 
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
-      const sx1 = Math.min(dragInfoRef.current.startX, e.clientX) - rect.left;
-      const sy1 = Math.min(dragInfoRef.current.startY, e.clientY) - rect.top;
-      const sx2 = Math.max(dragInfoRef.current.startX, e.clientX) - rect.left;
-      const sy2 = Math.max(dragInfoRef.current.startY, e.clientY) - rect.top;
+      const sx1 = Math.min(drag.startX, pos.clientX) - rect.left;
+      const sy1 = Math.min(drag.startY, pos.clientY) - rect.top;
+      const sx2 = Math.max(drag.startX, pos.clientX) - rect.left;
+      const sy2 = Math.max(drag.startY, pos.clientY) - rect.top;
 
-      const worldMinX = (sx1 - view.x) / view.zoom;
-      const worldMinY = (sy1 - view.y) / view.zoom;
-      const worldMaxX = (sx2 - view.x) / view.zoom;
-      const worldMaxY = (sy2 - view.y) / view.zoom;
+      const curView = viewRef.current;
+      const worldMinX = (sx1 - curView.x) / curView.zoom;
+      const worldMinY = (sy1 - curView.y) / curView.zoom;
+      const worldMaxX = (sx2 - curView.x) / curView.zoom;
+      const worldMaxY = (sy2 - curView.y) / curView.zoom;
 
-      const nextSelection = new Set<string>(dragInfoRef.current.isShift ? dragInfoRef.current.initialSelection : []);
-      currentBoardNodes.forEach(node => {
+      const nextSelection = new Set<string>(drag.isShift ? drag.initialSelection : []);
+      const cBoardId = currentBoardIdRef.current;
+      const bId = boardsRef.current[0]?.id || DEFAULT_BOARD_ID;
+      const cNodes = allNodesRef.current.filter(n => (n.boardId || bId) === cBoardId);
+
+      cNodes.forEach(node => {
         const nodeMaxX = node.x + node.width;
         const nodeMaxY = node.y + node.height;
         const isInsideOrIntersect =
@@ -872,76 +918,148 @@ const App: React.FC = () => {
           nextSelection.add(node.id);
         }
       });
-      setSelectedNodeIds(nextSelection);
-    } else if (dragInfoRef.current.type === 'drag_node' && dragInfoRef.current.nodes) {
-      dragInfoRef.current.nodes.forEach((startPos, id) => {
-        updateNode(id, {
-          x: Math.round(startPos.x + dx / view.zoom),
-          y: Math.round(startPos.y + dy / view.zoom),
+
+      const currentSelected = selectedNodeIdsRef.current;
+      let changed = nextSelection.size !== currentSelected.size;
+      if (!changed) {
+        for (const id of nextSelection) {
+          if (!currentSelected.has(id)) {
+            changed = true;
+            break;
+          }
+        }
+      }
+      if (changed) {
+        setSelectedNodeIds(nextSelection);
+        selectedNodeIdsRef.current = nextSelection;
+      }
+    } else if (drag.type === 'drag_node' && drag.nodes) {
+      const curView = viewRef.current;
+      const posMap = new Map<string, { x: number; y: number }>();
+      drag.nodes.forEach((startPos, id) => {
+        posMap.set(id, {
+          x: Math.round(startPos.x + dx / curView.zoom),
+          y: Math.round(startPos.y + dy / curView.zoom),
         });
       });
-    }
-  };
 
-  const handlePointerUp = (e?: React.PointerEvent) => {
-    if (e && canvasRef.current && typeof e.pointerId === 'number') {
-      try {
-        if (canvasRef.current.hasPointerCapture?.(e.pointerId)) {
-          canvasRef.current.releasePointerCapture(e.pointerId);
-        }
-      } catch {}
+      setAllNodes(prev =>
+        prev.map(n => {
+          const newPos = posMap.get(n.id);
+          return newPos ? { ...n, x: newPos.x, y: newPos.y } : n;
+        })
+      );
     }
-    if (dragInfoRef.current?.type === 'pan') {
-      setViewports(prev => ({ ...prev, [currentBoardId]: view }));
-    }
-    dragInfoRef.current = null;
-    setMarqueeBox(null);
-    setIsPanning(false);
-    canvasRef.current?.classList.remove('cursor-grabbing');
-  };
+  }, []);
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragInfoRef.current) return;
+      pointerPosRef.current = { clientX: e.clientX, clientY: e.clientY };
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(processPointerMove);
+      }
+    },
+    [processPointerMove]
+  );
+
+  const handlePointerUp = useCallback(
+    (e?: React.PointerEvent) => {
+      if (e && canvasRef.current && typeof e.pointerId === 'number') {
+        try {
+          if (canvasRef.current.hasPointerCapture?.(e.pointerId)) {
+            canvasRef.current.releasePointerCapture(e.pointerId);
+          }
+        } catch {}
+      }
+
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+        processPointerMove();
+      }
+
+      const lastDrag = dragInfoRef.current;
+      if (lastDrag?.type === 'pan') {
+        setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: viewRef.current }));
+      } else if (lastDrag?.type === 'drag_node') {
+        triggerAutoSave(allNodesRef.current, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
+      }
+
+      dragInfoRef.current = null;
+      setMarqueeBox(null);
+      setIsPanning(false);
+      canvasRef.current?.classList.remove('cursor-grabbing');
+    },
+    [processPointerMove, triggerAutoSave]
+  );
 
   // Global pointerup fallback ensuring drag gestures are always cleaned up properly
   useEffect(() => {
     const handleGlobalPointerUp = () => {
       if (dragInfoRef.current) {
-        if (dragInfoRef.current.type === 'pan') {
-          setViewports(prev => ({ ...prev, [currentBoardId]: view }));
-        }
-        dragInfoRef.current = null;
-        setMarqueeBox(null);
-        setIsPanning(false);
-        canvasRef.current?.classList.remove('cursor-grabbing');
+        handlePointerUp();
       }
     };
     window.addEventListener('pointerup', handleGlobalPointerUp);
     return () => {
       window.removeEventListener('pointerup', handleGlobalPointerUp);
     };
-  }, [currentBoardId, view]);
+  }, [handlePointerUp]);
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomFactor = 1.1;
-    const newZoom = e.deltaY > 0 ? view.zoom / zoomFactor : view.zoom * zoomFactor;
-    const clampedZoom = Math.max(0.1, Math.min(5, newZoom));
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+    const isPinchOrCtrl = e.ctrlKey || e.metaKey;
 
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    if (isPinchOrCtrl) {
+      // Smooth exponential zoom for pinch gesture or Ctrl/Cmd + wheel
+      const normalizedDelta = Math.max(-80, Math.min(80, e.deltaY));
+      const zoomFactor = Math.exp(-normalizedDelta * 0.003);
+      const curView = viewRef.current;
+      const newZoom = Math.max(0.1, Math.min(5, curView.zoom * zoomFactor));
 
-    const worldX = (mouseX - view.x) / view.zoom;
-    const worldY = (mouseY - view.y) / view.zoom;
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const mouseX = rect ? e.clientX - rect.left : window.innerWidth / 2;
+      const mouseY = rect ? e.clientY - rect.top : window.innerHeight / 2;
 
-    const newX = mouseX - worldX * clampedZoom;
-    const newY = mouseY - worldY * clampedZoom;
+      const worldX = (mouseX - curView.x) / curView.zoom;
+      const worldY = (mouseY - curView.y) / curView.zoom;
 
-    const newView = { x: newX, y: newY, zoom: clampedZoom };
-    setView(newView);
-    setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
-  };
+      const newX = mouseX - worldX * newZoom;
+      const newY = mouseY - worldY * newZoom;
 
-  const handleSelectNode = (id: string, shiftKey: boolean) => {
-    if (isSpacePressedRef.current || isSpacePressed) return;
+      const newView = { x: newX, y: newY, zoom: newZoom };
+      viewRef.current = newView;
+      setView(newView);
+
+      if (wheelSaveTimerRef.current) clearTimeout(wheelSaveTimerRef.current);
+      wheelSaveTimerRef.current = setTimeout(() => {
+        setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+      }, 150);
+    } else {
+      // Two-finger trackpad panning or Shift+wheel horizontal panning
+      let dx = -e.deltaX;
+      let dy = -e.deltaY;
+      if (e.shiftKey && dx === 0) {
+        dx = -e.deltaY;
+        dy = 0;
+      }
+      const curView = viewRef.current;
+      const newView = { ...curView, x: curView.x + dx, y: curView.y + dy };
+      viewRef.current = newView;
+      setView(newView);
+
+      if (wheelSaveTimerRef.current) clearTimeout(wheelSaveTimerRef.current);
+      wheelSaveTimerRef.current = setTimeout(() => {
+        setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+      }, 150);
+    }
+  }, []);
+
+  const handleSelectNode = useCallback((id: string, shiftKey: boolean) => {
+    if (isSpacePressedRef.current) return;
     setSelectedNodeIds(prev => {
       const newSelection = new Set(prev);
       if (shiftKey) {
@@ -954,7 +1072,7 @@ const App: React.FC = () => {
       }
       return newSelection;
     });
-  };
+  }, []);
 
   const getCanvasCoords = (clientX: number, clientY: number) => {
     if (!canvasRef.current) return { x: 0, y: 0 };
@@ -1564,11 +1682,11 @@ const App: React.FC = () => {
 
   const handleNodeContextMenu = useCallback(
     (e: React.MouseEvent, nodeId: string) => {
-      if (isSpacePressedRef.current || isSpacePressed) return;
+      if (isSpacePressedRef.current) return;
       e.preventDefault();
       e.stopPropagation();
 
-      if (!selectedNodeIds.has(nodeId)) {
+      if (!selectedNodeIdsRef.current.has(nodeId)) {
         setSelectedNodeIds(new Set([nodeId]));
       }
 
@@ -1578,18 +1696,18 @@ const App: React.FC = () => {
         targetType: 'node',
       });
     },
-    [selectedNodeIds, isSpacePressed]
+    []
   );
 
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent) => {
-    if (isSpacePressedRef.current || isSpacePressed) return;
+    if (isSpacePressedRef.current) return;
     e.preventDefault();
     setContextMenu({
       isOpen: true,
       position: { x: e.clientX, y: e.clientY },
       targetType: 'canvas',
     });
-  }, [isSpacePressed]);
+  }, []);
 
   const handleAutoArrange = useCallback(
     (layout: 'grid' | 'horizontal' | 'vertical') => {
@@ -1954,27 +2072,27 @@ const App: React.FC = () => {
         <div
           className={`absolute top-0 left-0 ${isSpacePressed ? 'pointer-events-none' : ''}`}
           style={{
-            transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
+            transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.zoom})`,
             transformOrigin: '0 0',
+            willChange: 'transform',
           }}
         >
           {currentBoardNodes.map(node => (
-            <div key={node.id} className="node-renderer">
-              <NodeRenderer
-                node={node}
-                zoom={view.zoom}
-                isSelected={selectedNodeIds.has(node.id)}
-                isMultiSelecting={selectedNodeIds.size > 1}
-                isSpacePressed={isSpacePressed}
-                onNodeUpdate={updateNode}
-                onSelect={handleSelectNode}
-                onDragStart={handleNodeDragStart}
-                onDuplicateNode={handleDuplicateNode}
-                onDeleteNode={handleDeleteNode}
-                onDownloadNode={handleDownloadSingleNode}
-                onContextMenu={handleNodeContextMenu}
-              />
-            </div>
+            <NodeRenderer
+              key={node.id}
+              node={node}
+              zoom={view.zoom}
+              isSelected={selectedNodeIds.has(node.id)}
+              isMultiSelecting={selectedNodeIds.size > 1}
+              isSpacePressed={isSpacePressed}
+              onNodeUpdate={updateNode}
+              onSelect={handleSelectNode}
+              onDragStart={handleNodeDragStart}
+              onDuplicateNode={handleDuplicateNode}
+              onDeleteNode={handleDeleteNode}
+              onDownloadNode={handleDownloadSingleNode}
+              onContextMenu={handleNodeContextMenu}
+            />
           ))}
         </div>
 

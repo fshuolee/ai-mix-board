@@ -39,7 +39,11 @@ export const calculateBlobHash = async (blob: Blob): Promise<string> => {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
+// High performance in-memory Blob cache to avoid redundant IndexedDB async queries
+const memoryBlobCache = new Map<string, Blob>();
+
 export const storeImage = async (id: string, blob: Blob, hash?: string): Promise<void> => {
+  memoryBlobCache.set(id, blob);
   const db = await initDB();
   const actualHash = hash || (await calculateBlobHash(blob));
 
@@ -74,12 +78,21 @@ export const getFileIdByHash = async (hash: string): Promise<string | null> => {
 };
 
 export const getImage = async (id: string): Promise<Blob | null> => {
+  if (memoryBlobCache.has(id)) {
+    return memoryBlobCache.get(id)!;
+  }
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const request = store.get(id);
-    request.onsuccess = () => resolve(request.result?.blob || null);
+    request.onsuccess = () => {
+      const blob = request.result?.blob || null;
+      if (blob) {
+        memoryBlobCache.set(id, blob);
+      }
+      resolve(blob);
+    };
     request.onerror = () => {
       console.error('Error getting image:', request.error);
       reject('Error getting image');
@@ -88,6 +101,7 @@ export const getImage = async (id: string): Promise<Blob | null> => {
 };
 
 export const deleteImage = async (id: string): Promise<void> => {
+  memoryBlobCache.delete(id);
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME, HASH_STORE_NAME], 'readwrite');
