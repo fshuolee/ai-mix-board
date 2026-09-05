@@ -62,7 +62,7 @@ export interface ProjectMetadata {
   updatedAt?: string;
 }
 
-export type SyncStatus = 'saved' | 'saving' | 'error' | 'offline';
+export type SyncStatus = 'saved' | 'saving' | 'error' | 'offline' | 'loading';
 
 export interface GoogleUserProfile {
   email: string;

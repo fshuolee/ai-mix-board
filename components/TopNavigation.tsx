@@ -18,6 +18,7 @@ import {
   Loader2,
   AlertTriangle,
   ExternalLink,
+  Download,
 } from 'lucide-react';
 import { ProjectMetadata, GoogleUserProfile, SyncStatus } from '../types';
 import { getModelById } from '../services/modelsConfig';
@@ -33,13 +34,16 @@ interface TopNavigationProps {
   selectedModelId: string;
   user: GoogleUserProfile | null;
   syncStatus: SyncStatus;
-  lastSavedAt: Date | null;
+  lastSavedAt?: Date | null;
+  isProjectLoading?: boolean;
   onAddTextNode: () => void;
   onUploadImage: (file: File) => void;
   onResetZoom: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onClearCanvas: () => void;
+  onExportBoardImage?: () => void;
+  onDownloadAllImages?: () => void;
 }
 
 const TopNavigation: React.FC<TopNavigationProps> = ({
@@ -53,16 +57,21 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   user,
   syncStatus,
   lastSavedAt,
+  isProjectLoading = false,
   onAddTextNode,
   onUploadImage,
   onResetZoom,
   onZoomIn,
   onZoomOut,
   onClearCanvas,
+  onExportBoardImage,
+  onDownloadAllImages,
 }) => {
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
   const [isDirectLoggingIn, setIsDirectLoggingIn] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const downloadDropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const modelInfo = getModelById(selectedModelId);
@@ -73,18 +82,29 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setProjectDropdownOpen(false);
       }
+      if (downloadDropdownRef.current && !downloadDropdownRef.current.contains(e.target as Node)) {
+        setDownloadDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const handleDirectGoogleLogin = async (hintEmail?: string) => {
+    if (isDirectLoggingIn) return;
     setIsDirectLoggingIn(true);
     try {
       await signInWithGooglePopup(undefined, hintEmail || user?.email);
     } catch (err: any) {
-      console.warn('Direct Google popup login failed, opening modal', err);
-      onOpenAuthModal();
+      console.warn('Direct Google popup login failed', err);
+      // Only open auth settings modal if Client ID is missing or invalid config
+      const isMissingConfig =
+        err?.message?.includes('Client ID') ||
+        err?.message?.includes('尚未設定') ||
+        err?.message?.includes('origin_mismatch');
+      if (isMissingConfig) {
+        onOpenAuthModal();
+      }
     } finally {
       setIsDirectLoggingIn(false);
     }
@@ -103,29 +123,38 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
       {/* Left Section: Logo & Project Switcher */}
       <div className="flex items-center gap-3">
         {/* Brand Logo */}
-        <div className="flex items-center gap-2 pr-2 border-r border-gray-800">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center shadow-md">
-            <Sparkles className="w-4 h-4 text-white" />
+        <div className="flex items-center gap-2 pr-2 border-r border-gray-800/80">
+          <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center shadow-md">
+            <Sparkles className="w-3.5 h-3.5 text-white" />
           </div>
-          <div className="hidden sm:block">
-            <div className="font-bold text-sm text-white tracking-wide leading-none">
-              AI MIX BOARD
-            </div>
-            <div className="text-[10px] text-gray-400 font-mono leading-tight">Drive & Sheets</div>
-          </div>
+          <span className="font-bold text-sm text-white tracking-wide leading-none hidden sm:inline">
+            AI MIX
+          </span>
         </div>
 
         {/* Project Selector Dropdown */}
         <div className="relative" ref={dropdownRef}>
           <button
-            onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-900/90 hover:bg-gray-800 border border-gray-700/80 text-white text-sm font-medium transition-all shadow-sm"
+            onClick={() => !isProjectLoading && setProjectDropdownOpen(!projectDropdownOpen)}
+            disabled={isProjectLoading}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all shadow-sm ${
+              isProjectLoading
+                ? 'bg-blue-950/40 border-blue-500/50 text-blue-200 cursor-wait'
+                : 'bg-gray-900/90 hover:bg-gray-800 border-gray-700/80 text-white'
+            }`}
+            title={isProjectLoading ? '專案資料載入中...' : '切換或管理專案'}
           >
-            <Folder className="w-4 h-4 text-emerald-400" />
-            <span className="max-w-[160px] truncate font-semibold">
-              {currentProject?.name || '選擇專案'}
+            {isProjectLoading ? (
+              <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+            ) : (
+              <Folder className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            <span className="max-w-[140px] truncate font-semibold">
+              {isProjectLoading
+                ? `${currentProject?.name || '專案'} (載入中)`
+                : currentProject?.name || '選擇專案'}
             </span>
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+            <ChevronDown className={`w-3 h-3 text-gray-400 ${isProjectLoading ? 'opacity-40' : ''}`} />
           </button>
 
           {/* Dropdown Menu */}
@@ -206,80 +235,103 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           )}
         </div>
 
-        {/* Sync Status Badge */}
-        <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-900/60 border border-gray-800 text-[11px]">
-          {syncStatus === 'saving' ? (
+        {/* Compact Sync Status Pill with Tooltip */}
+        <div
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-900/60 border border-gray-800 text-xs cursor-help select-none"
+          title={
+            isProjectLoading || syncStatus === 'loading'
+              ? '專案資料讀取中...'
+              : syncStatus === 'saving'
+              ? '正在儲存同步至 Google Sheet...'
+              : syncStatus === 'saved'
+              ? `已同步至雲端 (${lastSavedAt ? lastSavedAt.toLocaleTimeString() : '就緒'})`
+              : syncStatus === 'error'
+              ? '雲端同步錯誤，請檢查帳號權限'
+              : '本機離線暫存模式'
+          }
+        >
+          {isProjectLoading || syncStatus === 'loading' ? (
+            <>
+              <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+              <span className="text-blue-300 text-[11px]">讀取中</span>
+            </>
+          ) : syncStatus === 'saving' ? (
             <>
               <Loader2 className="w-3 h-3 text-amber-400 animate-spin" />
-              <span className="text-amber-300">同步至 Sheet 中...</span>
+              <span className="text-amber-300 text-[11px]">同步中</span>
             </>
           ) : syncStatus === 'saved' ? (
             <>
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-gray-300">
-                {lastSavedAt ? `已同步 (${lastSavedAt.toLocaleTimeString()})` : 'Google Sheet 已就緒'}
-              </span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="text-gray-300 text-[11px]">已同步</span>
             </>
           ) : syncStatus === 'error' ? (
             <>
               <AlertTriangle className="w-3 h-3 text-red-400" />
-              <span className="text-red-300">同步錯誤</span>
+              <span className="text-red-300 text-[11px]">錯誤</span>
             </>
           ) : (
             <>
-              <span className="w-2 h-2 rounded-full bg-gray-500" />
-              <span className="text-gray-400">離線暫存</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+              <span className="text-gray-400 text-[11px]">離線</span>
             </>
           )}
         </div>
       </div>
 
-      {/* Center Section: Model Selector */}
-      <div className="flex items-center gap-2">
+      {/* Center Section: Compact Single-Line Model Selector */}
+      <div className="flex items-center">
         <button
           onClick={onOpenModelModal}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-gray-900 to-gray-850 hover:from-gray-850 hover:to-gray-800 border border-gray-700/80 text-white shadow-sm transition-all group"
+          disabled={isProjectLoading}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border shadow-sm transition-all group ${
+            isProjectLoading
+              ? 'opacity-60 cursor-not-allowed bg-gray-900/90 border-gray-800 text-gray-400'
+              : 'bg-gray-900/90 hover:bg-gray-850 border-gray-700/80 hover:border-gray-600 text-white'
+          }`}
+          title={`目前模型：${modelInfo.name} (${modelInfo.tag}) · 點擊切換`}
         >
-          <div className="p-1 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 group-hover:scale-105 transition-transform">
-            <Sparkles className="w-3.5 h-3.5" />
-          </div>
-          <div className="text-left">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-white">{modelInfo.name}</span>
-              {modelInfo.badge && (
-                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
-                  {modelInfo.badge}
-                </span>
-              )}
-            </div>
-            <div className="text-[10px] text-gray-400 leading-tight">
-              {modelInfo.tag} · 點擊切換模型
-            </div>
-          </div>
-          <ChevronDown className="w-3.5 h-3.5 text-gray-400 ml-1" />
+          <Sparkles className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
+          <span className="text-xs font-semibold text-white max-w-[180px] truncate">
+            {modelInfo.name}
+          </span>
+          {modelInfo.badge && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-amber-500/15 text-amber-300 font-medium border border-amber-500/25">
+              {modelInfo.badge}
+            </span>
+          )}
+          <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-gray-200 transition-colors" />
         </button>
       </div>
 
       {/* Right Section: Canvas Controls & Account */}
       <div className="flex items-center gap-2">
-        {/* Quick Add Node Buttons */}
-        <div className="flex items-center gap-1 bg-gray-900/90 border border-gray-800 rounded-xl p-1 shadow-sm">
+        {/* Canvas Toolbar Capsule */}
+        <div className="flex items-center gap-0.5 bg-gray-900/90 border border-gray-800 rounded-xl p-1 shadow-sm">
           <button
             onClick={onAddTextNode}
-            className="flex items-center gap-1 px-2.5 py-1 text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg text-xs font-medium transition-colors"
+            disabled={isProjectLoading}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isProjectLoading
+                ? 'opacity-40 cursor-not-allowed text-gray-500'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            }`}
             title="新增文字節點 (雙擊畫布亦可)"
           >
-            <Type className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">文字</span>
+            <Type className="w-4 h-4 text-blue-400" />
           </button>
 
           <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1 text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg text-xs font-medium transition-colors"
+            onClick={() => !isProjectLoading && fileInputRef.current?.click()}
+            disabled={isProjectLoading}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isProjectLoading
+                ? 'opacity-40 cursor-not-allowed text-gray-500'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            }`}
             title="上傳圖片 (Ctrl+V 貼上亦可)"
           >
-            <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
-            <span className="hidden sm:inline">圖片</span>
+            <ImageIcon className="w-4 h-4 text-purple-400" />
           </button>
           <input
             ref={fileInputRef}
@@ -302,7 +354,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           <button
             onClick={onResetZoom}
             className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            title="最適視角 / 符合畫面 (Fit to Screen - 快速鍵 F 或 Shift+1)"
+            title="最適視角 / 符合畫面 (快速鍵 F)"
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
@@ -316,16 +368,87 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
 
           <div className="w-px h-4 bg-gray-800 mx-0.5" />
 
+          {/* Export / Download Menu */}
+          {(onExportBoardImage || onDownloadAllImages) && (
+            <div className="relative" ref={downloadDropdownRef}>
+              <button
+                onClick={() => !isProjectLoading && setDownloadDropdownOpen(prev => !prev)}
+                disabled={isProjectLoading}
+                className={`flex items-center gap-0.5 p-1.5 rounded-lg transition-colors ${
+                  isProjectLoading
+                    ? 'opacity-40 cursor-not-allowed text-gray-500'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                }`}
+                title="畫布下載與匯出"
+              >
+                <Download className="w-3.5 h-3.5 text-cyan-400" />
+                <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${downloadDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {downloadDropdownOpen && (
+                <div className="absolute top-full right-0 mt-1.5 w-52 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2.5 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-800 mb-1">
+                    匯出與下載
+                  </div>
+
+                  {onExportBoardImage && (
+                    <button
+                      onClick={() => {
+                        setDownloadDropdownOpen(false);
+                        onExportBoardImage();
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left hover:bg-cyan-600/20 text-gray-200 hover:text-cyan-300 transition-colors flex items-center gap-2.5 group"
+                    >
+                      <Download className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-medium text-xs text-white group-hover:text-cyan-300">
+                          匯出畫布 (PNG)
+                        </div>
+                        <div className="text-[10px] text-gray-400 truncate">
+                          整幅畫布拼接輸出
+                        </div>
+                      </div>
+                    </button>
+                  )}
+
+                  {onDownloadAllImages && (
+                    <button
+                      onClick={() => {
+                        setDownloadDropdownOpen(false);
+                        onDownloadAllImages();
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left hover:bg-emerald-600/20 text-gray-200 hover:text-emerald-300 transition-colors flex items-center gap-2.5 group mt-0.5"
+                    >
+                      <ImageIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-medium text-xs text-white group-hover:text-emerald-300">
+                          下載所有圖片
+                        </div>
+                        <div className="text-[10px] text-gray-400 truncate">
+                          打包下載原始圖檔
+                        </div>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <button
             onClick={onClearCanvas}
-            className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"
+            disabled={isProjectLoading}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isProjectLoading
+                ? 'opacity-40 cursor-not-allowed text-gray-500'
+                : 'text-gray-400 hover:text-red-400 hover:bg-gray-800'
+            }`}
             title="清空畫布"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* User Account / Settings Button */}
         {/* User Account / Settings Button */}
         {user ? (
           <div className="flex items-center gap-1.5">

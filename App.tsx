@@ -9,7 +9,12 @@ import type {
   SyncStatus,
   ViewportState,
 } from './types';
-import { blobToBase64 } from './utils/canvasUtils';
+import {
+  blobToBase64,
+  downloadSingleNode,
+  batchDownloadNodes,
+  exportBoardToPng,
+} from './utils/canvasUtils';
 import { generateFromNodes } from './services/geminiService';
 import { storeImage } from './services/dbService';
 import {
@@ -20,6 +25,8 @@ import {
   tryFetchLocalGcloudToken,
   isLocalEnvironment,
   handleOAuthCallback,
+  isAuthPopupInProgress,
+  signInWithGooglePopup,
 } from './services/googleAuthService';
 import {
   listProjects,
@@ -51,7 +58,18 @@ import {
   fitDimensions,
 } from './services/nodeSizingService';
 import { copyNodesToClipboard } from './services/clipboardService';
-import { Sparkles, Loader2, UploadCloud, Trash2, ClipboardCheck } from 'lucide-react';
+import {
+  Sparkles,
+  Loader2,
+  UploadCloud,
+  Trash2,
+  ClipboardCheck,
+  Folder,
+  AlertCircle,
+  RotateCw,
+  LogIn,
+  ExternalLink,
+} from 'lucide-react';
 
 const checkOverlap = (
   rect1: { x: number; y: number; width: number; height: number },
@@ -120,6 +138,11 @@ const App: React.FC = () => {
   const [projects, setProjects] = useState<ProjectMetadata[]>([]);
   const [currentProject, setCurrentProject] = useState<ProjectMetadata | null>(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [isLoadingProjectData, setIsLoadingProjectData] = useState(false);
+  const [projectDataError, setProjectDataError] = useState<string | null>(null);
+  const [retryProjectLoadTrigger, setRetryProjectLoadTrigger] = useState(0);
+
+  const isProjectBusy = isLoadingProjectData || (isLoadingProjects && !currentProject);
 
   // Multi-Board state
   const [boards, setBoards] = useState<BoardMetadata[]>([
@@ -216,11 +239,19 @@ const App: React.FC = () => {
       }
     }).catch(err => console.warn('OAuth callback error', err));
 
-    // Proactively verify or refresh on window focus and visibility change
+    // Proactively verify or refresh on window focus and visibility change (throttled & non-intrusive)
+    let lastFocusCheck = 0;
     const checkAndMaintainAuth = () => {
+      if (isAuthPopupInProgress()) return;
+
+      const now = Date.now();
+      if (now - lastFocusCheck < 10000) return; // At most once every 10 seconds
+      lastFocusCheck = now;
+
       const u = getCurrentUser();
       if (u) {
-        if (u.isExpired || u.expiresAt <= Date.now() + 180000) {
+        // Only trigger proactive refresh if NOT already expired, but expiring soon (< 3 min)
+        if (!u.isExpired && u.expiresAt > now && u.expiresAt <= now + 180000) {
           refreshGoogleToken().catch(() => {});
         }
       } else if (isLocalEnvironment()) {
@@ -238,7 +269,7 @@ const App: React.FC = () => {
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     if (isLocalEnvironment()) {
       pollTimer = setInterval(() => {
-        if (!getCurrentUser()) {
+        if (!getCurrentUser() && !isAuthPopupInProgress()) {
           tryFetchLocalGcloudToken().catch(() => {});
         }
       }, 5000);
@@ -318,7 +349,9 @@ const App: React.FC = () => {
     let isMounted = true;
     isInitialLoadRef.current = true;
     loadedProjectIdRef.current = null;
-    setSyncStatus('saving');
+    setIsLoadingProjectData(true);
+    setProjectDataError(null);
+    setSyncStatus('loading');
 
     loadGraphFromSheet(token, currentProject.spreadsheetId)
       .then(loadedData => {
@@ -357,6 +390,7 @@ const App: React.FC = () => {
         setSyncStatus('saved');
         setLastSavedAt(new Date());
         loadedProjectIdRef.current = currentProject.id;
+        setIsLoadingProjectData(false);
 
         setTimeout(() => {
           if (isMounted) {
@@ -367,14 +401,29 @@ const App: React.FC = () => {
       .catch(err => {
         if (!isMounted) return;
         console.error('Failed to load graph from Google Sheet:', err);
+        setProjectDataError(err.message || '載入專案資料失敗');
         setSyncStatus('error');
+        setIsLoadingProjectData(false);
         isInitialLoadRef.current = false;
       });
 
     return () => {
       isMounted = false;
     };
-  }, [currentProject?.id, currentProject?.spreadsheetId]);
+  }, [currentProject?.id, currentProject?.spreadsheetId, retryProjectLoadTrigger]);
+
+  const handleRetryLoadProject = useCallback(() => {
+    setRetryProjectLoadTrigger(c => c + 1);
+  }, []);
+
+  const handleReconnectFromCanvas = useCallback(async () => {
+    try {
+      await signInWithGooglePopup(undefined, user?.email);
+      setRetryProjectLoadTrigger(c => c + 1);
+    } catch (err: any) {
+      console.warn('Reconnect failed from canvas overlay:', err);
+    }
+  }, [user?.email]);
 
   // 4. Auto-save graph to Google Sheet (Debounced)
   const triggerAutoSave = useCallback(
@@ -384,7 +433,7 @@ const App: React.FC = () => {
       currentViewports: Record<string, ViewportState>,
       currentModels: Record<string, string>
     ) => {
-      if (isInitialLoadRef.current || !currentProject || loadedProjectIdRef.current !== currentProject.id) return;
+      if (isProjectBusy || isInitialLoadRef.current || !currentProject || loadedProjectIdRef.current !== currentProject.id) return;
       const token = getAccessToken();
       if (!token || !currentProject.spreadsheetId) {
         setSyncStatus('offline');
@@ -421,6 +470,7 @@ const App: React.FC = () => {
   // Trigger auto-save whenever nodes change
   const updateNodesAndSave = useCallback(
     (updater: (prev: CanvasNode[]) => CanvasNode[]) => {
+      if (isProjectBusy) return;
       setAllNodes(prevAll => {
         const nextAll = updater(prevAll);
         const updatedViewports = { ...viewports, [currentBoardId]: view };
@@ -429,7 +479,7 @@ const App: React.FC = () => {
         return nextAll;
       });
     },
-    [triggerAutoSave, boards, viewports, selectedModels, currentBoardId, view, selectedModelId]
+    [isProjectBusy, triggerAutoSave, boards, viewports, selectedModels, currentBoardId, view, selectedModelId]
   );
 
   const updateNode = useCallback(
@@ -468,7 +518,7 @@ const App: React.FC = () => {
 
   // Multi-Board Handlers
   const handleSelectBoard = (newBoardId: string) => {
-    if (newBoardId === activeBoardId) return;
+    if (isProjectBusy || newBoardId === activeBoardId) return;
 
     if (currentProject) {
       try {
@@ -493,6 +543,7 @@ const App: React.FC = () => {
   };
 
   const handleAddBoard = (name?: string) => {
+    if (isProjectBusy) return;
     const newId = `board_${Date.now()}`;
     const newName = name?.trim() || `Board ${boards.length + 1}`;
     const newBoard: BoardMetadata = {
@@ -523,13 +574,14 @@ const App: React.FC = () => {
   };
 
   const handleRenameBoard = (boardId: string, newName: string) => {
+    if (isProjectBusy) return;
     const updatedBoards = boards.map(b => (b.id === boardId ? { ...b, name: newName, updatedAt: new Date().toISOString() } : b));
     setBoards(updatedBoards);
     triggerAutoSave(allNodes, updatedBoards, viewports, selectedModels);
   };
 
   const handleDeleteBoard = (boardId: string) => {
-    if (boards.length <= 1) return;
+    if (isProjectBusy || boards.length <= 1) return;
 
     const updatedBoards = boards.filter(b => b.id !== boardId);
     const updatedNodes = allNodes.filter(n => (n.boardId || boards[0]?.id) !== boardId);
@@ -670,6 +722,7 @@ const App: React.FC = () => {
 
   // Canvas View & Interactions (Marquee Box Selection & Multi-Node Dragging)
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (isProjectBusy) return;
     if ((e.target as HTMLElement).closest('.node-renderer')) return;
 
     // Pan mode with spacebar, middle mouse (button 1), or right click (button 2)
@@ -879,6 +932,7 @@ const App: React.FC = () => {
   };
 
   const handleCanvasDoubleClick = (e: React.MouseEvent) => {
+    if (isProjectBusy) return;
     if ((e.target as HTMLElement).closest('[data-node-id]')) return;
 
     const { x, y } = getCanvasCoords(e.clientX, e.clientY);
@@ -901,6 +955,7 @@ const App: React.FC = () => {
   // Upload image file at specific canvas coords (or center if omitted)
   const handleUploadImageFile = useCallback(
     async (file: File, targetCoords?: { x: number; y: number }) => {
+      if (isProjectBusy) return;
       const token = getAccessToken();
       const initialCoords = targetCoords || getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
       const id = Date.now().toString();
@@ -959,13 +1014,14 @@ const App: React.FC = () => {
       };
       img.src = base64;
     },
-    [currentBoardNodes, currentProject, addNode, currentBoardId, view]
+    [isProjectBusy, currentBoardNodes, currentProject, addNode, currentBoardId, view]
   );
 
   // Drag-and-Drop Image Files onto Canvas
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isProjectBusy) return;
     if (e.dataTransfer.types.includes('Files')) {
       setIsDraggingFileOver(true);
       e.dataTransfer.dropEffect = 'copy';
@@ -983,6 +1039,7 @@ const App: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingFileOver(false);
+    if (isProjectBusy) return;
 
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     if (files.length === 0) return;
@@ -1539,7 +1596,84 @@ const App: React.FC = () => {
     setSelectedNodeIds(new Set(currentBoardNodes.map(n => n.id)));
   }, [currentBoardNodes]);
 
-  const currentModelInfo = getModelById(selectedModelId);
+  // Download & Export Handlers
+  const handleDownloadSingleNode = useCallback(
+    async (node: CanvasNode) => {
+      showToast(`正在準備下載 ${node.type === 'image' ? '圖片' : '文字'}...`);
+      try {
+        const ok = await downloadSingleNode(node);
+        if (ok) {
+          showToast('檔案已開始下載');
+        } else {
+          showToast('無法下載：找不到檔案資源');
+        }
+      } catch (err) {
+        console.error('Download single node error:', err);
+        showToast('下載失敗，請稍後再試');
+      }
+    },
+    [showToast]
+  );
+
+  const handleDownloadSelectedNodes = useCallback(async () => {
+    const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (selected.length === 0) return;
+    showToast(`正在準備批次下載 ${selected.length} 個物件...`);
+    try {
+      const { successCount, failCount } = await batchDownloadNodes(selected);
+      if (failCount === 0) {
+        showToast(`已完成下載 ${successCount} 個檔案`);
+      } else {
+        showToast(`下載完成：成功 ${successCount} 個，失敗 ${failCount} 個`);
+      }
+    } catch (err) {
+      console.error('Batch download error:', err);
+      showToast('批次下載發生錯誤');
+    }
+  }, [currentBoardNodes, selectedNodeIds, showToast]);
+
+  const handleExportBoardImage = useCallback(async () => {
+    if (currentBoardNodes.length === 0) {
+      showToast('目前畫布沒有物件，無法匯出');
+      return;
+    }
+    showToast('正在產生畫布完整圖片 (PNG)...');
+    try {
+      const currentBoard = boards.find(b => b.id === currentBoardId);
+      const boardName = currentBoard?.name || 'Canvas';
+      const ok = await exportBoardToPng(currentBoardNodes, boardName, {
+        projectName: currentProject?.name,
+      });
+      if (ok) {
+        showToast('畫布完整圖片已成功匯出並下載！');
+      } else {
+        showToast('畫布圖片匯出失敗');
+      }
+    } catch (err) {
+      console.error('Export board image error:', err);
+      showToast('匯出畫布圖片時發生錯誤');
+    }
+  }, [currentBoardNodes, boards, currentBoardId, currentProject?.name, showToast]);
+
+  const handleDownloadAllBoardImages = useCallback(async () => {
+    const images = currentBoardNodes.filter(n => n.type === 'image');
+    if (images.length === 0) {
+      showToast('目前畫布沒有圖片可供下載');
+      return;
+    }
+    showToast(`開始下載畫布中的 ${images.length} 張圖片...`);
+    try {
+      const { successCount, failCount } = await batchDownloadNodes(images);
+      if (failCount === 0) {
+        showToast(`已成功下載 ${images.length} 張圖片`);
+      } else {
+        showToast(`下載完成：成功 ${successCount} 張，失敗 ${failCount} 張`);
+      }
+    } catch (err) {
+      console.error('Download all images error:', err);
+      showToast('批次下載圖片時發生錯誤');
+    }
+  }, [currentBoardNodes, showToast]);
 
   return (
     <div className="w-screen h-screen relative select-none overflow-hidden bg-gray-950 font-sans text-gray-100">
@@ -1555,7 +1689,9 @@ const App: React.FC = () => {
         user={user}
         syncStatus={syncStatus}
         lastSavedAt={lastSavedAt}
+        isProjectLoading={isProjectBusy}
         onAddTextNode={() => {
+          if (isProjectBusy) return;
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
           addNode({
             id: Date.now().toString(),
@@ -1573,21 +1709,26 @@ const App: React.FC = () => {
         onUploadImage={file => handleUploadImageFile(file)}
         onResetZoom={fitToView}
         onZoomIn={() => {
+          if (isProjectBusy) return;
           const newView = { ...view, zoom: Math.min(5, view.zoom * 1.2) };
           setView(newView);
           setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onZoomOut={() => {
+          if (isProjectBusy) return;
           const newView = { ...view, zoom: Math.max(0.1, view.zoom / 1.2) };
           setView(newView);
           setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onClearCanvas={() => {
+          if (isProjectBusy) return;
           if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
             updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId));
             setSelectedNodeIds(new Set());
           }
         }}
+        onExportBoardImage={handleExportBoardImage}
+        onDownloadAllImages={handleDownloadAllBoardImages}
       />
 
       {/* Infinite Canvas with Drag-and-Drop Image File Support */}
@@ -1606,6 +1747,122 @@ const App: React.FC = () => {
       >
         {/* Canvas Background Grid */}
         <div className="absolute inset-0 bg-gray-950 bg-[linear-gradient(to_right,#37415125_1px,transparent_1px),linear-gradient(to_bottom,#37415125_1px,transparent_1px)] bg-[size:20px_20px]" />
+
+        {/* Project Switching / Loading Overlay */}
+        {isLoadingProjectData && currentProject && (
+          <div className="absolute inset-0 z-40 bg-gray-950/75 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-fadeIn select-none pointer-events-auto">
+            <div className="max-w-md w-full bg-gray-900/95 border border-gray-700/80 rounded-3xl p-7 shadow-2xl flex flex-col items-center text-center gap-4">
+              <div className="relative">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600/30 to-indigo-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400 shadow-inner">
+                  <Folder className="w-8 h-8 text-blue-400" />
+                </div>
+                <div className="absolute -bottom-1 -right-1 p-1.5 bg-gray-900 rounded-full border border-gray-700 shadow-md">
+                  <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[11px] font-semibold text-blue-400 uppercase tracking-widest font-mono">
+                  切換專案畫布
+                </div>
+                <h3 className="text-lg font-bold text-white mt-1 truncate max-w-[320px]">
+                  {currentProject.name}
+                </h3>
+                <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                  正在從 Google Drive 與 Google Sheet 同步畫布節點、分頁與最新排版...
+                </p>
+              </div>
+
+              <div className="w-full bg-gray-800/80 rounded-full h-1.5 overflow-hidden my-1">
+                <div className="bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 h-full w-full animate-indeterminate rounded-full" />
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>載入完成後即可安全編輯，請稍候</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Initial Connecting to Google Drive Overlay */}
+        {isLoadingProjects && !currentProject && (
+          <div className="absolute inset-0 z-40 bg-gray-950/75 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-fadeIn select-none pointer-events-auto">
+            <div className="max-w-md w-full bg-gray-900/95 border border-gray-700/80 rounded-3xl p-7 shadow-2xl flex flex-col items-center text-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shadow-inner">
+                <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+              </div>
+
+              <div>
+                <div className="text-[11px] font-semibold text-indigo-400 uppercase tracking-widest font-mono">
+                  Google Drive 連線
+                </div>
+                <h3 className="text-lg font-bold text-white mt-1">
+                  正在讀取專案列表
+                </h3>
+                <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                  正在掃描 Google Drive 中的專案資料夾與 Google Sheet 試算表...
+                </p>
+              </div>
+
+              <div className="w-full bg-gray-800/80 rounded-full h-1.5 overflow-hidden my-1">
+                <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full w-full animate-indeterminate rounded-full" />
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                <span>初始化畫布環境中，請稍候...</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Project Load Error Overlay */}
+        {projectDataError && !isLoadingProjectData && (
+          <div className="absolute inset-0 z-40 bg-gray-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-fadeIn select-none pointer-events-auto">
+            <div className="max-w-md w-full bg-gray-900/95 border border-red-500/50 rounded-3xl p-7 shadow-2xl flex flex-col items-center text-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-red-500/15 border border-red-500/40 flex items-center justify-center text-red-400">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+
+              <div>
+                <h3 className="text-lg font-bold text-white">專案畫布載入失敗</h3>
+                <p className="text-xs text-red-300/90 mt-2 leading-relaxed max-h-24 overflow-y-auto">
+                  {projectDataError}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+                {projectDataError.includes('401') || projectDataError.includes('UNAUTHENTICATED') || user?.isExpired ? (
+                  <button
+                    onClick={handleReconnectFromCanvas}
+                    className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-lg shadow-amber-600/30 flex items-center gap-2 transition-colors"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span>重新連線 Google 帳號</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleRetryLoadProject}
+                    className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/30 flex items-center gap-2 transition-colors"
+                  >
+                    <RotateCw className="w-4 h-4" />
+                    <span>重新載入專案</span>
+                  </button>
+                )}
+
+                {projects.length > 1 && (
+                  <button
+                    onClick={() => setIsProjectModalOpen(true)}
+                    className="px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium border border-gray-700 transition-colors"
+                  >
+                    切換其他專案
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Drag Over Overlay Indicator */}
         {isDraggingFileOver && (
@@ -1644,6 +1901,7 @@ const App: React.FC = () => {
                 onDragStart={handleNodeDragStart}
                 onDuplicateNode={handleDuplicateNode}
                 onDeleteNode={handleDeleteNode}
+                onDownloadNode={handleDownloadSingleNode}
                 onContextMenu={handleNodeContextMenu}
               />
             </div>
@@ -1674,6 +1932,7 @@ const App: React.FC = () => {
           onRenameBoard={handleRenameBoard}
           onDeleteBoard={handleDeleteBoard}
           allNodes={allNodes}
+          disabled={isProjectBusy}
         />
       </div>
 
@@ -1684,37 +1943,35 @@ const App: React.FC = () => {
         }`}
         onPointerDown={e => e.stopPropagation()}
       >
-        {/* Model quick indicator */}
-        <button
-          onClick={() => setIsModelModalOpen(true)}
-          className="hidden sm:flex items-center gap-2 px-3 py-2.5 rounded-full bg-gray-900/90 backdrop-blur-md border border-gray-700 text-xs text-gray-300 hover:text-white hover:border-gray-500 shadow-xl transition-all"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-          <span className="font-semibold">{currentModelInfo.name}</span>
-          <span className="text-[10px] text-gray-400">({currentModelInfo.tag})</span>
-        </button>
-
-        {/* Execute Button */}
+        {/* Primary Generate Floating CTA */}
         <button
           onClick={handleExecute}
-          disabled={isGenerating || selectedNodeIds.size === 0}
-          className="px-6 py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-full shadow-2xl shadow-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center gap-2.5 border border-blue-400/30 text-sm active:scale-95"
+          disabled={isProjectBusy || isGenerating || selectedNodeIds.size === 0}
+          className={`px-5 py-3 text-white font-medium rounded-2xl shadow-2xl transition-all duration-200 flex items-center gap-2 text-xs select-none ${
+            selectedNodeIds.size > 0
+              ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 shadow-blue-600/30 border border-blue-400/30 active:scale-95 cursor-pointer'
+              : 'bg-gray-900/80 border border-gray-800 text-gray-500 cursor-not-allowed opacity-60'
+          }`}
+          title={
+            selectedNodeIds.size === 0
+              ? '選取畫布上的節點後即可進行 AI 生成 (Shift+Enter)'
+              : '以 Gemini 進行合成生成 (Shift+Enter)'
+          }
           aria-label="Generate from selected nodes"
         >
           {isGenerating ? (
             <>
-              <Loader2 className="animate-spin h-5 w-5 text-white" />
-              <span>AI 生成中...</span>
+              <Loader2 className="animate-spin w-4 h-4 text-white" />
+              <span>生成中...</span>
             </>
           ) : (
             <>
-              <Sparkles className="h-5 w-5 text-amber-300" />
+              <Sparkles className={`w-4 h-4 ${selectedNodeIds.size > 0 ? 'text-amber-300' : 'text-gray-500'}`} />
               <span>
                 {selectedNodeIds.size === 0
-                  ? '請選取節點'
-                  : `生成合成 (${selectedNodeIds.size})`}
+                  ? '生成'
+                  : `生成 (${selectedNodeIds.size})`}
               </span>
-              <span className="text-xs opacity-75 hidden sm:inline">(Shift+Enter)</span>
             </>
           )}
         </button>
@@ -1797,6 +2054,7 @@ const App: React.FC = () => {
           onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
           onDeselectAll={() => setSelectedNodeIds(new Set())}
           onGenerate={handleExecute}
+          onDownloadSelected={handleDownloadSelectedNodes}
         />
       </div>
 
@@ -1842,6 +2100,9 @@ const App: React.FC = () => {
             setSelectedNodeIds(new Set());
           }
         }}
+        onDownloadNode={handleDownloadSelectedNodes}
+        onExportBoardImage={handleExportBoardImage}
+        onDownloadAllBoardImages={handleDownloadAllBoardImages}
       />
 
       {/* Floating Toast Notification Banner */}

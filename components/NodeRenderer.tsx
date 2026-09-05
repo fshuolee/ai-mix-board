@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Copy, Trash2, ExternalLink, HardDrive } from 'lucide-react';
+import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download } from 'lucide-react';
 import type { CanvasNode, TextNode, ImageNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
@@ -14,6 +14,7 @@ interface NodeRendererProps {
   onDragStart: (e: React.PointerEvent, nodeId: string) => void;
   onDuplicateNode?: (node: CanvasNode) => void;
   onDeleteNode?: (nodeId: string) => void;
+  onDownloadNode?: (node: CanvasNode) => void;
   isMultiSelecting?: boolean;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
 }
@@ -27,6 +28,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDragStart,
   onDuplicateNode,
   onDeleteNode,
+  onDownloadNode,
   isMultiSelecting,
   onContextMenu,
 }) => {
@@ -208,27 +210,50 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               </span>
             </div>
           )}
+
+          {/* Quick Download Hover Button for Images */}
+          {onDownloadNode && (
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                onDownloadNode(node);
+              }}
+              className="absolute bottom-1.5 right-1.5 p-1 rounded bg-gray-900/85 hover:bg-gray-800 backdrop-blur-sm border border-gray-700 text-emerald-400 hover:text-emerald-300 transition-all opacity-0 group-hover:opacity-100 shadow-md"
+              title="快速下載此圖片檔案"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       )}
 
       {/* Floating Action Menu when Single Node Selected - Inverse scaled so it stays 100% constant size */}
       {isSelected && !isMultiSelecting && (
         <div
-          className="absolute -top-3 left-0 flex items-center gap-1 bg-gray-900/95 backdrop-blur-md border border-gray-700 px-2.5 py-1.5 rounded-xl shadow-2xl z-30 pointer-events-auto"
+          className="absolute -top-3 left-0 flex items-center gap-0.5 bg-gray-900/95 backdrop-blur-md border border-gray-700/80 p-1 rounded-xl shadow-2xl z-30 pointer-events-auto"
           style={{
             transform: `translateY(-100%) scale(${1 / zoom})`,
             transformOrigin: 'bottom left',
           }}
           onPointerDown={e => e.stopPropagation()}
         >
+          {onDownloadNode && (
+            <button
+              onClick={() => onDownloadNode(node)}
+              className="p-1.5 text-gray-300 hover:text-emerald-300 hover:bg-gray-800 rounded-lg transition-colors"
+              title={node.type === 'image' ? '下載原始圖片' : '下載文字內容 (.txt)'}
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+            </button>
+          )}
+
           {onDuplicateNode && (
             <button
               onClick={() => onDuplicateNode(node)}
-              className="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium whitespace-nowrap"
-              title="複製節點 (指向同一個 Drive Asset)"
+              className="p-1.5 text-gray-300 hover:text-blue-300 hover:bg-gray-800 rounded-lg transition-colors"
+              title="在畫布上製作複本"
             >
               <Copy className="w-3.5 h-3.5 text-blue-400" />
-              <span>複製 (指向)</span>
             </button>
           )}
 
@@ -237,7 +262,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               href={imageNode.driveViewLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="p-1.5 text-gray-300 hover:text-emerald-400 hover:bg-gray-800 rounded-lg transition-colors text-xs flex items-center gap-1"
+              className="p-1.5 text-gray-300 hover:text-emerald-400 hover:bg-gray-800 rounded-lg transition-colors"
               title="在 Google Drive 開啟此檔案"
             >
               <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
@@ -248,7 +273,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             <button
               onClick={() => onDeleteNode(node.id)}
               className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"
-              title="刪除節點"
+              title="刪除節點 (Delete)"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>

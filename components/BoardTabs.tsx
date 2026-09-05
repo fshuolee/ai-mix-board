@@ -23,6 +23,7 @@ interface BoardTabsProps {
   onRenameBoard: (boardId: string, newName: string) => void;
   onDeleteBoard: (boardId: string) => void;
   allNodes: CanvasNode[];
+  disabled?: boolean;
 }
 
 const BoardTabs: React.FC<BoardTabsProps> = ({
@@ -33,6 +34,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   onRenameBoard,
   onDeleteBoard,
   allNodes,
+  disabled = false,
 }) => {
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -146,7 +148,9 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
 
   return (
     <div
-      className="absolute bottom-6 left-6 z-20 flex items-center max-w-[calc(100vw-360px)] select-none"
+      className={`absolute bottom-6 left-6 z-20 flex items-center max-w-[calc(100vw-360px)] select-none transition-opacity duration-200 ${
+        disabled ? 'pointer-events-none opacity-40' : ''
+      }`}
       onPointerDown={e => e.stopPropagation()}
     >
       <div className="flex items-center gap-1.5 p-1.5 bg-gray-950/90 backdrop-blur-2xl border border-gray-800/90 rounded-2xl shadow-2xl relative max-w-full">
@@ -400,7 +404,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
           title="新增畫布 (Board)"
         >
           <Plus className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">新增畫布</span>
+          <span className="hidden sm:inline">新增</span>
         </button>
       </div>
     </div>

@@ -7,12 +7,12 @@ import {
   Copy,
   Trash2,
   X,
-  Sparkles,
   ChevronUp,
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
   Layers,
   ClipboardCopy,
+  Download,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -28,6 +28,7 @@ export interface MultiSelectionBarProps {
   onDelete: () => void;
   onDeselectAll: () => void;
   onGenerate?: () => void;
+  onDownloadSelected?: () => void;
 }
 
 const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
@@ -40,7 +41,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   onDuplicate,
   onDelete,
   onDeselectAll,
-  onGenerate,
+  onDownloadSelected,
 }) => {
   const [showArrangeMenu, setShowArrangeMenu] = useState(false);
   const defaultSize = getDefaultNodeSize();
@@ -52,44 +53,44 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
 
   return (
     <div
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 p-1.5 bg-gray-900/90 backdrop-blur-xl border border-gray-700/90 rounded-2xl shadow-2xl text-xs text-gray-200 select-none animate-in fade-in slide-in-from-bottom-4 duration-200 pointer-events-auto"
+      className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 p-1.5 bg-gray-900/90 backdrop-blur-xl border border-gray-700/80 rounded-2xl shadow-2xl text-xs text-gray-200 select-none animate-in fade-in slide-in-from-bottom-4 duration-200 pointer-events-auto"
       onPointerDown={e => e.stopPropagation()}
     >
       {/* Selection Count Pill */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-xl font-medium">
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-xl font-medium text-xs">
         <Layers className="w-3.5 h-3.5 text-blue-400" />
-        <span>已選取 {count} 個物件</span>
+        <span className="font-mono font-semibold">{count}</span>
+        <span className="text-blue-300/80 text-[11px]">選取</span>
       </div>
 
-      <div className="w-px h-5 bg-gray-700/80 mx-0.5" />
+      <div className="w-px h-5 bg-gray-800 mx-0.5" />
 
       {/* Auto Arrange with Dropdown */}
-      <div className="relative">
+      <div className="relative flex items-center">
         <button
           onClick={() => onAutoArrange('grid')}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-gray-200 hover:text-white transition-colors"
-          title="自動排列整齊 (網格佈局)"
+          className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
+          title="自動排列 (Alt+G)"
         >
-          <LayoutGrid className="w-3.5 h-3.5 text-blue-400" />
-          <span className="font-medium">自動排列</span>
+          <LayoutGrid className="w-4 h-4 text-blue-400" />
         </button>
 
         <button
           onClick={() => setShowArrangeMenu(prev => !prev)}
-          className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors -ml-1"
-          title="更多排列選項"
+          className="p-1 rounded-md hover:bg-gray-800 text-gray-400 hover:text-white transition-colors -ml-1"
+          title="更多排列選項 (網格 / 水平 / 垂直)"
         >
-          <ChevronUp className={`w-3.5 h-3.5 transition-transform ${showArrangeMenu ? 'rotate-180' : ''}`} />
+          <ChevronUp className={`w-3 h-3 transition-transform ${showArrangeMenu ? 'rotate-180' : ''}`} />
         </button>
 
         {showArrangeMenu && (
-          <div className="absolute bottom-full left-0 mb-2 p-1 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl space-y-1 min-w-[130px] animate-in fade-in zoom-in-95 duration-100">
+          <div className="absolute bottom-full left-0 mb-2 p-1 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl space-y-0.5 min-w-[130px] animate-in fade-in zoom-in-95 duration-100 z-50">
             <button
               onClick={() => {
                 onAutoArrange('grid');
                 setShowArrangeMenu(false);
               }}
-              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300"
+              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs"
             >
               <LayoutGrid className="w-3.5 h-3.5 text-blue-400" />
               <span>網格排列 (Grid)</span>
@@ -99,20 +100,20 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                 onAutoArrange('horizontal');
                 setShowArrangeMenu(false);
               }}
-              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300"
+              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs"
             >
               <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-              <span>橫向單列 (Row)</span>
+              <span>水平單列 (Row)</span>
             </button>
             <button
               onClick={() => {
                 onAutoArrange('vertical');
                 setShowArrangeMenu(false);
               }}
-              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300"
+              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs"
             >
               <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-              <span>直向單行 (Column)</span>
+              <span>垂直單行 (Column)</span>
             </button>
           </div>
         )}
@@ -122,72 +123,79 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       {hasImage && (
         <button
           onClick={onResetAspect}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-emerald-300 hover:text-emerald-200 transition-colors"
-          title="將所選圖片還原為原始真實比例 (不變形)"
+          className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-emerald-300 transition-colors"
+          title="還原為原圖真實比例"
         >
-          <Maximize2 className="w-3.5 h-3.5 text-emerald-400" />
-          <span>原圖比例</span>
+          <Maximize2 className="w-4 h-4 text-emerald-400" />
         </button>
       )}
 
       {/* Apply Default Size */}
       <button
         onClick={onApplyDefaultSize}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-purple-300 hover:text-purple-200 transition-colors"
-        title={`套用最佳預設尺寸 (${defaultSize.width}×${defaultSize.height}，等比例限制寬高)`}
+        className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-purple-300 transition-colors"
+        title={`套用最適尺寸 (${defaultSize.width}×${defaultSize.height})`}
       >
-        <Ruler className="w-3.5 h-3.5 text-purple-400" />
-        <span>最適尺寸</span>
+        <Ruler className="w-4 h-4 text-purple-400" />
       </button>
 
       {/* Save current as default size */}
       <button
         onClick={onSaveAsDefaultSize}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-amber-300 hover:text-amber-200 transition-colors"
-        title="將首個選取物件的尺寸儲存為未來新節點的預設尺寸"
+        className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-amber-300 transition-colors"
+        title="將首個選取尺寸儲存為預設"
       >
-        <Bookmark className="w-3.5 h-3.5 text-amber-400" />
-        <span className="hidden sm:inline">設為預設</span>
+        <Bookmark className="w-4 h-4 text-amber-400" />
       </button>
 
-      <div className="w-px h-5 bg-gray-700/80 mx-0.5" />
+      <div className="w-px h-5 bg-gray-800 mx-0.5" />
+
+      {/* Batch Download Selected */}
+      {onDownloadSelected && (
+        <button
+          onClick={onDownloadSelected}
+          className="p-1.5 rounded-lg hover:bg-cyan-950/50 text-gray-300 hover:text-cyan-300 transition-colors"
+          title={`批次下載選取的 ${count} 個檔案`}
+        >
+          <Download className="w-4 h-4 text-cyan-400" />
+        </button>
+      )}
 
       {/* Copy to Clipboard */}
       {onCopyToClipboard && (
         <button
           onClick={onCopyToClipboard}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
-          title="複製所選節點至剪貼簿 (Ctrl+C)"
+          className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-blue-300 transition-colors"
+          title="複製節點 (Ctrl+C)"
         >
-          <ClipboardCopy className="w-3.5 h-3.5 text-blue-400" />
-          <span className="hidden sm:inline">複製</span>
+          <ClipboardCopy className="w-4 h-4 text-blue-400" />
         </button>
       )}
 
       {/* Duplicate */}
       <button
         onClick={onDuplicate}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
+        className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
         title="在畫布上製作複本 (Ctrl+D)"
       >
-        <Copy className="w-3.5 h-3.5 text-gray-400" />
-        <span className="hidden sm:inline">複本</span>
+        <Copy className="w-4 h-4 text-gray-400" />
       </button>
 
       {/* Delete */}
       <button
         onClick={onDelete}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-red-600/20 text-red-400 hover:text-red-300 transition-colors"
-        title="刪除所選節點 (Delete)"
+        className="p-1.5 rounded-lg hover:bg-red-600/20 text-gray-400 hover:text-red-400 transition-colors"
+        title="刪除選取物件 (Delete)"
       >
-        <Trash2 className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">刪除</span>
+        <Trash2 className="w-4 h-4" />
       </button>
+
+      <div className="w-px h-5 bg-gray-800 mx-0.5" />
 
       {/* Close / Deselect */}
       <button
         onClick={onDeselectAll}
-        className="p-1.5 ml-0.5 rounded-xl hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
+        className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
         title="取消選取 (Esc)"
       >
         <X className="w-4 h-4" />

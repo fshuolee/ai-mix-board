@@ -86,10 +86,12 @@ try {
       // Token expired, but PRESERVE user session so app can silently refresh or 1-click reconnect
       parsed.isExpired = true;
       currentUser = parsed;
-      // Trigger background silent refresh shortly after initialization
-      setTimeout(() => {
-        refreshGoogleToken().catch(() => {});
-      }, 300);
+      // In local environment, attempt background silent refresh shortly after boot
+      if (isLocalEnvironment()) {
+        setTimeout(() => {
+          refreshGoogleToken().catch(() => {});
+        }, 500);
+      }
     }
   }
 } catch (e) {
@@ -100,7 +102,6 @@ export function getCurrentUser(): GoogleUserProfile | null {
   if (currentUser) {
     if (currentUser.expiresAt <= Date.now() && !currentUser.isExpired) {
       currentUser = { ...currentUser, isExpired: true };
-      refreshGoogleToken().catch(() => {});
     }
   }
   return currentUser;
@@ -248,7 +249,8 @@ export async function fetchGoogleProfile(
 }
 
 /**
- * Request GIS Token silently (without prompt or popup)
+ * Request GIS Token silently (WITHOUT opening a popup window)
+ * Uses prompt: 'none'. If user interaction is required, GIS triggers error_callback immediately.
  */
 function requestGISTokenSilent(
   clientId: string,
@@ -266,7 +268,7 @@ function requestGISTokenSilent(
         isDone = true;
         reject(new Error('GIS 背景靜默重新整理逾時'));
       }
-    }, 10000);
+    }, 4000);
 
     try {
       const client = window.google.accounts.oauth2.initTokenClient({
@@ -292,8 +294,9 @@ function requestGISTokenSilent(
         },
       });
 
+      // prompt: 'none' NEVER opens an interactive popup window.
       client.requestAccessToken({
-        prompt: '', // Silent request without popup
+        prompt: 'none',
         hint: hintEmail,
       });
     } catch (e) {
@@ -308,9 +311,14 @@ function requestGISTokenSilent(
 
 /**
  * Refresh Google Access Token in the background.
- * Deduplicates concurrent calls.
+ * Deduplicates concurrent calls and NEVER opens an interactive popup window.
  */
 export async function refreshGoogleToken(): Promise<string | null> {
+  // If an interactive sign-in popup is already in progress, do not interfere
+  if (isAuthPopupInProgress()) {
+    return null;
+  }
+
   if (isRefreshingPromise) {
     return isRefreshingPromise;
   }
@@ -333,7 +341,7 @@ export async function refreshGoogleToken(): Promise<string | null> {
       const user = currentUser;
       const clientId = getCustomClientId();
       if (clientId && user?.email) {
-        const gisReady = await waitForGIS(3000);
+        const gisReady = await waitForGIS(2000);
         if (gisReady && window.google?.accounts?.oauth2) {
           try {
             const res = await requestGISTokenSilent(clientId, user.email);
@@ -342,7 +350,7 @@ export async function refreshGoogleToken(): Promise<string | null> {
               return updatedProfile.accessToken;
             }
           } catch (gisErr) {
-            console.warn('GIS silent refresh failed (requires user interaction):', gisErr);
+            // Silent refresh requires user interaction - completely normal, do not popup
           }
         }
       }
@@ -511,26 +519,49 @@ export async function handleOAuthCallback(): Promise<{ success: boolean; profile
   return { success: false };
 }
 
+let activePopupPromise: Promise<GoogleUserProfile> | null = null;
+let isAuthPopupActive = false;
+
+export function isAuthPopupInProgress(): boolean {
+  return isAuthPopupActive || activePopupPromise !== null;
+}
+
 /**
  * 4. Login using Google Identity Services (GIS) Token Client popup
+ * Guaranteed single popup: deduplicates concurrent calls and prevents secondary popups.
  */
 export function signInWithGooglePopup(customClientId?: string, hintEmail?: string): Promise<GoogleUserProfile> {
-  return new Promise((resolve, reject) => {
-    const clientId = customClientId || getCustomClientId();
+  // If a popup is ALREADY active, reuse the existing promise to prevent multiple windows
+  if (activePopupPromise) {
+    return activePopupPromise;
+  }
 
-    if (!clientId) {
-      reject(
-        new Error(
-          'Google Client ID 尚未設定。請在設定中輸入 GCP OAuth 2.0 Web Client ID。'
-        )
-      );
-      return;
-    }
+  const clientId = customClientId || getCustomClientId();
 
-    if (typeof window === 'undefined' || !window.google?.accounts?.oauth2) {
-      reject(new Error('Google Identity Services SDK 載入中，請稍候重試。'));
-      return;
-    }
+  if (!clientId) {
+    return Promise.reject(
+      new Error(
+        'Google Client ID 尚未設定。請在設定中輸入 GCP OAuth 2.0 Web Client ID。'
+      )
+    );
+  }
+
+  if (typeof window === 'undefined' || !window.google?.accounts?.oauth2) {
+    return Promise.reject(new Error('Google Identity Services SDK 載入中，請稍候重試。'));
+  }
+
+  isAuthPopupActive = true;
+
+  activePopupPromise = new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      activePopupPromise = null;
+      // Retain popup active flag for 1.5s so window focus events right after popup close don't trigger secondary auth checks
+      setTimeout(() => {
+        isAuthPopupActive = false;
+      }, 1500);
+    };
 
     try {
       const client = window.google.accounts.oauth2.initTokenClient({
@@ -538,6 +569,10 @@ export function signInWithGooglePopup(customClientId?: string, hintEmail?: strin
         scope: SCOPES,
         hint: hintEmail,
         callback: async (response: any) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+
           if (response.error) {
             console.error('Google Auth Error:', response);
             reject(new Error(response.error_description || response.error));
@@ -552,17 +587,29 @@ export function signInWithGooglePopup(customClientId?: string, hintEmail?: strin
             reject(fetchErr);
           }
         },
+        error_callback: (err: any) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error(err?.message || 'Google 登入失敗或已取消'));
+        },
       });
 
       // If user provided hintEmail, skip account chooser
       client.requestAccessToken({
-        prompt: hintEmail ? '' : 'consent',
+        prompt: hintEmail ? '' : 'select_account',
         hint: hintEmail,
       });
     } catch (err: any) {
-      reject(err);
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(err);
+      }
     }
   });
+
+  return activePopupPromise;
 }
 
 export function isLocalEnvironment(): boolean {
