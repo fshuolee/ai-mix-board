@@ -164,6 +164,34 @@ const App: React.FC = () => {
   // Marquee Box Selection state
   const [marqueeBox, setMarqueeBox] = useState<{ startX: number; startY: number; curX: number; curY: number } | null>(null);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const isSpacePressedRef = useRef(false);
+  isSpacePressedRef.current = isSpacePressed;
+
+  // Manage body classes for instant global cursor and user-select behavior
+  useEffect(() => {
+    if (isSpacePressed) {
+      document.body.classList.add('space-pan-active');
+    } else {
+      document.body.classList.remove('space-pan-active');
+      document.body.classList.remove('space-pan-dragging');
+    }
+  }, [isSpacePressed]);
+
+  useEffect(() => {
+    if (isPanning) {
+      document.body.classList.add('space-pan-dragging');
+    } else {
+      document.body.classList.remove('space-pan-dragging');
+    }
+  }, [isPanning]);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('space-pan-active');
+      document.body.classList.remove('space-pan-dragging');
+    };
+  }, []);
 
   // Orphan Asset Deletion Confirmation Modal state
   const [orphanAssetModal, setOrphanAssetModal] = useState<{
@@ -723,10 +751,9 @@ const App: React.FC = () => {
   // Canvas View & Interactions (Marquee Box Selection & Multi-Node Dragging)
   const handlePointerDown = (e: React.PointerEvent) => {
     if (isProjectBusy) return;
-    if ((e.target as HTMLElement).closest('.node-renderer')) return;
 
-    // Pan mode with spacebar, middle mouse (button 1), or right click (button 2)
-    if (isSpacePressed || e.button === 1 || e.button === 2) {
+    // Pan mode with spacebar (any mouse button), middle mouse (button 1), or right click (button 2)
+    if (isSpacePressedRef.current || isSpacePressed || e.button === 1 || e.button === 2) {
       try {
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       } catch {}
@@ -735,9 +762,11 @@ const App: React.FC = () => {
         startX: e.clientX,
         startY: e.clientY,
       };
-      canvasRef.current?.classList.add('cursor-grabbing');
+      setIsPanning(true);
       return;
     }
+
+    if ((e.target as HTMLElement).closest('.node-renderer')) return;
 
     if (e.button === 0) {
       // Capture pointer so marquee selection continues smoothly even when
@@ -769,6 +798,7 @@ const App: React.FC = () => {
   };
 
   const handleNodeDragStart = (e: React.PointerEvent, nodeId: string) => {
+    if (isSpacePressedRef.current || isSpacePressed) return;
     let targetSelection: Set<string>;
     if (e.shiftKey) {
       targetSelection = new Set(selectedNodeIds);
@@ -866,6 +896,7 @@ const App: React.FC = () => {
     }
     dragInfoRef.current = null;
     setMarqueeBox(null);
+    setIsPanning(false);
     canvasRef.current?.classList.remove('cursor-grabbing');
   };
 
@@ -878,6 +909,7 @@ const App: React.FC = () => {
         }
         dragInfoRef.current = null;
         setMarqueeBox(null);
+        setIsPanning(false);
         canvasRef.current?.classList.remove('cursor-grabbing');
       }
     };
@@ -909,6 +941,7 @@ const App: React.FC = () => {
   };
 
   const handleSelectNode = (id: string, shiftKey: boolean) => {
+    if (isSpacePressedRef.current || isSpacePressed) return;
     setSelectedNodeIds(prev => {
       const newSelection = new Set(prev);
       if (shiftKey) {
@@ -932,7 +965,7 @@ const App: React.FC = () => {
   };
 
   const handleCanvasDoubleClick = (e: React.MouseEvent) => {
-    if (isProjectBusy) return;
+    if (isProjectBusy || isSpacePressedRef.current || isSpacePressed) return;
     if ((e.target as HTMLElement).closest('[data-node-id]')) return;
 
     const { x, y } = getCanvasCoords(e.clientX, e.clientY);
@@ -1392,9 +1425,25 @@ const App: React.FC = () => {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Space key for panning cursor
-      if (e.code === 'Space' && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
-        setIsSpacePressed(true);
+      const isInputActive =
+        document.activeElement?.tagName === 'TEXTAREA' ||
+        document.activeElement?.tagName === 'INPUT' ||
+        (document.activeElement as HTMLElement)?.isContentEditable;
+
+      const isAnyModalOpen =
+        isModelModalOpen ||
+        isProjectModalOpen ||
+        isAuthModalOpen ||
+        Boolean(orphanAssetModal?.isOpen);
+
+      // Space key for panning cursor - completely enter pan mode
+      if (e.code === 'Space' && !isInputActive && !isAnyModalOpen) {
+        e.preventDefault();
+        if (!isSpacePressedRef.current) {
+          isSpacePressedRef.current = true;
+          setIsSpacePressed(true);
+        }
+        return;
       }
 
       // Execute with Shift+Enter
@@ -1472,17 +1521,29 @@ const App: React.FC = () => {
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
+        isSpacePressedRef.current = false;
         setIsSpacePressed(false);
+        if (!dragInfoRef.current || dragInfoRef.current.type !== 'pan') {
+          setIsPanning(false);
+        }
       }
+    };
+
+    const handleBlur = () => {
+      isSpacePressedRef.current = false;
+      setIsSpacePressed(false);
+      setIsPanning(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
-  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes]);
+  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, orphanAssetModal]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -1503,6 +1564,7 @@ const App: React.FC = () => {
 
   const handleNodeContextMenu = useCallback(
     (e: React.MouseEvent, nodeId: string) => {
+      if (isSpacePressedRef.current || isSpacePressed) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -1516,17 +1578,18 @@ const App: React.FC = () => {
         targetType: 'node',
       });
     },
-    [selectedNodeIds]
+    [selectedNodeIds, isSpacePressed]
   );
 
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent) => {
+    if (isSpacePressedRef.current || isSpacePressed) return;
     e.preventDefault();
     setContextMenu({
       isOpen: true,
       position: { x: e.clientX, y: e.clientY },
       targetType: 'canvas',
     });
-  }, []);
+  }, [isSpacePressed]);
 
   const handleAutoArrange = useCallback(
     (layout: 'grid' | 'horizontal' | 'vertical') => {
@@ -1733,7 +1796,13 @@ const App: React.FC = () => {
 
       {/* Infinite Canvas with Drag-and-Drop Image File Support */}
       <div
-        className="w-full h-full relative overflow-hidden"
+        className={`w-full h-full relative overflow-hidden select-none ${
+          isPanning
+            ? 'cursor-grabbing canvas-is-panning'
+            : isSpacePressed
+            ? 'cursor-grab canvas-space-pan'
+            : ''
+        }`}
         ref={canvasRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1883,7 +1952,7 @@ const App: React.FC = () => {
 
         {/* Nodes Layer */}
         <div
-          className="absolute top-0 left-0"
+          className={`absolute top-0 left-0 ${isSpacePressed ? 'pointer-events-none' : ''}`}
           style={{
             transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
             transformOrigin: '0 0',
@@ -1896,6 +1965,7 @@ const App: React.FC = () => {
                 zoom={view.zoom}
                 isSelected={selectedNodeIds.has(node.id)}
                 isMultiSelecting={selectedNodeIds.size > 1}
+                isSpacePressed={isSpacePressed}
                 onNodeUpdate={updateNode}
                 onSelect={handleSelectNode}
                 onDragStart={handleNodeDragStart}
@@ -2042,7 +2112,7 @@ const App: React.FC = () => {
       )}
 
       {/* Redesigned Multi-Selection Bar HUD */}
-      <div className={marqueeBox ? 'pointer-events-none select-none' : ''}>
+      <div className={marqueeBox || isSpacePressed ? 'pointer-events-none select-none' : ''}>
         <MultiSelectionBar
           selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
           onAutoArrange={handleAutoArrange}

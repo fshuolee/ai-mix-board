@@ -17,6 +17,7 @@ interface NodeRendererProps {
   onDownloadNode?: (node: CanvasNode) => void;
   isMultiSelecting?: boolean;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
+  isSpacePressed?: boolean;
 }
 
 const NodeRenderer: React.FC<NodeRendererProps> = ({
@@ -31,6 +32,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDownloadNode,
   isMultiSelecting,
   onContextMenu,
+  isSpacePressed = false,
 }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
@@ -89,6 +91,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   }, [node.id, node.content, (node as ImageNode).driveFileId, node.type]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (isSpacePressed) return;
     if (e.target === resizeHandleRef.current) return;
     e.stopPropagation();
     onSelect(node.id, e.shiftKey);
@@ -96,6 +99,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   };
 
   const handleDoubleClick = () => {
+    if (isSpacePressed) return;
     if (node.type === 'text') {
       setIsEditing(true);
     }
@@ -110,6 +114,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   };
 
   const startResize = (e: React.PointerEvent) => {
+    if (isSpacePressed) return;
     e.stopPropagation();
     const startX = e.clientX;
     const startY = e.clientY;
@@ -150,11 +155,14 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   return (
     <div
       ref={nodeRef}
-      className="absolute bg-gray-800/95 border border-gray-700/80 rounded-xl shadow-xl cursor-grab active:cursor-grabbing group select-none transition-shadow hover:shadow-2xl"
+      className={`absolute bg-gray-800/95 border border-gray-700/80 rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
+        isSpacePressed ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'
+      }`}
       style={commonStyle}
       onPointerDown={handlePointerDown}
       onDoubleClick={handleDoubleClick}
       onContextMenu={e => {
+        if (isSpacePressed) return;
         e.preventDefault();
         e.stopPropagation();
         onContextMenu?.(e, node.id);
@@ -168,6 +176,10 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             value={(node as TextNode).content}
             onChange={handleTextChange}
             onBlur={handleTextBlur}
+            onKeyDown={e => {
+              // Prevent spacebar or backspace from bubbling to canvas shortcuts while typing
+              e.stopPropagation();
+            }}
             autoFocus
             onFocus={e => e.target.select()}
             className="w-full h-full p-3 text-white bg-transparent border-0 rounded-xl resize-none focus:ring-0 focus:outline-none font-sans text-sm leading-relaxed"

@@ -65,3 +65,31 @@ body,
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(107, 114, 128, 0.8);
 }
+
+/* Spacebar Pan Mode: Instant grab/grabbing cursor and content isolation */
+body.space-pan-active,
+body.space-pan-active * {
+  cursor: grab !important;
+  user-select: none !important;
+}
+
+body.space-pan-dragging,
+body.space-pan-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+.canvas-space-pan {
+  cursor: grab !important;
+}
+
+.canvas-space-pan * {
+  pointer-events: none !important;
+  cursor: grab !important;
+  user-select: none !important;
+}
+
+.canvas-space-pan.canvas-is-panning,
+.canvas-space-pan.canvas-is-panning * {
+  cursor: grabbing !important;
+}
