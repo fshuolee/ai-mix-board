@@ -10,6 +10,10 @@ export interface BaseNode {
   boardId?: string; // Links node to specific board/canvas within project
   createdAt?: number;
   updatedAt?: number;
+  status?: 'idle' | 'generating' | 'error';
+  errorMessage?: string;
+  generationPrompt?: string;
+  generationModel?: string;
 }
 
 export interface TextNode extends BaseNode {

@@ -41,7 +41,7 @@ import {
 } from './services/googleSheetsService';
 import { DEFAULT_MODEL_ID, getModelById, migrateOldModelId } from './services/modelsConfig';
 
-import NodeRenderer from './components/NodeRenderer';
+import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
 import TopNavigation from './components/TopNavigation';
 import BoardTabs from './components/BoardTabs';
 import ModelSelectorModal from './components/ModelSelectorModal';
@@ -216,7 +216,8 @@ const App: React.FC = () => {
   // Sync & Generation state
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('offline');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [activeJobCount, setActiveJobCount] = useState(0);
+  const isGenerating = activeJobCount > 0;
   const [error, setError] = useState<string | null>(null);
   const [copiedNodesClipboard, setCopiedNodesClipboard] = useState<CanvasNode[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -547,10 +548,12 @@ const App: React.FC = () => {
 
       saveTimerRef.current = setTimeout(async () => {
         try {
+          // Filter out generating placeholders so sheets only receives finalized nodes
+          const persistableNodes = currentAllNodes.filter(n => n.status !== 'generating');
           await saveGraphToSheet(
             token,
             proj.spreadsheetId,
-            currentAllNodes,
+            persistableNodes,
             currentBoards,
             currentViewports,
             currentModels
@@ -604,13 +607,15 @@ const App: React.FC = () => {
   );
 
   const addNode = useCallback(
-    <T extends CanvasNode>(newNode: T) => {
+    <T extends CanvasNode>(newNode: T, autoSelect: boolean = true) => {
       const nodeWithBoard: CanvasNode = {
         ...newNode,
         boardId: newNode.boardId || currentBoardIdRef.current,
       };
       updateNodesAndSave(prev => [...prev, nodeWithBoard]);
-      setSelectedNodeIds(new Set([newNode.id]));
+      if (autoSelect) {
+        setSelectedNodeIds(new Set([newNode.id]));
+      }
     },
     [updateNodesAndSave]
   );
@@ -1461,106 +1466,200 @@ const App: React.FC = () => {
     [copiedNodesClipboard, handlePasteNodes, getCanvasCoords, currentBoardNodes, addNode, currentBoardId, handleUploadImageFile]
   );
 
-  // Execute Generation
-  const handleExecute = useCallback(async () => {
-    if (isGenerating || selectedNodeIds.size === 0) return;
-    setIsGenerating(true);
+  // Execute Generation (Concurrent & Non-blocking)
+  const handleExecute = useCallback(() => {
+    if (selectedNodeIds.size === 0) return;
     setError(null);
 
+    // 1. Snapshot selection and environment for this generation job
+    const capturedSelectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+    if (capturedSelectedNodes.length === 0) return;
+
+    const capturedModelId = selectedModelId;
+    const capturedBoardId = currentBoardId;
+    const modelInfo = getModelById(capturedModelId);
     const token = getAccessToken();
-    const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
 
-    try {
-      const result = await generateFromNodes(selectedNodes, selectedModelId);
-      const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+    // 2. Build prompt snippet / summary for the placeholder card
+    const textSnippets = capturedSelectedNodes
+      .filter(n => n.type === 'text')
+      .map(n => (n as TextNode).content.trim())
+      .filter(Boolean);
+    const imageCount = capturedSelectedNodes.filter(n => n.type === 'image').length;
 
-      if (result.type === 'image') {
-        const newImageBlob = result.blob;
-        const id = Date.now().toString();
-
-        await storeImage(id, newImageBlob);
-
-        let driveFileId = id;
-        let driveViewLink: string | undefined;
-
-        // Upload generated image asset to Google Drive project assets folder
-        if (token && currentProject?.folderId) {
-          try {
-            const assetsFolderId =
-              currentProject.assetsFolderId ||
-              (await ensureAssetsFolder(token, currentProject.folderId));
-            const uploaded = await uploadAssetToDrive(
-              token,
-              assetsFolderId,
-              newImageBlob,
-              `gemini_gen_${id}.png`
-            );
-            driveFileId = uploaded.fileId;
-            driveViewLink = uploaded.webViewLink;
-          } catch (uploadErr) {
-            console.warn('Drive upload failed for generated image:', uploadErr);
-          }
-        }
-
-        const base64 = await blobToBase64(newImageBlob);
-        const img = new Image();
-        img.onload = () => {
-          const defaultSize = getDefaultNodeSize();
-          const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
-          const width = fitted.width;
-          const height = fitted.height;
-          const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
-
-          addNode({
-            id,
-            type: 'image',
-            x,
-            y,
-            width,
-            height,
-            rotation: 0,
-            boardId: currentBoardId,
-            content: driveFileId,
-            driveFileId,
-            originalFileName: `generated_${id}.png`,
-            driveViewLink,
-            createdAt: Date.now(),
-          });
-        };
-        img.src = base64;
-      } else {
-        // Text output from reasoning model
-        const width = 280;
-        const height = 140;
-        const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
-        addNode({
-          id: Date.now().toString(),
-          type: 'text',
-          x,
-          y,
-          width,
-          height,
-          rotation: 0,
-          boardId: currentBoardId,
-          content: result.text,
-          createdAt: Date.now(),
-        });
+    let promptSnippet = '';
+    if (textSnippets.length > 0) {
+      promptSnippet = textSnippets.join('; ');
+      if (imageCount > 0) {
+        promptSnippet += ` (+${imageCount} 張圖)`;
       }
-    } catch (err: any) {
-      console.error('Generation Error:', err);
-      setError(err.message || '生成失敗，請檢查 API Key 或選取節點。');
-    } finally {
-      setIsGenerating(false);
+    } else if (imageCount > 0) {
+      promptSnippet = `${imageCount} 張參考圖片合成`;
+    } else {
+      promptSnippet = 'AI 圖像合成生成';
     }
+
+    if (promptSnippet.length > 80) {
+      promptSnippet = promptSnippet.slice(0, 77) + '...';
+    }
+
+    // 3. Determine open position for the placeholder node
+    const defaultSize = getDefaultNodeSize();
+    const placeholderWidth = defaultSize.width || 384;
+    const placeholderHeight = defaultSize.height || 384;
+
+    const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+    let anchorX = initialCoords.x;
+    let anchorY = initialCoords.y;
+
+    if (capturedSelectedNodes.length > 0) {
+      // Place right next to the selected nodes
+      const maxX = Math.max(...capturedSelectedNodes.map(n => n.x + n.width));
+      const avgY = capturedSelectedNodes.reduce((acc, n) => acc + n.y, 0) / capturedSelectedNodes.length;
+      anchorX = maxX + 40;
+      anchorY = avgY;
+    }
+
+    const { x, y } = findOpenPosition(
+      anchorX,
+      anchorY,
+      placeholderWidth,
+      placeholderHeight,
+      currentBoardNodes
+    );
+
+    const jobId = `gen_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // 4. Create and place the placeholder node immediately
+    const placeholderNode: ImageNode = {
+      id: jobId,
+      type: 'image',
+      x,
+      y,
+      width: placeholderWidth,
+      height: placeholderHeight,
+      rotation: 0,
+      boardId: capturedBoardId,
+      content: '',
+      status: 'generating',
+      generationPrompt: promptSnippet,
+      generationModel: modelInfo?.name || capturedModelId,
+      createdAt: Date.now(),
+    };
+
+    // Add placeholder without deselecting user's current selection,
+    // so they can immediately send another job or modify prompt!
+    addNode(placeholderNode, false);
+    setActiveJobCount(c => c + 1);
+
+    // 5. Run async generation in the background without blocking the user
+    (async () => {
+      try {
+        const result = await generateFromNodes(capturedSelectedNodes, capturedModelId);
+
+        if (result.type === 'image') {
+          const newImageBlob = result.blob;
+          await storeImage(jobId, newImageBlob);
+
+          let driveFileId = jobId;
+          let driveViewLink: string | undefined;
+
+          // Upload generated image asset to Google Drive project assets folder if connected
+          if (token && currentProject?.folderId) {
+            try {
+              const assetsFolderId =
+                currentProject.assetsFolderId ||
+                (await ensureAssetsFolder(token, currentProject.folderId));
+              const uploaded = await uploadAssetToDrive(
+                token,
+                assetsFolderId,
+                newImageBlob,
+                `gemini_gen_${jobId}.png`
+              );
+              driveFileId = uploaded.fileId;
+              driveViewLink = uploaded.webViewLink;
+            } catch (uploadErr) {
+              console.warn('Drive upload failed for generated image:', uploadErr);
+            }
+          }
+
+          // Pre-populate memory ObjectURL cache so image displays with zero delay/flicker
+          const objectUrl = URL.createObjectURL(newImageBlob);
+          nodeObjectUrlCache.set(driveFileId, objectUrl);
+          nodeObjectUrlCache.set(jobId, objectUrl);
+
+          const base64 = await blobToBase64(newImageBlob);
+          const img = new Image();
+          img.onload = () => {
+            const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+            updateNodesAndSave(prev => {
+              const exists = prev.some(n => n.id === jobId);
+              if (!exists) return prev; // User deleted the node while generating
+              return prev.map(node => {
+                if (node.id !== jobId) return node;
+                return {
+                  ...node,
+                  width: fitted.width,
+                  height: fitted.height,
+                  content: driveFileId,
+                  driveFileId,
+                  originalFileName: `generated_${jobId}.png`,
+                  driveViewLink,
+                  status: 'idle',
+                  errorMessage: undefined,
+                  updatedAt: Date.now(),
+                };
+              });
+            });
+          };
+          img.src = base64;
+        } else {
+          // Text output from reasoning model
+          updateNodesAndSave(prev => {
+            const exists = prev.some(n => n.id === jobId);
+            if (!exists) return prev;
+            return prev.map(node => {
+              if (node.id !== jobId) return node;
+              return {
+                ...node,
+                type: 'text',
+                content: result.text,
+                status: 'idle',
+                errorMessage: undefined,
+                updatedAt: Date.now(),
+              };
+            });
+          });
+        }
+      } catch (err: any) {
+        console.error('Generation Error for job:', jobId, err);
+        const errorMsg = err.message || '生成失敗，請檢查 API Key 或選取節點。';
+        updateNodesAndSave(prev => {
+          const exists = prev.some(n => n.id === jobId);
+          if (!exists) return prev;
+          return prev.map(node => {
+            if (node.id !== jobId) return node;
+            return {
+              ...node,
+              status: 'error',
+              errorMessage: errorMsg,
+              updatedAt: Date.now(),
+            };
+          });
+        });
+      } finally {
+        setActiveJobCount(c => Math.max(0, c - 1));
+      }
+    })();
   }, [
-    isGenerating,
     selectedNodeIds,
     currentBoardNodes,
     selectedModelId,
     currentProject,
     addNode,
     currentBoardId,
-    view,
+    getCanvasCoords,
+    updateNodesAndSave,
   ]);
 
   const fitToView = useCallback((targetNodes?: CanvasNode[]) => {
@@ -2264,7 +2363,7 @@ const App: React.FC = () => {
         {/* Primary Generate Floating CTA */}
         <button
           onClick={handleExecute}
-          disabled={isProjectBusy || isGenerating || selectedNodeIds.size === 0}
+          disabled={isProjectBusy || selectedNodeIds.size === 0}
           className={`px-5 py-3 text-white font-medium rounded-2xl shadow-2xl transition-all duration-200 flex items-center gap-2 text-xs select-none ${
             selectedNodeIds.size > 0
               ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 shadow-blue-600/30 border border-blue-400/30 active:scale-95 cursor-pointer'
@@ -2277,20 +2376,17 @@ const App: React.FC = () => {
           }
           aria-label="Generate from selected nodes"
         >
-          {isGenerating ? (
-            <>
-              <Loader2 className="animate-spin w-4 h-4 text-white" />
-              <span>生成中...</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className={`w-4 h-4 ${selectedNodeIds.size > 0 ? 'text-amber-300' : 'text-gray-500'}`} />
-              <span>
-                {selectedNodeIds.size === 0
-                  ? '生成'
-                  : `生成 (${selectedNodeIds.size})`}
-              </span>
-            </>
+          <Sparkles className={`w-4 h-4 ${selectedNodeIds.size > 0 ? 'text-amber-300' : 'text-gray-500'}`} />
+          <span>
+            {selectedNodeIds.size === 0
+              ? '生成'
+              : `生成 (${selectedNodeIds.size})`}
+          </span>
+          {activeJobCount > 0 && (
+            <span className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded-full bg-blue-500/25 text-blue-200 text-[10px] font-mono border border-blue-400/30 shadow-sm animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin text-blue-300" />
+              <span>{activeJobCount} 處理中</span>
+            </span>
           )}
         </button>
       </div>
