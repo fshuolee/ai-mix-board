@@ -362,17 +362,10 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           )}
         </div>
 
-        {/* Quick Sync Button if unuploaded images exist */}
-        {unuploadedAssetCount > 0 && !isSyncingAssets && onSyncAssetsToDrive && (
-          <button
-            onClick={onSyncAssetsToDrive}
-            className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/70 border border-amber-600/60 text-amber-300 text-[11px] hover:bg-amber-900/80 transition-colors shadow-sm cursor-pointer"
-            title="點擊將這些圖片同步上傳到 Google Drive"
-          >
-            <HardDrive className="w-3 h-3" />
-            <span>同步 {unuploadedAssetCount} 圖</span>
-          </button>
-        )}
+        {/* Auto-Syncing indicator is handled in the status dot above. 
+            We removed the manual "Sync X Images" button because users thought they HAD to click it.
+            Syncing is 100% automatic in the background! 
+        */}
 
         {/* Quick Rescue Button if lost assets found */}
         {rescuableAssetCount > 0 && onOpenRescueModal && (
