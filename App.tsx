@@ -1268,18 +1268,27 @@ const App: React.FC = () => {
     [processPointerMove, triggerAutoSave]
   );
 
-  // Global pointerup fallback ensuring drag gestures are always cleaned up properly
+  // Global pointer event handlers ensuring drag gestures are silky smooth and never lost
   useEffect(() => {
+    const handleGlobalPointerMove = (e: PointerEvent) => {
+      if (!dragInfoRef.current) return;
+      pointerPosRef.current = { clientX: e.clientX, clientY: e.clientY };
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(processPointerMove);
+      }
+    };
     const handleGlobalPointerUp = () => {
       if (dragInfoRef.current) {
         handlePointerUp();
       }
     };
+    window.addEventListener('pointermove', handleGlobalPointerMove, { passive: true });
     window.addEventListener('pointerup', handleGlobalPointerUp);
     return () => {
+      window.removeEventListener('pointermove', handleGlobalPointerMove);
       window.removeEventListener('pointerup', handleGlobalPointerUp);
     };
-  }, [handlePointerUp]);
+  }, [processPointerMove, handlePointerUp]);
 
   // Canvas Native Wheel & Pinch-to-Zoom / Pan Handler with { passive: false }
   // Attaching directly with { passive: false } guarantees that e.preventDefault()

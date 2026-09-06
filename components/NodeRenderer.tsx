@@ -215,6 +215,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
       ? 'none'
       : '1px solid rgba(75, 85, 99, 0.4)',
     outlineOffset: `${outlineOffset}px`,
+    transition: 'box-shadow 0.15s ease',
   };
 
   const imageNode = node.type === 'image' ? (node as ImageNode) : null;
@@ -222,7 +223,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   return (
     <div
       ref={nodeRef}
-      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-all hover:shadow-2xl ${
+      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
         isCut
           ? 'opacity-40 border-2 border-dashed border-blue-400'
           : node.status === 'generating'
