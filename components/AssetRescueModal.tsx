@@ -77,6 +77,11 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
   const localCount = useMemo(() => assets.filter(a => a.source === 'local').length, [assets]);
   const driveCount = useMemo(() => assets.filter(a => a.source === 'drive').length, [assets]);
 
+  const selectedLocalAssets = useMemo(
+    () => filteredAssets.filter(a => a.source === 'local' && selectedIds.has(a.id)),
+    [filteredAssets, selectedIds]
+  );
+
   if (!isOpen) return null;
 
   const handleToggleSelect = (id: string) => {
@@ -113,11 +118,6 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
       setIsRestoring(false);
     }
   };
-
-  const selectedLocalAssets = useMemo(
-    () => filteredAssets.filter(a => a.source === 'local' && selectedIds.has(a.id)),
-    [filteredAssets, selectedIds]
-  );
 
   const handleDeleteSelectedLocal = async () => {
     if (!onDeleteLocalAssets || selectedLocalAssets.length === 0) return;
