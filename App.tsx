@@ -3,6 +3,7 @@ import type {
   CanvasNode,
   ImageNode,
   TextNode,
+  SourceDetail,
   BoardMetadata,
   ProjectMetadata,
   GoogleUserProfile,
@@ -54,6 +55,7 @@ import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
 import AssetRescueModal from './components/AssetRescueModal';
+import { NodeInfoModal } from './components/NodeInfoModal';
 import ContextMenu from './components/ContextMenu';
 import MultiSelectionBar from './components/MultiSelectionBar';
 import {
@@ -254,6 +256,7 @@ const App: React.FC = () => {
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isRescueModalOpen, setIsRescueModalOpen] = useState(false);
+  const [infoModalNode, setInfoModalNode] = useState<CanvasNode | null>(null);
   const [isScanningRescue, setIsScanningRescue] = useState(false);
   const [rescuableAssets, setRescuableAssets] = useState<RescuableAsset[]>([]);
   const [isRescueBannerDismissed, setIsRescueBannerDismissed] = useState(false);
@@ -1806,6 +1809,14 @@ const App: React.FC = () => {
 
     const jobId = `gen_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
+    const sourceDetails: SourceDetail[] = capturedSelectedNodes.map(n => ({
+      id: n.id,
+      type: n.type,
+      content: n.type === 'text' ? (n as TextNode).content : undefined,
+      driveFileId: n.type === 'image' ? (n as ImageNode).driveFileId || n.content : undefined,
+      originalFileName: n.type === 'image' ? (n as ImageNode).originalFileName : undefined,
+    }));
+
     // 4. Create and place the placeholder node immediately
     const placeholderNode: ImageNode = {
       id: jobId,
@@ -1822,6 +1833,7 @@ const App: React.FC = () => {
       generationModel: modelInfo?.name || capturedModelId,
       generationModelId: capturedModelId,
       generationSourceIds: capturedSelectedNodes.map(n => n.id),
+      generationSourceDetails: sourceDetails,
       createdAt: Date.now(),
     };
 
@@ -1976,6 +1988,47 @@ const App: React.FC = () => {
       // 2. Identify source nodes
       const sourceIds = new Set(targetNode.generationSourceIds || []);
       let sourceNodes = allNodesRef.current.filter(n => sourceIds.has(n.id));
+
+      // Reconstruct missing source nodes from generationSourceDetails if available
+      if (targetNode.generationSourceDetails && targetNode.generationSourceDetails.length > 0) {
+        const foundIds = new Set(sourceNodes.map(n => n.id));
+        for (const detail of targetNode.generationSourceDetails) {
+          if (!foundIds.has(detail.id)) {
+            if (detail.type === 'image' && (detail.driveFileId || detail.content)) {
+              const fileId = detail.driveFileId || detail.content!;
+              sourceNodes.push({
+                id: detail.id,
+                type: 'image',
+                x: targetNode.x,
+                y: targetNode.y,
+                width: 300,
+                height: 300,
+                rotation: 0,
+                boardId: targetNode.boardId,
+                content: fileId,
+                driveFileId: fileId,
+                originalFileName: detail.originalFileName,
+                createdAt: Date.now(),
+              });
+              foundIds.add(detail.id);
+            } else if (detail.type === 'text' && detail.content) {
+              sourceNodes.push({
+                id: detail.id,
+                type: 'text',
+                x: targetNode.x,
+                y: targetNode.y,
+                width: 200,
+                height: 50,
+                rotation: 0,
+                boardId: targetNode.boardId,
+                content: detail.content,
+                createdAt: Date.now(),
+              });
+              foundIds.add(detail.id);
+            }
+          }
+        }
+      }
 
       // If source nodes no longer exist, use the saved prompt snippet as fallback text input
       if (sourceNodes.length === 0 && targetNode.generationPrompt) {
@@ -2215,6 +2268,7 @@ const App: React.FC = () => {
         isProjectModalOpen ||
         isAuthModalOpen ||
         isRescueModalOpen ||
+        Boolean(infoModalNode) ||
         Boolean(orphanAssetModal?.isOpen);
 
       // Space key for panning cursor - completely enter pan mode
@@ -2350,7 +2404,7 @@ const App: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, orphanAssetModal]);
+  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, infoModalNode, orphanAssetModal]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -2907,6 +2961,7 @@ const App: React.FC = () => {
               onDeleteNode={handleDeleteNode}
               onDownloadNode={handleDownloadSingleNode}
               onRetryNode={handleRetryNode}
+              onShowInfo={setInfoModalNode}
               isDeleting={deletingNodeIds.has(node.id)}
               onContextMenu={handleNodeContextMenu}
             />
@@ -3163,6 +3218,13 @@ const App: React.FC = () => {
         onDownloadAllBoardImages={handleDownloadAllBoardImages}
         onRescueAssets={() => handleScanLostAssets(false)}
         onRetryNode={handleRetrySelectedErrorNodes}
+        onShowInfo={() => {
+          const targetId = contextMenu.targetId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
+          if (targetId) {
+            const found = allNodesRef.current.find(n => n.id === targetId);
+            if (found) setInfoModalNode(found);
+          }
+        }}
       />
 
       {/* Floating Toast Notification Banner */}
@@ -3267,6 +3329,20 @@ const App: React.FC = () => {
         isLoading={isScanningRescue}
         onRescan={() => handleScanLostAssets(false)}
         onDeleteLocalAssets={handleDeleteLocalAssets}
+      />
+
+      {/* Node Info & Metadata Inspection Modal */}
+      <NodeInfoModal
+        isOpen={Boolean(infoModalNode)}
+        node={infoModalNode}
+        onClose={() => setInfoModalNode(null)}
+        onRetryNode={nodeId => {
+          setInfoModalNode(null);
+          handleRetryNode(nodeId);
+        }}
+        onSelectSources={sourceIds => {
+          setSelectedNodeIds(new Set(sourceIds));
+        }}
       />
     </div>
   );

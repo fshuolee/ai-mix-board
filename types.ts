@@ -1,5 +1,13 @@
 export type NodeType = 'text' | 'image';
 
+export interface SourceDetail {
+  id: string;
+  type: 'text' | 'image';
+  content?: string;
+  driveFileId?: string;
+  originalFileName?: string;
+}
+
 export interface BaseNode {
   id: string;
   x: number;
@@ -16,6 +24,7 @@ export interface BaseNode {
   generationModel?: string;
   generationModelId?: string;
   generationSourceIds?: string[];
+  generationSourceDetails?: SourceDetail[];
 }
 
 export interface TextNode extends BaseNode {

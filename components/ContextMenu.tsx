@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   RotateCw,
   Scissors,
+  Info,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -55,6 +56,7 @@ export interface ContextMenuProps {
   onDownloadAllBoardImages?: () => void;
   onRescueAssets?: () => void;
   onRetryNode?: () => void;
+  onShowInfo?: () => void;
 }
 
 const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -297,6 +299,22 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                   </span>
                 </div>
                 <span className="text-[10px] text-emerald-400/80 font-mono">Download</span>
+              </button>
+            )}
+
+            {count === 1 && onShowInfo && (
+              <button
+                onClick={() => {
+                  onShowInfo();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-blue-600/20 hover:text-blue-300 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <Info className="w-4 h-4 text-blue-400" />
+                  <span>檢視詳細資訊</span>
+                </div>
+                <span className="text-[10px] text-gray-400 font-mono">Info</span>
               </button>
             )}
 

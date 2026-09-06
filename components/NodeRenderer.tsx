@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw } from 'lucide-react';
+import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info } from 'lucide-react';
 import type { CanvasNode, TextNode, ImageNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
@@ -17,6 +17,7 @@ interface NodeRendererProps {
   onDeleteNode?: (nodeId: string) => void;
   onDownloadNode?: (node: CanvasNode) => void;
   onRetryNode?: (nodeId: string) => void;
+  onShowInfo?: (node: CanvasNode) => void;
   isDeleting?: boolean;
   isMultiSelecting?: boolean;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
@@ -38,6 +39,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDeleteNode,
   onDownloadNode,
   onRetryNode,
+  onShowInfo,
   isDeleting = false,
   isMultiSelecting,
   onContextMenu,
@@ -459,19 +461,6 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             </div>
           )}
 
-          {/* Drive Asset Indicator */}
-          {imageNode?.driveFileId && (
-            <div
-              className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-gray-900/85 backdrop-blur-sm border border-gray-700 text-[10px] text-emerald-400 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
-              title={`Google Drive 檔案: ${imageNode.driveFileId}`}
-            >
-              <HardDrive className="w-3 h-3" />
-              <span className="font-mono text-[9px] truncate max-w-[80px]">
-                {imageNode.driveFileId.slice(0, 8)}...
-              </span>
-            </div>
-          )}
-
           {/* Quick Download Hover Button for Images */}
           {onDownloadNode && (
             <button
@@ -498,6 +487,16 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           }}
           onPointerDown={e => e.stopPropagation()}
         >
+          {onShowInfo && (
+            <button
+              onClick={() => onShowInfo(node)}
+              className="p-1.5 text-gray-300 hover:text-blue-300 hover:bg-gray-800 rounded-lg transition-colors"
+              title="檢視節點詳細資訊 (Info)"
+            >
+              <Info className="w-3.5 h-3.5 text-blue-400" />
+            </button>
+          )}
+
           {onDownloadNode && (
             <button
               onClick={() => onDownloadNode(node)}

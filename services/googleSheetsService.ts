@@ -1,4 +1,4 @@
-import { BoardMetadata, CanvasNode, ImageNode, TextNode, ViewportState } from '../types';
+import { BoardMetadata, CanvasNode, ImageNode, SourceDetail, TextNode, ViewportState } from '../types';
 import { refreshGoogleToken } from './googleAuthService';
 import { isDriveFileId } from './dbService';
 
@@ -179,6 +179,12 @@ async function initializeSheetHeaders(
     'CreatedAt',
     'UpdatedAt',
     'BoardId',
+    'GenerationPrompt',
+    'GenerationModel',
+    'GenerationSourceIds',
+    'Status',
+    'ErrorMessage',
+    'SourceDetails',
   ];
 
   const viewportHeaders = ['BoardId', 'PanX', 'PanY', 'Zoom', 'SelectedModel', 'UpdatedAt'];
@@ -269,7 +275,7 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
         addSheet: {
           properties: {
             title: 'Nodes',
-            gridProperties: { rowCount: 500, columnCount: 14, frozenRowCount: 1 },
+            gridProperties: { rowCount: 500, columnCount: 20, frozenRowCount: 1 },
           },
         },
       });
@@ -376,6 +382,12 @@ export async function saveGraphToSheet(
     'CreatedAt',
     'UpdatedAt',
     'BoardId',
+    'GenerationPrompt',
+    'GenerationModel',
+    'GenerationSourceIds',
+    'Status',
+    'ErrorMessage',
+    'SourceDetails',
   ];
 
   const nodeRows: any[][] = [nodeHeaders];
@@ -407,6 +419,12 @@ export async function saveGraphToSheet(
       node.createdAt || '',
       new Date().toISOString(),
       nodeBoardId,
+      node.generationPrompt || '',
+      node.generationModel || node.generationModelId || '',
+      node.generationSourceIds ? JSON.stringify(node.generationSourceIds) : '',
+      node.status || 'idle',
+      node.errorMessage || '',
+      node.generationSourceDetails ? JSON.stringify(node.generationSourceDetails) : '',
     ]);
   });
 
@@ -468,7 +486,7 @@ export async function saveGraphToSheet(
             values: boardRows,
           },
           {
-            range: `Nodes!A1:M${nodeRows.length}`,
+            range: `Nodes!A1:S${nodeRows.length}`,
             values: nodeRows,
           },
           {
@@ -494,7 +512,7 @@ export async function saveGraphToSheet(
       clearRanges.push(`Boards!A${boardRows.length + 1}:D${prev.boards}`);
     }
     if (nodeRows.length < prev.nodes) {
-      clearRanges.push(`Nodes!A${nodeRows.length + 1}:M${prev.nodes}`);
+      clearRanges.push(`Nodes!A${nodeRows.length + 1}:S${prev.nodes}`);
     }
     if (viewportRows.length < prev.viewport) {
       clearRanges.push(`Viewport!A${viewportRows.length + 1}:F${prev.viewport}`);
@@ -574,7 +592,7 @@ export async function loadGraphFromSheet(
   }
   if (nodesSheet) {
     nodesIdx = rangesToFetch.length;
-    rangesToFetch.push(`${nodesSheet}!A1:M3000`);
+    rangesToFetch.push(`${nodesSheet}!A1:S3000`);
   }
   if (hasViewport) {
     viewportIdx = rangesToFetch.length;
@@ -598,17 +616,8 @@ export async function loadGraphFromSheet(
       if (nodesIdx >= 0) nodeValues = valueRanges[nodesIdx]?.values || [];
       if (viewportIdx >= 0) viewportValues = valueRanges[viewportIdx]?.values || [];
     } catch (fetchErr) {
-      console.warn('Error during batchGet, attempting single sheet fallback:', fetchErr);
-      // Fallback: try fetching only the nodes sheet
-      try {
-        const fallbackUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(nodesSheet || 'Nodes')}!A1:M3000`;
-        const res = await sheetsFetch(fallbackUrl, token);
-        const data = await res.json();
-        nodeValues = data.values || [];
-      } catch (fallbackErr) {
-        console.error('All sheet fetch attempts failed:', fallbackErr);
-        throw fallbackErr;
-      }
+      console.error('Failed to load canvas data from Google Sheet:', fetchErr);
+      throw fetchErr;
     }
   }
 
@@ -617,17 +626,18 @@ export async function loadGraphFromSheet(
   if (boardValues.length > 1) {
     for (let i = 1; i < boardValues.length; i++) {
       const row = boardValues[i];
-      if (!row || !row[0]) continue;
+      if (!row || row.length === 0 || !row[0]) continue;
+      const [id, name, createdAt, updatedAt] = row;
       boards.push({
-        id: String(row[0]),
-        name: String(row[1] || `Board ${i}`),
-        createdAt: row[2] ? String(row[2]) : undefined,
-        updatedAt: row[3] ? String(row[3]) : undefined,
+        id: String(id),
+        name: String(name || 'Untitled Board'),
+        createdAt: createdAt ? String(createdAt) : undefined,
+        updatedAt: updatedAt ? String(updatedAt) : undefined,
       });
     }
   }
 
-  // Default board if none found in sheet
+  // Fallback to MAIN board if none exist
   if (boards.length === 0) {
     boards.push({
       id: 'board_main',
@@ -659,6 +669,12 @@ export async function loadGraphFromSheet(
         createdAtStr,
         ,
         boardIdCol,
+        genPrompt,
+        genModel,
+        genSourceIdsStr,
+        nodeStatus,
+        nodeErrorMsg,
+        sourceDetailsStr,
       ] = row;
 
       const x = Number(xStr) || 0;
@@ -667,6 +683,28 @@ export async function loadGraphFromSheet(
       const height = Number(heightStr) || 100;
       const rotation = Number(rotStr) || 0;
       const nodeBoardId = boardIdCol ? String(boardIdCol) : defaultBoardId;
+
+      let parsedSourceIds: string[] | undefined;
+      if (genSourceIdsStr) {
+        try {
+          parsedSourceIds = JSON.parse(String(genSourceIdsStr));
+        } catch {
+          parsedSourceIds = String(genSourceIdsStr).split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+
+      let parsedSourceDetails: SourceDetail[] | undefined;
+      if (sourceDetailsStr) {
+        try {
+          parsedSourceDetails = JSON.parse(String(sourceDetailsStr));
+        } catch {
+          parsedSourceDetails = undefined;
+        }
+      }
+
+      const statusVal = nodeStatus === 'generating' || nodeStatus === 'error' || nodeStatus === 'idle'
+        ? (nodeStatus as 'idle' | 'generating' | 'error')
+        : undefined;
 
       if (type === 'image') {
         const rawDriveId = driveFileId ? String(driveFileId) : undefined;
@@ -692,6 +730,13 @@ export async function loadGraphFromSheet(
           originalFileName: origFileName || undefined,
           driveViewLink: validDriveId ? `https://drive.google.com/file/d/${validDriveId}/view` : undefined,
           createdAt: Number(createdAtStr) || undefined,
+          generationPrompt: genPrompt ? String(genPrompt) : undefined,
+          generationModel: genModel ? String(genModel) : undefined,
+          generationModelId: genModel ? String(genModel) : undefined,
+          generationSourceIds: parsedSourceIds,
+          generationSourceDetails: parsedSourceDetails,
+          status: statusVal,
+          errorMessage: nodeErrorMsg ? String(nodeErrorMsg) : undefined,
         };
         nodes.push(imageNode);
       } else {
@@ -706,6 +751,13 @@ export async function loadGraphFromSheet(
           boardId: nodeBoardId,
           content: content ? String(content) : '',
           createdAt: Number(createdAtStr) || undefined,
+          generationPrompt: genPrompt ? String(genPrompt) : undefined,
+          generationModel: genModel ? String(genModel) : undefined,
+          generationModelId: genModel ? String(genModel) : undefined,
+          generationSourceIds: parsedSourceIds,
+          generationSourceDetails: parsedSourceDetails,
+          status: statusVal,
+          errorMessage: nodeErrorMsg ? String(nodeErrorMsg) : undefined,
         };
         nodes.push(textNode);
       }
