@@ -136,7 +136,19 @@ const App: React.FC = () => {
 
   // Projects state
   const [projects, setProjects] = useState<ProjectMetadata[]>([]);
-  const [currentProject, setCurrentProject] = useState<ProjectMetadata | null>(null);
+  const [currentProject, setCurrentProject] = useState<ProjectMetadata | null>(() => {
+    try {
+      const u = getCurrentUser();
+      if (!u) return null;
+      const email = u.email;
+      const raw = email ? localStorage.getItem(`ai_mix_board_last_project_meta_${email}`) : null;
+      const fallback = localStorage.getItem('ai_mix_board_last_project_meta');
+      const item = raw || fallback;
+      return item ? JSON.parse(item) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isLoadingProjectData, setIsLoadingProjectData] = useState(false);
   const [projectDataError, setProjectDataError] = useState<string | null>(null);
@@ -351,11 +363,27 @@ const App: React.FC = () => {
       const list = await listProjects(token);
       setProjects(list);
       if (list.length > 0) {
-        setCurrentProject(prev => {
-          if (!prev || !list.some(p => p.id === prev.id)) {
-            return list[0];
+        let savedProjectId: string | null = null;
+        try {
+          const email = getCurrentUser()?.email;
+          if (email) {
+            savedProjectId = localStorage.getItem(`ai_mix_board_last_project_${email}`);
           }
-          return prev;
+          if (!savedProjectId) {
+            savedProjectId = localStorage.getItem('ai_mix_board_last_project');
+          }
+        } catch (e) {
+          console.warn('Failed to read last project from localStorage:', e);
+        }
+
+        const matchedProject = savedProjectId ? list.find(p => p.id === savedProjectId) : null;
+
+        setCurrentProject(prev => {
+          if (prev && list.some(p => p.id === prev.id)) {
+            const fresh = list.find(p => p.id === prev.id);
+            return fresh || prev;
+          }
+          return matchedProject || list[0];
         });
       } else {
         const defaultProject = await createProject(token, '預設畫布專案');
@@ -387,6 +415,23 @@ const App: React.FC = () => {
       setSyncStatus('offline');
     }
   }, [userEmail, loadProjects]);
+
+  // Persist last used project to localStorage
+  useEffect(() => {
+    if (currentProject) {
+      try {
+        const email = user?.email || getCurrentUser()?.email;
+        if (email) {
+          localStorage.setItem(`ai_mix_board_last_project_${email}`, currentProject.id);
+          localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(currentProject));
+        }
+        localStorage.setItem('ai_mix_board_last_project', currentProject.id);
+        localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(currentProject));
+      } catch (e) {
+        console.warn('Failed to persist last project to localStorage:', e);
+      }
+    }
+  }, [currentProject, user?.email]);
 
   // 3. Load multi-board graph data from Google Sheet when current project changes
   useEffect(() => {
@@ -1737,7 +1782,32 @@ const App: React.FC = () => {
     const created = await createProject(token, name);
     setProjects(prev => [created, ...prev]);
     setCurrentProject(created);
+    try {
+      const email = user?.email || getCurrentUser()?.email;
+      if (email) {
+        localStorage.setItem(`ai_mix_board_last_project_${email}`, created.id);
+        localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(created));
+      }
+      localStorage.setItem('ai_mix_board_last_project', created.id);
+      localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(created));
+    } catch {}
   };
+
+  const handleSelectProject = useCallback((p: ProjectMetadata) => {
+    if (currentProject?.id === p.id) return;
+    setCurrentProject(p);
+    try {
+      const email = user?.email || getCurrentUser()?.email;
+      if (email) {
+        localStorage.setItem(`ai_mix_board_last_project_${email}`, p.id);
+        localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(p));
+      }
+      localStorage.setItem('ai_mix_board_last_project', p.id);
+      localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(p));
+    } catch (e) {
+      console.warn('Failed to save selected project to localStorage:', e);
+    }
+  }, [currentProject?.id, user?.email]);
 
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1923,7 +1993,7 @@ const App: React.FC = () => {
       <TopNavigation
         projects={projects}
         currentProject={currentProject}
-        onSelectProject={p => setCurrentProject(p)}
+        onSelectProject={handleSelectProject}
         onOpenProjectModal={() => setIsProjectModalOpen(true)}
         onOpenModelModal={() => setIsModelModalOpen(true)}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
@@ -2401,7 +2471,7 @@ const App: React.FC = () => {
         onClose={() => setIsProjectModalOpen(false)}
         projects={projects}
         currentProjectId={currentProject?.id}
-        onSelectProject={p => setCurrentProject(p)}
+        onSelectProject={handleSelectProject}
         onCreateProject={handleCreateProject}
         isLoading={isLoadingProjects}
       />
