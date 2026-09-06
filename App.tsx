@@ -42,6 +42,8 @@ import {
 import {
   saveGraphToSheet,
   loadGraphFromSheet,
+  isSheetsRateLimited,
+  getSheetsRateLimitRemainingSeconds,
 } from './services/googleSheetsService';
 import { DEFAULT_MODEL_ID, getModelById, migrateOldModelId } from './services/modelsConfig';
 
@@ -570,7 +572,16 @@ const App: React.FC = () => {
     }
   }, [user?.email]);
 
-  // 4. Auto-save graph to Google Sheet (Debounced)
+  // 4. Auto-save graph to Google Sheet (Debounced & Concurrency-Controlled)
+  const isSavingSheetRef = useRef(false);
+  const pendingSaveRef = useRef<{
+    nodes: CanvasNode[];
+    boards: BoardMetadata[];
+    viewports: Record<string, ViewportState>;
+    models: Record<string, string>;
+    allowEmpty: boolean;
+  } | null>(null);
+
   const triggerAutoSave = useCallback(
     (
       currentAllNodes: CanvasNode[],
@@ -602,25 +613,63 @@ const App: React.FC = () => {
 
       setSyncStatus('saving');
 
-      saveTimerRef.current = setTimeout(async () => {
+      // Stash latest state in pending ref
+      pendingSaveRef.current = {
+        nodes: persistableNodes,
+        boards: currentBoards,
+        viewports: currentViewports,
+        models: currentModels,
+        allowEmpty: allowEmptyNodes,
+      };
+
+      const executeSave = async () => {
+        if (isSavingSheetRef.current) {
+          // A save is currently in-flight; it will trigger pendingSave upon completion
+          return;
+        }
+
+        if (isSheetsRateLimited()) {
+          const waitSec = getSheetsRateLimitRemainingSeconds();
+          console.warn(`[AutoSave] Rate limit in effect. Postponing save by ${waitSec}s.`);
+          saveTimerRef.current = setTimeout(executeSave, Math.max(2000, waitSec * 1000));
+          return;
+        }
+
+        const args = pendingSaveRef.current;
+        if (!args) return;
+        pendingSaveRef.current = null;
+
+        isSavingSheetRef.current = true;
         try {
           const currentToken = getAccessToken() || token;
           await saveGraphToSheet(
             currentToken,
             proj.spreadsheetId!,
-            persistableNodes,
-            currentBoards,
-            currentViewports,
-            currentModels,
-            allowEmptyNodes
+            args.nodes,
+            args.boards,
+            args.viewports,
+            args.models,
+            args.allowEmpty
           );
           setSyncStatus('saved');
           setLastSavedAt(new Date());
         } catch (err) {
           console.error('Failed to auto-save to Google Sheet:', err);
           setSyncStatus('error');
+        } finally {
+          isSavingSheetRef.current = false;
+          // If modifications occurred while this save was executing, schedule the pending save
+          if (pendingSaveRef.current) {
+            saveTimerRef.current = setTimeout(executeSave, 1500);
+          }
         }
-      }, 1000);
+      };
+
+      const delay = isSheetsRateLimited()
+        ? Math.max(3000, getSheetsRateLimitRemainingSeconds() * 1000)
+        : 2500;
+
+      saveTimerRef.current = setTimeout(executeSave, delay);
     },
     []
   );

@@ -2,6 +2,16 @@ import { BoardMetadata, CanvasNode, ImageNode, TextNode, ViewportState } from '.
 import { refreshGoogleToken } from './googleAuthService';
 import { isDriveFileId } from './dbService';
 
+let rateLimitCooldownUntil = 0;
+
+export function isSheetsRateLimited(): boolean {
+  return Date.now() < rateLimitCooldownUntil;
+}
+
+export function getSheetsRateLimitRemainingSeconds(): number {
+  return Math.max(0, Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000));
+}
+
 async function sheetsFetch(
   url: string,
   token: string,
@@ -28,6 +38,9 @@ async function sheetsFetch(
   }
 
   if (!response.ok) {
+    if (response.status === 429) {
+      rateLimitCooldownUntil = Date.now() + 30000;
+    }
     const errorText = await response.text();
     let errorJson;
     try {
@@ -213,10 +226,25 @@ async function initializeSheetHeaders(
   );
 }
 
+const verifiedSpreadsheets = new Set<string>();
+
+export function markSpreadsheetVerified(id: string) {
+  verifiedSpreadsheets.add(id);
+}
+
+interface SheetRowCounts {
+  boards: number;
+  nodes: number;
+  viewport: number;
+  assets: number;
+}
+const previousSheetRowCounts = new Map<string, SheetRowCounts>();
+
 /**
  * Ensure all required sheets ('Boards', 'Nodes', 'Viewport', 'AssetReferences') exist
  */
 async function ensureSheetsStructure(token: string, spreadsheetId: string) {
+  if (verifiedSpreadsheets.has(spreadsheetId)) return;
   try {
     const metaRes = await sheetsFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(title))`,
@@ -274,6 +302,7 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
         body: JSON.stringify({ requests }),
       });
     }
+    verifiedSpreadsheets.add(spreadsheetId);
   } catch (err) {
     console.warn('Could not verify/add sheets structure:', err);
   }
@@ -416,7 +445,12 @@ export async function saveGraphToSheet(
     ]);
   });
 
-  // Ensure sheets structure exists
+  if (isSheetsRateLimited()) {
+    console.warn(`[Google Sheets] Auto-save skipped: rate limit cooldown active (${getSheetsRateLimitRemainingSeconds()}s remaining).`);
+    return;
+  }
+
+  // Ensure sheets structure exists (cached in-memory, zero overhead on repeated saves)
   await ensureSheetsStructure(token, spreadsheetId);
 
   // 5. Write updated data FIRST in batchUpdate (Never clear beforehand to avoid data loss on failure)
@@ -450,48 +484,48 @@ export async function saveGraphToSheet(
     }
   );
 
-  // 6. Safely clear trailing rows ONLY (after successful write)
-  try {
-    const clearTasks: Promise<any>[] = [];
-    if (boardRows.length < 50) {
-      clearTasks.push(
-        sheetsFetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Boards!A${boardRows.length + 1}:Z50:clear`,
-          token,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-        )
-      );
+  // 6. Safely clear trailing rows ONLY if row count decreased (e.g. nodes/boards deleted)
+  // Uses a single batchClear request with bounded ranges, completely eliminating 400 & 429 errors!
+  const prev = previousSheetRowCounts.get(spreadsheetId);
+  const clearRanges: string[] = [];
+
+  if (prev) {
+    if (boardRows.length < prev.boards) {
+      clearRanges.push(`Boards!A${boardRows.length + 1}:D${prev.boards}`);
     }
-    if (nodeRows.length < 2000) {
-      clearTasks.push(
-        sheetsFetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Nodes!A${nodeRows.length + 1}:Z2000:clear`,
-          token,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-        )
-      );
+    if (nodeRows.length < prev.nodes) {
+      clearRanges.push(`Nodes!A${nodeRows.length + 1}:M${prev.nodes}`);
     }
-    if (viewportRows.length < 50) {
-      clearTasks.push(
-        sheetsFetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Viewport!A${viewportRows.length + 1}:Z50:clear`,
-          token,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-        )
-      );
+    if (viewportRows.length < prev.viewport) {
+      clearRanges.push(`Viewport!A${viewportRows.length + 1}:F${prev.viewport}`);
     }
-    if (assetRows.length < 1000) {
-      clearTasks.push(
-        sheetsFetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AssetReferences!A${assetRows.length + 1}:Z1000:clear`,
-          token,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-        )
-      );
+    if (assetRows.length < prev.assets) {
+      clearRanges.push(`AssetReferences!A${assetRows.length + 1}:E${prev.assets}`);
     }
-    await Promise.all(clearTasks);
-  } catch (clearErr) {
-    console.warn('Non-fatal error clearing leftover trailing rows:', clearErr);
+  }
+
+  // Record current row counts for subsequent saves
+  previousSheetRowCounts.set(spreadsheetId, {
+    boards: boardRows.length,
+    nodes: nodeRows.length,
+    viewport: viewportRows.length,
+    assets: assetRows.length,
+  });
+
+  if (clearRanges.length > 0) {
+    try {
+      await sheetsFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchClear`,
+        token,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ranges: clearRanges }),
+        }
+      );
+    } catch (clearErr) {
+      console.warn('Non-fatal error clearing leftover trailing rows via batchClear:', clearErr);
+    }
   }
 }
 
@@ -728,6 +762,16 @@ export async function loadGraphFromSheet(
 
   const primaryViewport = viewports[defaultBoardId] || { x: 0, y: 0, zoom: 1 };
   const primaryModel = selectedModels[defaultBoardId] || 'gemini-2.5-flash-image';
+
+  if (existingSheets.length > 0) {
+    verifiedSpreadsheets.add(spreadsheetId);
+  }
+  previousSheetRowCounts.set(spreadsheetId, {
+    boards: boardValues.length,
+    nodes: nodeValues.length,
+    viewport: viewportValues.length,
+    assets: 0,
+  });
 
   return {
     boards,
