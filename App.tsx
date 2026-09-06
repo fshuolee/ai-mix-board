@@ -2560,78 +2560,14 @@ const App: React.FC = () => {
     [showToast]
   );
 
-  // Proactive lost asset check & Broken Drive Link Repair
+  // Proactive lost asset check (scan only, non-destructive)
   useEffect(() => {
     if (isLoadingProjectData || !currentProject?.id) return;
     const timer = setTimeout(async () => {
-      // 1. Scan for orphans
       handleScanLostAssets(true);
-
-      // 2. Automatically verify and repair any broken Drive links on the canvas
-      const activeToken = getAccessToken();
-      if (activeToken) {
-        const imageNodes = allNodesRef.current.filter(n => n.type === 'image' && n.driveFileId) as ImageNode[];
-        const driveIdsToCheck = imageNodes.map(n => n.driveFileId!);
-        
-        if (driveIdsToCheck.length > 0) {
-          const { verifyDriveFileIds } = await import('./services/googleDriveService');
-          const aliveSet = await verifyDriveFileIds(activeToken, driveIdsToCheck);
-          
-          let brokenCount = 0;
-          setAllNodes(prev => {
-            const next = prev.map(n => {
-              if (n.type === 'image' && n.driveFileId && !aliveSet.has(n.driveFileId)) {
-                brokenCount++;
-                return {
-                  ...n,
-                  content: n.driveFileId || n.content || n.id, // Fall back to driveFileId to retain local cache mapping!
-                  driveFileId: undefined, // Erase broken link
-                  driveViewLink: undefined,
-                  updatedAt: Date.now()
-                } as ImageNode;
-              }
-              return n;
-            });
-            
-            if (brokenCount > 0) {
-              console.log(`[Auto-Repair] Found and cleared ${brokenCount} broken Drive links from canvas.`);
-              // Trigger auto-save to persist the cleared links so they sync next time
-              setTimeout(() => {
-                triggerAutoSave(next, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
-              }, 100);
-            }
-            return next;
-          });
-        }
-      }
-
-      // 3. Automatic Cache Garbage Collection (Aggressive)
-      // Because IndexedDB is global, we automatically prune any blobs that are NOT used by the CURRENT project.
-      // This prevents exponential cache accumulation across projects. When switching projects, they will simply re-fetch from Drive.
-      try {
-        const { getAllLocalImages, deleteMultipleImages } = await import('./services/dbService');
-        const localRecords = await getAllLocalImages();
-        const validIds = new Set<string>();
-        allNodesRef.current.forEach(n => {
-          if (n.type === 'image') {
-            const img = n as ImageNode;
-            if (img.id) validIds.add(img.id);
-            if (img.content) validIds.add(img.content);
-            if (img.driveFileId) validIds.add(img.driveFileId);
-          }
-        });
-        const toDelete = localRecords.filter(rec => !validIds.has(rec.id)).map(rec => rec.id);
-        if (toDelete.length > 0) {
-          await deleteMultipleImages(toDelete);
-          console.log(`[Auto-Cleanup] Automatically purged ${toDelete.length} unused or cross-project local cache blobs.`);
-        }
-      } catch (cleanupErr) {
-        console.warn('Auto cache cleanup failed:', cleanupErr);
-      }
-
     }, 2000);
     return () => clearTimeout(timer);
-  }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets, triggerAutoSave]);
+  }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets]);
 
   return (
     <div className="w-screen h-screen relative select-none overflow-hidden bg-gray-950 font-sans text-gray-100">
