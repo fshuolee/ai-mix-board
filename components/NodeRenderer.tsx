@@ -9,6 +9,7 @@ interface NodeRendererProps {
   node: CanvasNode;
   zoom: number;
   isSelected: boolean;
+  isCut?: boolean;
   onNodeUpdate: (id: string, updates: Partial<CanvasNode>) => void;
   onSelect: (id: string, shiftKey: boolean) => void;
   onDragStart: (e: React.PointerEvent, nodeId: string) => void;
@@ -29,6 +30,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   node,
   zoom,
   isSelected,
+  isCut = false,
   onNodeUpdate,
   onSelect,
   onDragStart,
@@ -65,14 +67,29 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
 
       const loadImage = async () => {
         try {
-          // 1. Try local cache first
+          // 1. Try local IndexedDB cache across all candidate keys
           let blob = await getImage(targetFileId);
+          if (!blob && imageNode.driveFileId && imageNode.driveFileId !== targetFileId) {
+            blob = await getImage(imageNode.driveFileId);
+          }
+          if (!blob && imageNode.content && imageNode.content !== targetFileId) {
+            blob = await getImage(imageNode.content);
+          }
+          if (!blob && node.id && node.id !== targetFileId) {
+            blob = await getImage(node.id);
+          }
 
-          // 2. If not found locally and we have driveFileId + token, fetch from Google Drive
+          // 2. If not found locally, fetch from Google Drive
           if (!blob && imageNode.driveFileId) {
             const token = getAccessToken();
             if (token) {
               blob = await getAssetBlobFromDrive(token, imageNode.driveFileId);
+            }
+          }
+          if (!blob && imageNode.content && imageNode.content !== imageNode.driveFileId) {
+            const token = getAccessToken();
+            if (token) {
+              blob = await getAssetBlobFromDrive(token, imageNode.content);
             }
           }
 
@@ -188,7 +205,9 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
     transform: `translate3d(${node.x}px, ${node.y}px, 0)`,
     willChange: isSelected ? 'transform' : 'auto',
     contain: 'layout style',
-    outline: isSelected
+    outline: isCut
+      ? `${outlineWidth}px dashed #60a5fa`
+      : isSelected
       ? `${outlineWidth}px solid #3b82f6`
       : node.status === 'generating' || node.status === 'error'
       ? 'none'
@@ -201,8 +220,10 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   return (
     <div
       ref={nodeRef}
-      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
-        node.status === 'generating'
+      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-all hover:shadow-2xl ${
+        isCut
+          ? 'opacity-40 border-2 border-dashed border-blue-400'
+          : node.status === 'generating'
           ? 'bg-gray-900/95 border-2 border-blue-500/50 border-dashed overflow-hidden'
           : node.status === 'error'
           ? 'bg-gray-900/95 border-2 border-red-500/50 border-dashed overflow-hidden'

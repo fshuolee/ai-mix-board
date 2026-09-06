@@ -432,16 +432,9 @@ export async function syncUnuploadedImageNodes(
         driveViewLink: uploaded.webViewLink,
       });
 
-      // Cache under the new Drive file ID as well
+      // Cache under both the original ID and the new Drive file ID to guarantee permanent availability
       await storeImage(uploaded.fileId, blob, undefined, true);
-
-      // Clean up the temporary local ID to prevent cache accumulation
-      try {
-        const { deleteMultipleImages } = await import('./dbService');
-        await deleteMultipleImages([localKey]);
-      } catch (e) {
-        console.warn('[Drive Sync] Failed to cleanup temp local id', e);
-      }
+      await storeImage(localKey, blob, undefined, true);
 
       synced++;
       if (onProgress) {
@@ -482,24 +475,24 @@ export async function syncUnuploadedImageNodes(
 }
 
 /**
- * Delete image asset file from Google Drive and remove from local cache.
+ * Move image asset file to Google Drive Trash (Soft Delete) instead of permanent destruction.
+ * Preserves local IndexedDB cache so that files can be restored without data loss.
  */
 export async function deleteAssetFromDrive(token: string, fileId: string): Promise<void> {
   try {
-    // Delete/trash from Google Drive
+    // Soft-delete to Google Drive Trash via PATCH trashed: true
     await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, token, {
-      method: 'DELETE',
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true }),
     });
   } catch (err: any) {
-    console.warn(`Failed to delete asset ${fileId} from Google Drive:`, err.message);
+    console.warn(`Failed to move asset ${fileId} to Google Drive Trash:`, err.message);
   }
 
-  // Remove from IndexedDB cache
-  try {
-    await deleteImage(fileId);
-  } catch (e) {
-    console.warn(`Failed to delete local cached asset ${fileId}:`, e);
-  }
+  // NOTE: We intentionally DO NOT delete from IndexedDB cache.
+  // Keeping the local blob guarantees that if the user undoes or restores from Drive trash,
+  // the image will never be permanently lost.
 }
 
 /**

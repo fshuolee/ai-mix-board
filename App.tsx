@@ -237,6 +237,7 @@ const App: React.FC = () => {
   const isGenerating = activeJobCount > 0;
   const [error, setError] = useState<string | null>(null);
   const [copiedNodesClipboard, setCopiedNodesClipboard] = useState<CanvasNode[]>([]);
+  const [cutNodeIds, setCutNodeIds] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -976,7 +977,7 @@ const App: React.FC = () => {
         });
         setDeletingNodeIds(new Set());
         if (orphanCleanedCount && orphanCleanedCount > 0) {
-          showToast(`已成功刪除 ${nodeIdsToDelete.length} 個節點，並清理 ${orphanCleanedCount} 個雲端檔案！`);
+          showToast(`已成功刪除 ${nodeIdsToDelete.length} 個節點，並將 ${orphanCleanedCount} 個檔案移至雲端垃圾桶！`);
         } else {
           showToast(`已成功刪除 ${nodeIdsToDelete.length} 個節點`);
         }
@@ -1457,13 +1458,9 @@ const App: React.FC = () => {
 
             if (driveFileId !== id) {
               await storeImage(driveFileId, file, undefined, true);
+              await storeImage(id, file, undefined, true);
               nodeObjectUrlCache.set(driveFileId, base64);
-              // Clean up the temporary local ID to prevent infinite cache accumulation
-              try {
-                deleteMultipleImages([id]);
-              } catch (e) {
-                console.warn('Failed to cleanup temp local id', e);
-              }
+              nodeObjectUrlCache.set(id, base64);
             }
           } catch (uploadErr) {
             console.warn('Upload to Google Drive assets failed, stored locally:', uploadErr);
@@ -1535,17 +1532,20 @@ const App: React.FC = () => {
     const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     if (selectedNodes.length === 0) return;
 
+    // Set clipboard and mark nodes as cut (semi-transparent ghosted)
+    // Professional behavior: DO NOT delete yet, and NEVER prompt or touch cloud files!
     setCopiedNodesClipboard(selectedNodes);
+    setCutNodeIds(new Set(selectedNodeIds));
     await copyNodesToClipboard(selectedNodes);
-    showToast(`已剪下 ${selectedNodes.length} 個物件`);
-    handleDeleteNodes(Array.from(selectedNodeIds));
-  }, [selectedNodeIds, currentBoardNodes, handleDeleteNodes, showToast]);
+    showToast(`已剪下 ${selectedNodes.length} 個物件 (前往目標位置按 Cmd+V 貼上)`);
+  }, [selectedNodeIds, currentBoardNodes, showToast]);
 
   const handleCopy = useCallback(async () => {
     if (selectedNodeIds.size === 0) return;
     const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     if (selectedNodes.length === 0) return;
 
+    setCutNodeIds(new Set()); // Cancel any pending cut
     setCopiedNodesClipboard(selectedNodes);
     const res = await copyNodesToClipboard(selectedNodes);
     if (res.message) {
@@ -1581,6 +1581,8 @@ const App: React.FC = () => {
 
     const newSelectedIds = new Set<string>();
     const newPastedNodes: CanvasNode[] = [];
+    const isMovingCut = cutNodeIds.size > 0;
+    const cutIdsSnapshot = new Set(cutNodeIds);
 
     nodesToPaste.forEach((node, idx) => {
       const newId = `${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`;
@@ -1600,10 +1602,23 @@ const App: React.FC = () => {
       newSelectedIds.add(newId);
     });
 
-    updateNodesAndSave(prev => [...prev, ...newPastedNodes]);
+    if (isMovingCut) {
+      // Complete the Cut -> Paste move: remove original cut nodes and insert new ones.
+      // Cloud storage is 100% preserved because the assets are simply moved to their new destination.
+      updateNodesAndSave(prev => [
+        ...prev.filter(n => !cutIdsSnapshot.has(n.id)),
+        ...newPastedNodes,
+      ]);
+      setCutNodeIds(new Set());
+      showToast(`已移動 ${newPastedNodes.length} 個物件`);
+    } else {
+      updateNodesAndSave(prev => [...prev, ...newPastedNodes]);
+      showToast(`已貼上 ${newPastedNodes.length} 個物件`);
+    }
+
     setSelectedNodeIds(newSelectedIds);
     return true;
-  }, [copiedNodesClipboard, currentBoardId, getCanvasCoords, updateNodesAndSave]);
+  }, [copiedNodesClipboard, cutNodeIds, currentBoardId, getCanvasCoords, updateNodesAndSave, showToast]);
 
   const handlePasteFromContextMenu = useCallback(async () => {
     const coords = getCanvasCoords(contextMenu.position.x, contextMenu.position.y);
@@ -1839,9 +1854,7 @@ const App: React.FC = () => {
 
               if (driveFileId !== jobId) {
                 await storeImage(driveFileId, newImageBlob, undefined, true);
-                try {
-                  deleteMultipleImages([jobId]);
-                } catch (e) {}
+                await storeImage(jobId, newImageBlob, undefined, true);
               }
             } catch (uploadErr) {
               console.warn('Drive upload failed for generated image:', uploadErr);
@@ -2030,9 +2043,7 @@ const App: React.FC = () => {
 
                 if (driveFileId !== nodeId) {
                   await storeImage(driveFileId, newImageBlob, undefined, true);
-                  try {
-                    deleteMultipleImages([nodeId]);
-                  } catch (e) {}
+                  await storeImage(nodeId, newImageBlob, undefined, true);
                 }
               } catch (uploadErr) {
                 console.warn('Drive upload failed for retried image:', uploadErr);
@@ -2284,9 +2295,10 @@ const App: React.FC = () => {
         setSelectedNodeIds(new Set(currentBoardNodes.map(n => n.id)));
       }
 
-      // Escape to Deselect All & Close Context Menu
+      // Escape to Deselect All & Close Context Menu & Cancel Cut
       if (e.key === 'Escape') {
         setSelectedNodeIds(new Set());
+        setCutNodeIds(new Set());
         setContextMenu(prev => ({ ...prev, isOpen: false }));
       }
 
@@ -2872,6 +2884,7 @@ const App: React.FC = () => {
               node={node}
               zoom={view.zoom}
               isSelected={selectedNodeIds.has(node.id)}
+              isCut={cutNodeIds.has(node.id)}
               isMultiSelecting={selectedNodeIds.size > 1}
               isSpacePressed={isSpacePressed}
               onNodeUpdate={updateNode}
@@ -2989,13 +3002,13 @@ const App: React.FC = () => {
                 <Trash2 className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">清理 Google Drive 雲端檔案</h3>
+                <h3 className="text-base font-bold text-white">移至 Google Drive 垃圾桶</h3>
                 <p className="text-xs text-gray-400">檢測到無引用的圖片資產</p>
               </div>
             </div>
 
             <p className="text-sm text-gray-300 leading-relaxed">
-              您刪除的節點包含 <span className="font-semibold text-white">{orphanAssetModal.orphanFiles.length}</span> 個在所有畫布中已無任何其他節點引用的圖片檔案。是否要同步從 Google Drive 雲端硬碟中刪除，以釋放雲端儲存空間？
+              您刪除的節點包含 <span className="font-semibold text-white">{orphanAssetModal.orphanFiles.length}</span> 個在所有畫布中已無任何其他節點引用的圖片檔案。是否要將這些檔案移至 Google Drive 垃圾桶？（檔案將移至雲端垃圾桶，可隨時在 Google Drive 中還原）
             </p>
 
             <div className="max-h-32 overflow-y-auto bg-gray-950/60 p-2.5 rounded-xl border border-gray-800 space-y-1 text-xs font-mono text-gray-400">
@@ -3013,7 +3026,7 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-2 text-xs text-amber-300 font-medium animate-pulse">
                   <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
                   <span>
-                    正在清理雲端檔案 ({((orphanAssetModal.deletingIndex ?? 0) + 1)} / {orphanAssetModal.orphanFiles.length})...
+                    正在移至垃圾桶 ({((orphanAssetModal.deletingIndex ?? 0) + 1)} / {orphanAssetModal.orphanFiles.length})...
                   </span>
                 </div>
               ) : (
@@ -3026,24 +3039,24 @@ const App: React.FC = () => {
                 <button
                   onClick={orphanAssetModal.onKeepInDrive}
                   disabled={orphanAssetModal.isDeleting}
-                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-xl transition-colors border border-gray-700 disabled:opacity-50 cursor-pointer"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-lg shadow-blue-600/30 disabled:opacity-50 cursor-pointer"
                 >
-                  保留在 Drive
+                  保留在 Drive (建議)
                 </button>
                 <button
                   onClick={orphanAssetModal.onConfirmDelete}
                   disabled={orphanAssetModal.isDeleting}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-lg shadow-red-600/30 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                  className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs font-medium rounded-xl transition-colors border border-gray-700 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {orphanAssetModal.isDeleting ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>清理中...</span>
+                      <span>移動中...</span>
                     </>
                   ) : (
                     <>
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>從 Drive 刪除</span>
+                      <Trash2 className="w-3.5 h-3.5 text-gray-400" />
+                      <span>移至雲端垃圾桶</span>
                     </>
                   )}
                 </button>
