@@ -2603,6 +2603,31 @@ const App: React.FC = () => {
           });
         }
       }
+
+      // 3. Automatic Cache Garbage Collection (Aggressive)
+      // Because IndexedDB is global, we automatically prune any blobs that are NOT used by the CURRENT project.
+      // This prevents exponential cache accumulation across projects. When switching projects, they will simply re-fetch from Drive.
+      try {
+        const { getAllLocalImages, deleteMultipleImages } = await import('./services/dbService');
+        const localRecords = await getAllLocalImages();
+        const validIds = new Set<string>();
+        allNodesRef.current.forEach(n => {
+          if (n.type === 'image') {
+            const img = n as ImageNode;
+            if (img.id) validIds.add(img.id);
+            if (img.content) validIds.add(img.content);
+            if (img.driveFileId) validIds.add(img.driveFileId);
+          }
+        });
+        const toDelete = localRecords.filter(rec => !validIds.has(rec.id)).map(rec => rec.id);
+        if (toDelete.length > 0) {
+          await deleteMultipleImages(toDelete);
+          console.log(`[Auto-Cleanup] Automatically purged ${toDelete.length} unused or cross-project local cache blobs.`);
+        }
+      } catch (cleanupErr) {
+        console.warn('Auto cache cleanup failed:', cleanupErr);
+      }
+
     }, 2000);
     return () => clearTimeout(timer);
   }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets, triggerAutoSave]);
