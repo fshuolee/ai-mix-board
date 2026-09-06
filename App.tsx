@@ -279,6 +279,7 @@ const App: React.FC = () => {
     isShift?: boolean;
     initialSelection?: Set<string>;
     nodes?: Map<string, { x: number; y: number }>;
+    currentPositions?: Map<string, { x: number; y: number }>;
   } | null>(null);
 
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1125,12 +1126,14 @@ const App: React.FC = () => {
         });
       });
 
-      setAllNodes(prev =>
-        prev.map(n => {
-          const newPos = posMap.get(n.id);
-          return newPos ? { ...n, x: newPos.x, y: newPos.y } : n;
-        })
-      );
+      // Instead of setAllNodes, we directly mutate the DOM styles for smooth 60fps drag
+      posMap.forEach((pos, id) => {
+        const el = document.querySelector(`[data-node-id="${id}"]`) as HTMLElement;
+        if (el) {
+          el.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0)`;
+        }
+      });
+      drag.currentPositions = posMap;
     }
   }, []);
 
@@ -1165,7 +1168,19 @@ const App: React.FC = () => {
       if (lastDrag?.type === 'pan') {
         setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: viewRef.current }));
       } else if (lastDrag?.type === 'drag_node') {
-        triggerAutoSave(allNodesRef.current, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
+        if (lastDrag.currentPositions) {
+          const finalPositions = lastDrag.currentPositions;
+          setAllNodes(prev => {
+            const nextNodes = prev.map(n => {
+              const newPos = finalPositions.get(n.id);
+              return newPos ? { ...n, x: newPos.x, y: newPos.y } : n;
+            });
+            setTimeout(() => {
+               triggerAutoSave(nextNodes, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
+            }, 0);
+            return nextNodes;
+          });
+        }
       }
 
       dragInfoRef.current = null;
