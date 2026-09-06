@@ -1007,55 +1007,91 @@ const App: React.FC = () => {
     };
   }, [handlePointerUp]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (e.cancelable) {
+  // Canvas Native Wheel & Pinch-to-Zoom / Pan Handler with { passive: false }
+  // Attaching directly with { passive: false } guarantees that e.preventDefault()
+  // stops the browser from zooming the outer UI/page on trackpad pinch.
+  useEffect(() => {
+    const canvasEl = canvasRef.current;
+    if (!canvasEl) return;
+
+    const handleCanvasWheel = (e: WheelEvent) => {
       e.preventDefault();
-    }
-    const isPinchOrCtrl = e.ctrlKey || e.metaKey;
+      const isPinchOrCtrl = e.ctrlKey || e.metaKey;
 
-    if (isPinchOrCtrl) {
-      // Smooth exponential zoom for pinch gesture or Ctrl/Cmd + wheel
-      const normalizedDelta = Math.max(-80, Math.min(80, e.deltaY));
-      const zoomFactor = Math.exp(-normalizedDelta * 0.003);
-      const curView = viewRef.current;
-      const newZoom = Math.max(0.1, Math.min(5, curView.zoom * zoomFactor));
+      if (isPinchOrCtrl) {
+        // Smooth exponential zoom for pinch gesture or Ctrl/Cmd + wheel
+        const normalizedDelta = Math.max(-80, Math.min(80, e.deltaY));
+        const zoomFactor = Math.exp(-normalizedDelta * 0.003);
+        const curView = viewRef.current;
+        const newZoom = Math.max(0.1, Math.min(5, curView.zoom * zoomFactor));
 
-      const rect = canvasRef.current?.getBoundingClientRect();
-      const mouseX = rect ? e.clientX - rect.left : window.innerWidth / 2;
-      const mouseY = rect ? e.clientY - rect.top : window.innerHeight / 2;
+        const rect = canvasEl.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
 
-      const worldX = (mouseX - curView.x) / curView.zoom;
-      const worldY = (mouseY - curView.y) / curView.zoom;
+        const worldX = (mouseX - curView.x) / curView.zoom;
+        const worldY = (mouseY - curView.y) / curView.zoom;
 
-      const newX = mouseX - worldX * newZoom;
-      const newY = mouseY - worldY * newZoom;
+        const newX = mouseX - worldX * newZoom;
+        const newY = mouseY - worldY * newZoom;
 
-      const newView = { x: newX, y: newY, zoom: newZoom };
-      viewRef.current = newView;
-      setView(newView);
+        const newView = { x: newX, y: newY, zoom: newZoom };
+        viewRef.current = newView;
+        setView(newView);
 
-      if (wheelSaveTimerRef.current) clearTimeout(wheelSaveTimerRef.current);
-      wheelSaveTimerRef.current = setTimeout(() => {
-        setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
-      }, 150);
-    } else {
-      // Two-finger trackpad panning or Shift+wheel horizontal panning
-      let dx = -e.deltaX;
-      let dy = -e.deltaY;
-      if (e.shiftKey && dx === 0) {
-        dx = -e.deltaY;
-        dy = 0;
+        if (wheelSaveTimerRef.current) clearTimeout(wheelSaveTimerRef.current);
+        wheelSaveTimerRef.current = setTimeout(() => {
+          setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+        }, 150);
+      } else {
+        // Two-finger trackpad panning or Shift+wheel horizontal panning
+        let dx = -e.deltaX;
+        let dy = -e.deltaY;
+        if (e.shiftKey && dx === 0) {
+          dx = -e.deltaY;
+          dy = 0;
+        }
+        const curView = viewRef.current;
+        const newView = { ...curView, x: curView.x + dx, y: curView.y + dy };
+        viewRef.current = newView;
+        setView(newView);
+
+        if (wheelSaveTimerRef.current) clearTimeout(wheelSaveTimerRef.current);
+        wheelSaveTimerRef.current = setTimeout(() => {
+          setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+        }, 150);
       }
-      const curView = viewRef.current;
-      const newView = { ...curView, x: curView.x + dx, y: curView.y + dy };
-      viewRef.current = newView;
-      setView(newView);
+    };
 
-      if (wheelSaveTimerRef.current) clearTimeout(wheelSaveTimerRef.current);
-      wheelSaveTimerRef.current = setTimeout(() => {
-        setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
-      }, 150);
-    }
+    canvasEl.addEventListener('wheel', handleCanvasWheel, { passive: false });
+    return () => {
+      canvasEl.removeEventListener('wheel', handleCanvasWheel);
+    };
+  }, []);
+
+  // Global prevention of outer browser UI zoom (e.g. pinch gesture outside canvas, Safari gestures)
+  useEffect(() => {
+    const handleGlobalWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+      }
+    };
+
+    const preventGesture = (e: Event) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener('wheel', handleGlobalWheel, { passive: false });
+    document.addEventListener('gesturestart', preventGesture, { passive: false });
+    document.addEventListener('gesturechange', preventGesture, { passive: false });
+    document.addEventListener('gestureend', preventGesture, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', handleGlobalWheel);
+      document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('gesturechange', preventGesture);
+      document.removeEventListener('gestureend', preventGesture);
+    };
   }, []);
 
   const handleSelectNode = useCallback((id: string, shiftKey: boolean) => {
@@ -1613,6 +1649,31 @@ const App: React.FC = () => {
         fitToView();
       }
 
+      // Zoom in / out / reset via Cmd/Ctrl + '+', '-', '0' (preventing browser UI zoom)
+      if ((e.metaKey || e.ctrlKey) && !isInputActive) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          const newZoom = Math.min(5, viewRef.current.zoom * 1.2);
+          const newView = { ...viewRef.current, zoom: newZoom };
+          viewRef.current = newView;
+          setView(newView);
+          setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+        } else if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          const newZoom = Math.max(0.1, viewRef.current.zoom / 1.2);
+          const newView = { ...viewRef.current, zoom: newZoom };
+          viewRef.current = newView;
+          setView(newView);
+          setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+        } else if (e.key === '0') {
+          e.preventDefault();
+          const newView = { ...viewRef.current, zoom: 1 };
+          viewRef.current = newView;
+          setView(newView);
+          setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+        }
+      }
+
       // Select All (Cmd+A / Ctrl+A)
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
@@ -1925,7 +1986,6 @@ const App: React.FC = () => {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onWheel={handleWheel}
         onDoubleClick={handleCanvasDoubleClick}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

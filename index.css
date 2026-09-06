@@ -10,6 +10,8 @@ body,
   padding: 0;
   box-sizing: border-box;
   background-color: #030712;
+  overscroll-behavior: none;
+  touch-action: none;
 }
 
 *, *::before, *::after {
