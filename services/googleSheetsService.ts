@@ -213,7 +213,7 @@ async function initializeSheetHeaders(
 }
 
 /**
- * Ensure 'Boards' sheet exists in a spreadsheet (for backward compatibility)
+ * Ensure all required sheets ('Boards', 'Nodes', 'Viewport', 'AssetReferences') exist
  */
 async function ensureSheetsStructure(token: string, spreadsheetId: string) {
   try {
@@ -222,7 +222,7 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
       token
     );
     const meta = await metaRes.json();
-    const sheetTitles = (meta.sheets || []).map((s: any) => s.properties?.title);
+    const sheetTitles: string[] = (meta.sheets || []).map((s: any) => s.properties?.title || '');
 
     const requests: any[] = [];
     if (!sheetTitles.includes('Boards')) {
@@ -231,6 +231,36 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
           properties: {
             title: 'Boards',
             gridProperties: { rowCount: 50, columnCount: 6, frozenRowCount: 1 },
+          },
+        },
+      });
+    }
+    if (!sheetTitles.includes('Nodes')) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: 'Nodes',
+            gridProperties: { rowCount: 500, columnCount: 14, frozenRowCount: 1 },
+          },
+        },
+      });
+    }
+    if (!sheetTitles.includes('Viewport')) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: 'Viewport',
+            gridProperties: { rowCount: 50, columnCount: 8, frozenRowCount: 1 },
+          },
+        },
+      });
+    }
+    if (!sheetTitles.includes('AssetReferences')) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: 'AssetReferences',
+            gridProperties: { rowCount: 200, columnCount: 8, frozenRowCount: 1 },
           },
         },
       });
@@ -244,7 +274,7 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
       });
     }
   } catch (err) {
-    console.warn('Could not verify/add Boards sheet structure:', err);
+    console.warn('Could not verify/add sheets structure:', err);
   }
 }
 
@@ -257,10 +287,17 @@ export async function saveGraphToSheet(
   nodes: CanvasNode[],
   boardsOrViewport: BoardMetadata[] | ViewportState,
   viewportsOrModel?: Record<string, ViewportState> | string,
-  modelsMap?: Record<string, string>
+  modelsMap?: Record<string, string>,
+  allowEmptyNodes: boolean = false
 ): Promise<void> {
   if (!spreadsheetId) {
     throw new Error('Spreadsheet ID is missing for this project');
+  }
+
+  // Critical safety check: Never wipe a project with 0 nodes without explicit permission
+  if (nodes.length === 0 && !allowEmptyNodes) {
+    console.warn('saveGraphToSheet skipped: 0 nodes provided and allowEmptyNodes is false.');
+    return;
   }
 
   // Handle single-board legacy call signature vs multi-board signature
@@ -378,36 +415,10 @@ export async function saveGraphToSheet(
     ]);
   });
 
-  // Ensure Boards sheet exists
+  // Ensure sheets structure exists
   await ensureSheetsStructure(token, spreadsheetId);
 
-  // Clear existing content first so deleted items aren't left behind
-  try {
-    await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Boards!A1:Z100:clear`,
-      token,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-    );
-    await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Nodes!A1:Z2000:clear`,
-      token,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-    );
-    await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Viewport!A1:Z50:clear`,
-      token,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-    );
-    await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AssetReferences!A1:Z1000:clear`,
-      token,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
-    );
-  } catch (e) {
-    console.warn('Error clearing sheet rows', e);
-  }
-
-  // Write updated data in batch
+  // 5. Write updated data FIRST in batchUpdate (Never clear beforehand to avoid data loss on failure)
   await sheetsFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
     token,
@@ -437,6 +448,50 @@ export async function saveGraphToSheet(
       }),
     }
   );
+
+  // 6. Safely clear trailing rows ONLY (after successful write)
+  try {
+    const clearTasks: Promise<any>[] = [];
+    if (boardRows.length < 50) {
+      clearTasks.push(
+        sheetsFetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Boards!A${boardRows.length + 1}:Z50:clear`,
+          token,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+        )
+      );
+    }
+    if (nodeRows.length < 2000) {
+      clearTasks.push(
+        sheetsFetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Nodes!A${nodeRows.length + 1}:Z2000:clear`,
+          token,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+        )
+      );
+    }
+    if (viewportRows.length < 50) {
+      clearTasks.push(
+        sheetsFetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Viewport!A${viewportRows.length + 1}:Z50:clear`,
+          token,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+        )
+      );
+    }
+    if (assetRows.length < 1000) {
+      clearTasks.push(
+        sheetsFetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AssetReferences!A${assetRows.length + 1}:Z1000:clear`,
+          token,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+        )
+      );
+    }
+    await Promise.all(clearTasks);
+  } catch (clearErr) {
+    console.warn('Non-fatal error clearing leftover trailing rows:', clearErr);
+  }
 }
 
 /**
@@ -453,32 +508,73 @@ export async function loadGraphFromSheet(
   viewport: ViewportState;
   selectedModel: string;
 }> {
-  // Query Boards, Nodes, Viewport
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=Boards!A1:D100&ranges=Nodes!A1:M2000&ranges=Viewport!A1:F50`;
-
-  let res: Response;
+  // Query metadata first to find existing sheet names
+  let existingSheets: string[] = [];
   try {
-    res = await sheetsFetch(url, token);
-  } catch (e) {
-    // If Boards sheet doesn't exist yet (legacy sheet), fallback to legacy ranges
-    const fallbackUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=Nodes!A1:L500&ranges=Viewport!A1:E5`;
-    res = await sheetsFetch(fallbackUrl, token);
+    const metaRes = await sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title))`,
+      token
+    );
+    const meta = await metaRes.json();
+    existingSheets = (meta.sheets || []).map((s: any) => s.properties?.title || '');
+  } catch (metaErr) {
+    console.warn('Could not query sheet metadata, falling back to standard names:', metaErr);
   }
 
-  const data = await res.json();
-  const valueRanges = data.valueRanges || [];
+  // Identify which sheet contains nodes: preferably 'Nodes', or fallback to first sheet
+  const hasBoards = existingSheets.length === 0 || existingSheets.includes('Boards');
+  const hasViewport = existingSheets.length === 0 || existingSheets.includes('Viewport');
+  const nodesSheet = existingSheets.includes('Nodes')
+    ? 'Nodes'
+    : (existingSheets.length > 0 ? existingSheets[0] : 'Nodes');
+
+  const rangesToFetch: string[] = [];
+  let boardsIdx = -1;
+  let nodesIdx = -1;
+  let viewportIdx = -1;
+
+  if (hasBoards) {
+    boardsIdx = rangesToFetch.length;
+    rangesToFetch.push('Boards!A1:D100');
+  }
+  if (nodesSheet) {
+    nodesIdx = rangesToFetch.length;
+    rangesToFetch.push(`${nodesSheet}!A1:M3000`);
+  }
+  if (hasViewport) {
+    viewportIdx = rangesToFetch.length;
+    rangesToFetch.push('Viewport!A1:F50');
+  }
 
   let boardValues: any[][] = [];
   let nodeValues: any[][] = [];
   let viewportValues: any[][] = [];
 
-  if (valueRanges.length === 3) {
-    boardValues = valueRanges[0]?.values || [];
-    nodeValues = valueRanges[1]?.values || [];
-    viewportValues = valueRanges[2]?.values || [];
-  } else if (valueRanges.length === 2) {
-    nodeValues = valueRanges[0]?.values || [];
-    viewportValues = valueRanges[1]?.values || [];
+  if (rangesToFetch.length > 0) {
+    try {
+      const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${rangesToFetch
+        .map(r => `ranges=${encodeURIComponent(r)}`)
+        .join('&')}`;
+      const res = await sheetsFetch(batchUrl, token);
+      const data = await res.json();
+      const valueRanges = data.valueRanges || [];
+
+      if (boardsIdx >= 0) boardValues = valueRanges[boardsIdx]?.values || [];
+      if (nodesIdx >= 0) nodeValues = valueRanges[nodesIdx]?.values || [];
+      if (viewportIdx >= 0) viewportValues = valueRanges[viewportIdx]?.values || [];
+    } catch (fetchErr) {
+      console.warn('Error during batchGet, attempting single sheet fallback:', fetchErr);
+      // Fallback: try fetching only the nodes sheet
+      try {
+        const fallbackUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(nodesSheet || 'Nodes')}!A1:M3000`;
+        const res = await sheetsFetch(fallbackUrl, token);
+        const data = await res.json();
+        nodeValues = data.values || [];
+      } catch (fallbackErr) {
+        console.error('All sheet fetch attempts failed:', fallbackErr);
+        throw fallbackErr;
+      }
+    }
   }
 
   // 1. Parse Boards
@@ -572,6 +668,18 @@ export async function loadGraphFromSheet(
       }
     }
   }
+
+  // Auto-register any boards referenced by nodes that aren't in the boards list
+  // so no nodes are EVER hidden from the user!
+  nodes.forEach(n => {
+    if (n.boardId && !boards.some(b => b.id === n.boardId)) {
+      boards.push({
+        id: n.boardId,
+        name: n.boardId === 'board_main' ? 'MAIN' : `Board ${boards.length + 1}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  });
 
   // 3. Parse Viewports & Selected Models
   const viewports: Record<string, ViewportState> = {};

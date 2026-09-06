@@ -265,10 +265,15 @@ const App: React.FC = () => {
 
   // Filter nodes for the current active board
   const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
-  const currentBoardNodes = useMemo(
-    () => allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId),
-    [allNodes, boards, currentBoardId]
-  );
+  const currentBoardNodes = useMemo(() => {
+    const filtered = allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId);
+    // Fallback: If filtered is empty, but allNodes has nodes and there is only 1 board,
+    // show all nodes so nodes are NEVER hidden due to a boardId mismatch!
+    if (filtered.length === 0 && allNodes.length > 0 && boards.length <= 1) {
+      return allNodes;
+    }
+    return filtered;
+  }, [allNodes, boards, currentBoardId]);
 
   // Performance & State synchronization refs
   const allNodesRef = useRef(allNodes);
@@ -509,7 +514,7 @@ const App: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [currentProject?.id, currentProject?.spreadsheetId, retryProjectLoadTrigger]);
+  }, [currentProject?.id, currentProject?.spreadsheetId, user?.accessToken, retryProjectLoadTrigger]);
 
   const handleRetryLoadProject = useCallback(() => {
     setRetryProjectLoadTrigger(c => c + 1);
@@ -530,7 +535,8 @@ const App: React.FC = () => {
       currentAllNodes: CanvasNode[],
       currentBoards: BoardMetadata[],
       currentViewports: Record<string, ViewportState>,
-      currentModels: Record<string, string>
+      currentModels: Record<string, string>,
+      allowEmptyNodes: boolean = false
     ) => {
       const proj = currentProjectRef.current;
       if (isProjectBusyRef.current || isInitialLoadRef.current || !proj || loadedProjectIdRef.current !== proj.id) return;
@@ -544,19 +550,28 @@ const App: React.FC = () => {
         clearTimeout(saveTimerRef.current);
       }
 
+      // Filter out generating placeholders so sheets only receives finalized nodes
+      const persistableNodes = currentAllNodes.filter(n => n.status !== 'generating');
+
+      // Safety check: do not auto-save 0 nodes unless explicitly permitted by deliberate user action
+      if (persistableNodes.length === 0 && !allowEmptyNodes) {
+        console.warn('triggerAutoSave skipped: 0 persistable nodes and allowEmptyNodes is false.');
+        return;
+      }
+
       setSyncStatus('saving');
 
       saveTimerRef.current = setTimeout(async () => {
         try {
-          // Filter out generating placeholders so sheets only receives finalized nodes
-          const persistableNodes = currentAllNodes.filter(n => n.status !== 'generating');
+          const currentToken = getAccessToken() || token;
           await saveGraphToSheet(
-            token,
-            proj.spreadsheetId,
+            currentToken,
+            proj.spreadsheetId!,
             persistableNodes,
             currentBoards,
             currentViewports,
-            currentModels
+            currentModels,
+            allowEmptyNodes
           );
           setSyncStatus('saved');
           setLastSavedAt(new Date());
@@ -571,13 +586,13 @@ const App: React.FC = () => {
 
   // Trigger auto-save whenever nodes change
   const updateNodesAndSave = useCallback(
-    (updater: (prev: CanvasNode[]) => CanvasNode[]) => {
+    (updater: (prev: CanvasNode[]) => CanvasNode[], allowEmptyNodes: boolean = false) => {
       if (isProjectBusyRef.current) return;
       setAllNodes(prevAll => {
         const nextAll = updater(prevAll);
         const updatedViewports = { ...viewportsRef.current, [currentBoardIdRef.current]: viewRef.current };
         const updatedModels = { ...selectedModelsRef.current, [currentBoardIdRef.current]: selectedModelIdRef.current };
-        triggerAutoSave(nextAll, boardsRef.current, updatedViewports, updatedModels);
+        triggerAutoSave(nextAll, boardsRef.current, updatedViewports, updatedModels, allowEmptyNodes);
         return nextAll;
       });
     },
@@ -780,7 +795,7 @@ const App: React.FC = () => {
       });
 
       const executeCanvasDelete = () => {
-        updateNodesAndSave(prev => prev.filter(n => !deleteSet.has(n.id)));
+        updateNodesAndSave(prev => prev.filter(n => !deleteSet.has(n.id)), true);
         setSelectedNodeIds(prev => {
           const next = new Set(prev);
           nodeIdsToDelete.forEach(id => next.delete(id));
@@ -2134,7 +2149,7 @@ const App: React.FC = () => {
         onClearCanvas={() => {
           if (isProjectBusy) return;
           if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
-            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId));
+            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId), true);
             setSelectedNodeIds(new Set());
           }
         }}
@@ -2510,7 +2525,7 @@ const App: React.FC = () => {
         onFitToScreen={fitToView}
         onClearCanvas={() => {
           if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
-            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId));
+            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId), true);
             setSelectedNodeIds(new Set());
           }
         }}
