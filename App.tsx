@@ -791,7 +791,7 @@ const App: React.FC = () => {
   };
 
   const handleDeleteBoard = (boardId: string) => {
-    if (isProjectLoading || isSwitchingProject || isLoadingProjectData) return;
+    if (isProjectBusy) return;
     if (boards.length <= 1) {
       showToast('畫布至少需保留一個分頁，無法刪除！');
       return;
@@ -2589,7 +2589,7 @@ const App: React.FC = () => {
           setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onClearCanvas={() => {
-          if (isProjectLoading || isSwitchingProject || isLoadingProjectData) return;
+          if (isProjectBusy) return;
           if (currentBoardNodes.length === 0) {
             showToast('目前畫布已無任何節點');
             return;
@@ -2811,7 +2811,7 @@ const App: React.FC = () => {
           onRenameBoard={handleRenameBoard}
           onDeleteBoard={handleDeleteBoard}
           allNodes={allNodes}
-          disabled={isProjectLoading || isSwitchingProject || isLoadingProjectData}
+          disabled={isProjectBusy}
         />
       </div>
 
@@ -3008,7 +3008,7 @@ const App: React.FC = () => {
         onSelectAll={handleSelectAll}
         onFitToScreen={fitToView}
         onClearCanvas={() => {
-          if (isProjectLoading || isSwitchingProject || isLoadingProjectData) return;
+          if (isProjectBusy) return;
           if (currentBoardNodes.length === 0) {
             showToast('目前畫布已無任何節點');
             return;
