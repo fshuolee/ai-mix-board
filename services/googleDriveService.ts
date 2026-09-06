@@ -560,6 +560,38 @@ export async function listAllDriveProjectAssets(
       console.warn(`Error scanning folder ${fId} for assets:`, e);
     }
   }
-
   return assetRecords;
+}
+
+/**
+ * Given an array of Google Drive file IDs, returns a Set of the IDs that still actually exist (are not 404/trashed).
+ * This batches queries to avoid rate limits.
+ */
+export async function verifyDriveFileIds(token: string, fileIds: string[]): Promise<Set<string>> {
+  const aliveIds = new Set<string>();
+  const uniqueIds = Array.from(new Set(fileIds.filter(id => isDriveFileId(id))));
+  
+  if (uniqueIds.length === 0) return aliveIds;
+
+  // Batch query in chunks of 50 to stay within URL length limits
+  const chunkSize = 50;
+  for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+    const chunk = uniqueIds.slice(i, i + chunkSize);
+    const queryParts = chunk.map(id => `id='${id}'`);
+    const query = `(${queryParts.join(' or ')}) and trashed=false`;
+    
+    try {
+      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)&pageSize=100`;
+      const res = await driveFetch(url, token);
+      const data = await res.json();
+      
+      if (data.files) {
+        data.files.forEach((f: any) => aliveIds.add(f.id));
+      }
+    } catch (e) {
+      console.warn('Error during batch verifyDriveFileIds:', e);
+    }
+  }
+
+  return aliveIds;
 }

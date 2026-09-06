@@ -2544,14 +2544,53 @@ const App: React.FC = () => {
     [showToast]
   );
 
-  // Proactive lost asset check: scan in background for any unreferenced assets
+  // Proactive lost asset check & Broken Drive Link Repair
   useEffect(() => {
-    if (isLoadingProjectData) return;
-    const timer = setTimeout(() => {
+    if (isLoadingProjectData || !currentProject?.id) return;
+    const timer = setTimeout(async () => {
+      // 1. Scan for orphans
       handleScanLostAssets(true);
-    }, 1500);
+
+      // 2. Automatically verify and repair any broken Drive links on the canvas
+      const activeToken = getAccessToken();
+      if (activeToken) {
+        const imageNodes = allNodesRef.current.filter(n => n.type === 'image' && n.driveFileId) as ImageNode[];
+        const driveIdsToCheck = imageNodes.map(n => n.driveFileId!);
+        
+        if (driveIdsToCheck.length > 0) {
+          const { verifyDriveFileIds } = await import('./services/googleDriveService');
+          const aliveSet = await verifyDriveFileIds(activeToken, driveIdsToCheck);
+          
+          let brokenCount = 0;
+          setAllNodes(prev => {
+            const next = prev.map(n => {
+              if (n.type === 'image' && n.driveFileId && !aliveSet.has(n.driveFileId)) {
+                brokenCount++;
+                return {
+                  ...n,
+                  content: n.id, // Fall back to local ID
+                  driveFileId: undefined, // Erase broken link
+                  driveViewLink: undefined,
+                  updatedAt: Date.now()
+                } as ImageNode;
+              }
+              return n;
+            });
+            
+            if (brokenCount > 0) {
+              console.log(`[Auto-Repair] Found and cleared ${brokenCount} broken Drive links from canvas.`);
+              // Trigger auto-save to persist the cleared links so they sync next time
+              setTimeout(() => {
+                triggerAutoSave(next, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
+              }, 100);
+            }
+            return next;
+          });
+        }
+      }
+    }, 2000);
     return () => clearTimeout(timer);
-  }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets]);
+  }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets, triggerAutoSave]);
 
   return (
     <div className="w-screen h-screen relative select-none overflow-hidden bg-gray-950 font-sans text-gray-100">
