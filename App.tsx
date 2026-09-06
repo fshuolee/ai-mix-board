@@ -1527,29 +1527,42 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCut = useCallback(async () => {
-    if (selectedNodeIds.size === 0) return;
-    const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+  const handleCut = useCallback(async (targetNodeIds?: string[]) => {
+    const idsToCut = targetNodeIds && targetNodeIds.length > 0 ? new Set(targetNodeIds) : selectedNodeIds;
+    if (idsToCut.size === 0) return;
+    const selectedNodes = currentBoardNodes.filter(n => idsToCut.has(n.id));
     if (selectedNodes.length === 0) return;
 
     // Set clipboard and mark nodes as cut (semi-transparent ghosted)
     // Professional behavior: DO NOT delete yet, and NEVER prompt or touch cloud files!
     setCopiedNodesClipboard(selectedNodes);
-    setCutNodeIds(new Set(selectedNodeIds));
-    await copyNodesToClipboard(selectedNodes);
+    setCutNodeIds(new Set(idsToCut));
     showToast(`已剪下 ${selectedNodes.length} 個物件 (前往目標位置按 Cmd+V 貼上)`);
+
+    try {
+      await copyNodesToClipboard(selectedNodes);
+    } catch (e) {
+      console.warn('Clipboard write warning:', e);
+    }
   }, [selectedNodeIds, currentBoardNodes, showToast]);
 
-  const handleCopy = useCallback(async () => {
-    if (selectedNodeIds.size === 0) return;
-    const selectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+  const handleCopy = useCallback(async (targetNodeIds?: string[]) => {
+    const idsToCopy = targetNodeIds && targetNodeIds.length > 0 ? new Set(targetNodeIds) : selectedNodeIds;
+    if (idsToCopy.size === 0) return;
+    const selectedNodes = currentBoardNodes.filter(n => idsToCopy.has(n.id));
     if (selectedNodes.length === 0) return;
 
     setCutNodeIds(new Set()); // Cancel any pending cut
     setCopiedNodesClipboard(selectedNodes);
-    const res = await copyNodesToClipboard(selectedNodes);
-    if (res.message) {
-      showToast(res.message);
+    try {
+      const res = await copyNodesToClipboard(selectedNodes);
+      if (res?.message) {
+        showToast(res.message);
+      } else {
+        showToast(`已複製 ${selectedNodes.length} 個物件`);
+      }
+    } catch {
+      showToast(`已複製 ${selectedNodes.length} 個物件`);
     }
   }, [selectedNodeIds, currentBoardNodes, showToast]);
 
@@ -3095,8 +3108,22 @@ const App: React.FC = () => {
         onResetAspect={handleResetAspect}
         onApplyDefaultSize={handleApplyDefaultSize}
         onSaveAsDefaultSize={handleSaveAsDefaultSize}
-        onCut={handleCut}
-        onCopyToClipboard={handleCopy}
+        onCut={() => {
+          const ids = selectedNodeIds.size > 0
+            ? Array.from(selectedNodeIds)
+            : contextMenu.targetId
+            ? [contextMenu.targetId]
+            : [];
+          handleCut(ids);
+        }}
+        onCopyToClipboard={() => {
+          const ids = selectedNodeIds.size > 0
+            ? Array.from(selectedNodeIds)
+            : contextMenu.targetId
+            ? [contextMenu.targetId]
+            : [];
+          handleCopy(ids);
+        }}
         onDuplicate={handleDuplicateSelected}
         onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
         onBringToFront={handleBringToFront}
