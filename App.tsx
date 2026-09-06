@@ -1031,6 +1031,9 @@ const App: React.FC = () => {
       targetSelection = currentSelected;
     }
 
+    // Only update ref, do not trigger a React state change if selection hasn't changed
+    selectedNodeIdsRef.current = targetSelection;
+
     const cBoardId = currentBoardIdRef.current;
     const bId = boardsRef.current[0]?.id || DEFAULT_BOARD_ID;
     const cNodes = allNodesRef.current.filter(n => (n.boardId || bId) === cBoardId);

@@ -536,4 +536,27 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   );
 };
 
-export default React.memo(NodeRenderer);
+export default React.memo(NodeRenderer, (prevProps, nextProps) => {
+  // Only re-render if the node properties we care about changed
+  // (Ignoring x/y changes here lets us use direct DOM manipulation for drag without re-rendering)
+  const isNodeEqual =
+    prevProps.node.id === nextProps.node.id &&
+    prevProps.node.width === nextProps.node.width &&
+    prevProps.node.height === nextProps.node.height &&
+    prevProps.node.content === nextProps.node.content &&
+    prevProps.node.status === nextProps.node.status &&
+    // Check if x/y changed by something OTHER than dragging (e.g. alignment or undo)
+    // If we're dragging, the App component isn't passing down new x/y until pointerUp.
+    // However, if the props.x/y differ, we still should render if it's a significant change.
+    prevProps.node.x === nextProps.node.x &&
+    prevProps.node.y === nextProps.node.y;
+
+  return (
+    isNodeEqual &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.isDeleting === nextProps.isDeleting &&
+    prevProps.isMultiSelecting === nextProps.isMultiSelecting &&
+    prevProps.isSpacePressed === nextProps.isSpacePressed &&
+    prevProps.zoom === nextProps.zoom
+  );
+});
