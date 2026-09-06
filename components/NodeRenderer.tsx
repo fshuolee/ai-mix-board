@@ -201,7 +201,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   return (
     <div
       ref={nodeRef}
-      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-all hover:shadow-2xl ${
+      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
         node.status === 'generating'
           ? 'bg-gray-900/95 border-2 border-blue-500/50 border-dashed overflow-hidden'
           : node.status === 'error'
