@@ -87,6 +87,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onDownloadAllBoardImages,
   onRescueAssets,
   onRetryNode,
+  onShowInfo,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const defaultSize = getDefaultNodeSize();
