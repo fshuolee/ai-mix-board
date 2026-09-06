@@ -253,10 +253,11 @@ const App: React.FC = () => {
   const [rescuableAssets, setRescuableAssets] = useState<RescuableAsset[]>([]);
   const [isSyncingAssets, setIsSyncingAssets] = useState(false);
   const unuploadedAssetCount = useMemo(() => {
+    if (isLoadingProjectData) return 0;
     return allNodes.filter(
-      n => n.type === 'image' && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+      n => n.type === 'image' && n.status !== 'generating' && n.status !== 'error' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
     ).length;
-  }, [allNodes]);
+  }, [allNodes, isLoadingProjectData]);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -2583,7 +2584,7 @@ const App: React.FC = () => {
                 brokenCount++;
                 return {
                   ...n,
-                  content: n.id, // Fall back to local ID
+                  content: n.driveFileId || n.content || n.id, // Fall back to driveFileId to retain local cache mapping!
                   driveFileId: undefined, // Erase broken link
                   driveViewLink: undefined,
                   updatedAt: Date.now()

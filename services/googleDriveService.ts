@@ -389,7 +389,7 @@ export async function syncUnuploadedImageNodes(
     return { updatedNodes: nodes, syncedCount: 0, resolvedAssetsFolderId };
   }
 
-  const replacements = new Map<string, { driveFileId: string; driveViewLink?: string }>();
+  const replacements = new Map<string, { driveFileId?: string; driveViewLink?: string; status?: 'error' }>();
   let synced = 0;
 
   for (const imgNode of pendingNodes) {
@@ -397,7 +397,8 @@ export async function syncUnuploadedImageNodes(
       const localKey = imgNode.driveFileId || imgNode.content || imgNode.id;
       const blob = await getImage(localKey);
       if (!blob) {
-        console.warn(`[Drive Sync] Blob not found locally for node ${imgNode.id}`);
+        console.warn(`[Drive Sync] Blob not found locally for node ${imgNode.id}. Marking as error to prevent infinite sync loop.`);
+        replacements.set(imgNode.id, { status: 'error' });
         continue;
       }
 
@@ -436,11 +437,19 @@ export async function syncUnuploadedImageNodes(
   const updatedNodes = nodes.map(n => {
     if (n.type === 'image' && replacements.has(n.id)) {
       const rep = replacements.get(n.id)!;
+      if (rep.status === 'error') {
+        return {
+          ...n,
+          status: 'error',
+          updatedAt: Date.now(),
+        } as ImageNode;
+      }
       return {
         ...n,
         content: rep.driveFileId,
         driveFileId: rep.driveFileId,
         driveViewLink: rep.driveViewLink,
+        status: 'idle', // Reset any error status upon successful upload
         updatedAt: Date.now(),
       } as ImageNode;
     }
@@ -581,6 +590,9 @@ export async function verifyDriveFileIds(token: string, fileIds: string[]): Prom
   
   if (uniqueIds.length === 0) return aliveIds;
 
+  // If there's an error verifying, we MUST assume they are alive to prevent destructive false positives.
+  const failedToVerifyIds = new Set<string>();
+
   // Batch query in chunks of 50 to stay within URL length limits
   const chunkSize = 50;
   for (let i = 0; i < uniqueIds.length; i += chunkSize) {
@@ -597,9 +609,13 @@ export async function verifyDriveFileIds(token: string, fileIds: string[]): Prom
         data.files.forEach((f: any) => aliveIds.add(f.id));
       }
     } catch (e) {
-      console.warn('Error during batch verifyDriveFileIds:', e);
+      console.warn('Error during batch verifyDriveFileIds, assuming files are alive to prevent destruction:', e);
+      chunk.forEach(id => failedToVerifyIds.add(id));
     }
   }
 
+  // For any files we couldn't verify due to API error, treat them as alive to be safe.
+  failedToVerifyIds.forEach(id => aliveIds.add(id));
+  
   return aliveIds;
 }
