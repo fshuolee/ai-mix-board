@@ -52,7 +52,9 @@ async function driveFetch(
     const message =
       errorJson?.error?.message ||
       `Google Drive API Error (${response.status}): ${response.statusText}`;
-    throw new Error(message);
+    const err = new Error(message) as any;
+    err.status = response.status;
+    throw err;
   }
   return response;
 }
@@ -325,8 +327,12 @@ export async function getAssetBlobFromDrive(token: string, fileId: string): Prom
     // Cache in IndexedDB for subsequent requests
     await storeImage(fileId, blob, undefined, true);
     return blob;
-  } catch (err) {
-    console.error(`Failed to download asset ${fileId} from Drive:`, err);
+  } catch (err: any) {
+    if (err.status === 404 || (err.message && err.message.toLowerCase().includes('not found'))) {
+      console.warn(`Asset ${fileId} not found in Drive (404). It may have been deleted or not synced yet.`);
+    } else {
+      console.error(`Failed to download asset ${fileId} from Drive:`, err);
+    }
     return null;
   }
 }
