@@ -11,6 +11,7 @@ import {
   ExternalLink,
   ShieldCheck,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
 import { RescuableAsset } from '../services/assetRescueService';
 
@@ -21,6 +22,7 @@ interface AssetRescueModalProps {
   onRestore: (selectedAssets: RescuableAsset[]) => Promise<void>;
   isLoading: boolean;
   onRescan: () => Promise<void>;
+  onDeleteLocalAssets?: (assetIds: string[]) => Promise<void>;
 }
 
 const formatFileSize = (bytes?: number) => {
@@ -37,11 +39,13 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
   onRestore,
   isLoading,
   onRescan,
+  onDeleteLocalAssets,
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(assets.map(a => a.id)));
   const [filterSource, setFilterSource] = useState<'all' | 'local' | 'drive'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isDeletingLocal, setIsDeletingLocal] = useState(false);
 
   // Sync selectedIds when assets list changes
   React.useEffect(() => {
@@ -107,6 +111,63 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
       console.error('Error during asset restoration:', err);
     } finally {
       setIsRestoring(false);
+    }
+  };
+
+  const selectedLocalAssets = useMemo(
+    () => filteredAssets.filter(a => a.source === 'local' && selectedIds.has(a.id)),
+    [filteredAssets, selectedIds]
+  );
+
+  const handleDeleteSelectedLocal = async () => {
+    if (!onDeleteLocalAssets || selectedLocalAssets.length === 0) return;
+    const count = selectedLocalAssets.length;
+    if (
+      !window.confirm(
+        `確定要從本機 IndexedDB 快取中永久刪除所選取的 ${count} 個圖片嗎？\n此操作不會影響雲端硬碟，但已刪除的本機快取將無法直接復原。`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeletingLocal(true);
+    try {
+      const idsToDelete = selectedLocalAssets.map(a => a.id);
+      await onDeleteLocalAssets(idsToDelete);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        idsToDelete.forEach(id => next.delete(id));
+        return next;
+      });
+    } catch (e) {
+      console.error('Error deleting local assets:', e);
+    } finally {
+      setIsDeletingLocal(false);
+    }
+  };
+
+  const handleDeleteSingleLocal = async (asset: RescuableAsset) => {
+    if (!onDeleteLocalAssets) return;
+    if (
+      !window.confirm(
+        `確定要從本機快取刪除圖片「${asset.name}」嗎？`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeletingLocal(true);
+    try {
+      await onDeleteLocalAssets([asset.id]);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(asset.id);
+        return next;
+      });
+    } catch (e) {
+      console.error('Error deleting single local asset:', e);
+    } finally {
+      setIsDeletingLocal(false);
     }
   };
 
@@ -321,18 +382,33 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
                       </p>
                       <div className="flex items-center justify-between text-[11px] text-gray-500 mt-1">
                         <span>{formatFileSize(asset.size)}</span>
-                        {asset.driveViewLink && (
-                          <a
-                            href={asset.driveViewLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
-                            className="text-gray-400 hover:text-blue-400 flex items-center gap-0.5"
-                            title="在 Google Drive 開啟"
-                          >
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {asset.source === 'local' && onDeleteLocalAssets && (
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleDeleteSingleLocal(asset);
+                              }}
+                              className="p-1 rounded hover:bg-red-500/20 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                              title="從本機快取刪除此圖片"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                          {asset.driveViewLink && (
+                            <a
+                              href={asset.driveViewLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="text-gray-400 hover:text-blue-400 flex items-center gap-0.5"
+                              title="在 Google Drive 開啟"
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -346,19 +422,40 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
         <div className="px-6 py-4 border-t border-gray-800 bg-gray-950/80 flex items-center justify-between">
           <div className="text-xs text-gray-400">
             已選取 <span className="font-semibold text-white">{selectedIds.size}</span> / {filteredAssets.length} 個項目
+            {selectedLocalAssets.length > 0 && (
+              <span className="text-emerald-400 ml-2 font-mono">
+                (包含 {selectedLocalAssets.length} 個本機快取)
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {selectedLocalAssets.length > 0 && onDeleteLocalAssets && (
+              <button
+                type="button"
+                onClick={handleDeleteSelectedLocal}
+                disabled={isRestoring || isDeletingLocal}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-red-400 bg-red-950/60 hover:bg-red-900 border border-red-800/60 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                title="從本機 IndexedDB 快取中永久刪除所選取的圖片"
+              >
+                {isDeletingLocal ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>清理所選本機快取 ({selectedLocalAssets.length})</span>
+              </button>
+            )}
             <button
               onClick={onClose}
-              disabled={isRestoring}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+              disabled={isRestoring || isDeletingLocal}
+              className="px-4 py-2 rounded-xl text-xs font-medium text-gray-300 hover:text-white hover:bg-gray-800 transition-colors cursor-pointer"
             >
               取消
             </button>
             <button
               onClick={handleExecuteRestore}
-              disabled={isRestoring || selectedIds.size === 0}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              disabled={isRestoring || isDeletingLocal || selectedIds.size === 0}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
             >
               {isRestoring ? (
                 <>

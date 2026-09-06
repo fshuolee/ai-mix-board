@@ -247,6 +247,20 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                           >
                             <Edit2 className="w-3 h-3" />
                           </button>
+                          {boards.length > 1 && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                if (window.confirm(`確定要刪除畫布 "${b.name}" 嗎？畫布上的節點將會一併移除。`)) {
+                                  onDeleteBoard(b.id);
+                                }
+                              }}
+                              className="p-1 text-gray-400 hover:text-red-400 rounded transition-colors opacity-0 group-hover:opacity-100"
+                              title="刪除此畫布分頁"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -287,6 +301,11 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                 key={board.id}
                 data-board-tab-id={board.id}
                 className="relative group shrink-0"
+                onContextMenu={e => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenuOpenBoardId(menuOpenBoardId === board.id ? null : board.id);
+                }}
               >
                 {isEditing ? (
                   <div className="flex items-center gap-1 px-2 py-1 bg-gray-800 rounded-xl border border-blue-500 shadow-inner">
@@ -313,15 +332,15 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <button
+                  <div
                     onClick={() => onSelectBoard(board.id)}
                     onDoubleClick={() => handleStartRename(board)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer select-none ${
                       isActive
                         ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/30 font-semibold'
                         : 'text-gray-300 hover:text-white hover:bg-gray-850 bg-gray-900/60 border border-gray-800/80'
                     }`}
-                    title={`${board.name} (雙擊可重新命名)`}
+                    title={`${board.name} (雙擊可重新命名，右鍵查看選項)`}
                   >
                     <span className="max-w-[120px] truncate">{board.name}</span>
 
@@ -336,6 +355,22 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       {nodeCount}
                     </span>
 
+                    {/* Hover Delete Button if more than 1 board */}
+                    {boards.length > 1 && (
+                      <div
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (window.confirm(`確定要刪除畫布 "${board.name}" 嗎？畫布上的節點將會一併移除。`)) {
+                            onDeleteBoard(board.id);
+                          }
+                        }}
+                        className="p-0.5 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="刪除此畫布分頁"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </div>
+                    )}
+
                     {/* Options Menu Trigger */}
                     <div
                       onClick={e => {
@@ -345,10 +380,11 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       className={`p-0.5 rounded-md hover:bg-white/20 text-gray-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity ${
                         menuOpenBoardId === board.id ? 'opacity-100' : ''
                       }`}
+                      title="更多選項"
                     >
                       <MoreVertical className="w-3 h-3" />
                     </div>
-                  </button>
+                  </div>
                 )}
 
                 {/* Context Menu */}
@@ -360,7 +396,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                   >
                     <button
                       onClick={() => handleStartRename(board)}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg text-left transition-colors"
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg text-left transition-colors cursor-pointer"
                     >
                       <Edit2 className="w-3.5 h-3.5 text-blue-400" />
                       <span>重新命名</span>
@@ -373,7 +409,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                             onDeleteBoard(board.id);
                           }
                         }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-lg text-left transition-colors"
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-lg text-left transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         <span>刪除畫布</span>

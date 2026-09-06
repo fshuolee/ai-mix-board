@@ -16,6 +16,7 @@ interface NodeRendererProps {
   onDeleteNode?: (nodeId: string) => void;
   onDownloadNode?: (node: CanvasNode) => void;
   onRetryNode?: (nodeId: string) => void;
+  isDeleting?: boolean;
   isMultiSelecting?: boolean;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
   isSpacePressed?: boolean;
@@ -35,6 +36,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDeleteNode,
   onDownloadNode,
   onRetryNode,
+  isDeleting = false,
   isMultiSelecting,
   onContextMenu,
   isSpacePressed = false,
@@ -199,14 +201,14 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   return (
     <div
       ref={nodeRef}
-      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-shadow hover:shadow-2xl ${
+      className={`node-renderer absolute rounded-xl shadow-xl group select-none transition-all hover:shadow-2xl ${
         node.status === 'generating'
           ? 'bg-gray-900/95 border-2 border-blue-500/50 border-dashed overflow-hidden'
           : node.status === 'error'
           ? 'bg-gray-900/95 border-2 border-red-500/50 border-dashed overflow-hidden'
           : 'bg-gray-800/95 border border-gray-700/80'
       } ${
-        isSpacePressed ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'
+        isDeleting ? 'opacity-70 pointer-events-none scale-[0.98]' : isSpacePressed ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'
       }`}
       style={commonStyle}
       onPointerDown={handlePointerDown}
@@ -219,6 +221,16 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
       }}
       data-node-id={node.id}
     >
+      {/* Deleting In-Progress Overlay */}
+      {isDeleting && (
+        <div className="absolute inset-0 z-50 bg-gray-950/85 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 rounded-xl text-red-400 select-none pointer-events-auto animate-fadeIn">
+          <div className="p-2 rounded-xl bg-red-500/15 border border-red-500/30 shadow-inner">
+            <Loader2 className="w-5 h-5 animate-spin text-red-400" />
+          </div>
+          <span className="text-xs font-semibold text-white tracking-wide">正在刪除...</span>
+        </div>
+      )}
+
       {/* 1. Generating Placeholder State */}
       {node.status === 'generating' && (
         <div className="w-full h-full relative flex flex-col justify-between p-3.5 overflow-hidden select-none">

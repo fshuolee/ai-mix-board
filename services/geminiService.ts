@@ -73,21 +73,36 @@ export const generateFromNodes = async (
 
   const token = getAccessToken();
 
-  // Load images from IndexedDB or Google Drive
+  // Robustly load images from IndexedDB, Drive, or memory
   const imageNodeParts = await Promise.all(
     nodes
       .filter(node => node.type === 'image')
       .map(async node => {
         try {
           const imageNode = node as ImageNode;
-          const fileId = imageNode.driveFileId || imageNode.content;
-          let blob = await getImage(fileId);
+          const candidateIds = [imageNode.driveFileId, imageNode.content, node.id].filter(Boolean) as string[];
+          let blob: Blob | null = null;
 
-          if (!blob && token && imageNode.driveFileId) {
-            blob = await getAssetBlobFromDrive(token, imageNode.driveFileId);
+          // 1. Try local IndexedDB
+          for (const cid of candidateIds) {
+            blob = await getImage(cid);
+            if (blob) break;
           }
 
-          if (!blob) return null;
+          // 2. Try Google Drive if driveFileId exists
+          if (!blob && token && imageNode.driveFileId) {
+            try {
+              blob = await getAssetBlobFromDrive(token, imageNode.driveFileId);
+            } catch (driveErr) {
+              console.warn('Failed to fetch asset from Google Drive:', imageNode.driveFileId, driveErr);
+            }
+          }
+
+          if (!blob) {
+            console.warn(`Could not load image blob for node ${node.id} across candidate IDs:`, candidateIds);
+            return null;
+          }
+
           const base64 = await blobToBase64(blob);
           return base64ToPart(base64);
         } catch (e) {
@@ -103,8 +118,22 @@ export const generateFromNodes = async (
     throw new Error('請至少選取一個包含文字或圖片的節點');
   }
 
+  const hasImageInputs = imageParts.length > 0;
+
+  // Determine effective model:
+  // If the user provided reference images or expects image creation, but the selected model does NOT support image output,
+  // auto-route to the primary multimodal image generation model (DEFAULT_MODEL_ID = gemini-3.1-flash-image)
+  let effectiveModelId = modelId;
+  let effectiveModelConfig = modelConfig;
+
+  if (hasImageInputs && !effectiveModelConfig.capabilities.supportsImageOutput) {
+    console.warn(`Model ${modelId} does not support image output. Auto-routing to ${DEFAULT_MODEL_ID} for multimodal image generation.`);
+    effectiveModelId = DEFAULT_MODEL_ID;
+    effectiveModelConfig = getModelById(effectiveModelId);
+  }
+
   // Handle Imagen 3 Dedicated Image Model
-  if (modelId.startsWith('imagen-3')) {
+  if (effectiveModelId.startsWith('imagen-3')) {
     const promptText = textParts.map(t => t.text).join(' \n');
     if (!promptText.trim()) {
       throw new Error('Imagen 3 需要文字提示詞節點來生成圖像');
@@ -112,7 +141,7 @@ export const generateFromNodes = async (
 
     try {
       const response = await ai.models.generateImages({
-        model: modelId,
+        model: effectiveModelId,
         prompt: promptText,
         config: {
           numberOfImages: 1,
@@ -134,13 +163,20 @@ export const generateFromNodes = async (
     }
   }
 
-  // Handle Image Output Models (e.g. gemini-2.5-flash-image)
-  if (modelConfig.capabilities.supportsImageOutput) {
-    const promptParts = [...imageParts, ...textParts];
+  // Handle Multimodal Image Output Models (e.g. gemini-3.1-flash-image, gemini-2.5-flash-image)
+  if (effectiveModelConfig.capabilities.supportsImageOutput) {
+    const promptParts: any[] = [...imageParts, ...textParts];
+
+    // If only image nodes were provided without text prompt, supply a creative synthesis instruction
+    if (textParts.length === 0 && imageParts.length > 0) {
+      promptParts.push({
+        text: 'Generate a new creative image inspired by the visual style, subject matter, colors, and composition of the provided reference image(s). Output high quality image.',
+      });
+    }
 
     try {
       const response = await ai.models.generateContent({
-        model: modelId,
+        model: effectiveModelId,
         contents: [
           {
             parts: promptParts,
@@ -160,17 +196,48 @@ export const generateFromNodes = async (
           return { type: 'image', blob };
         }
       }
-      if (response.text) {
-        return { type: 'text', text: response.text };
-      }
-      throw new Error('模型未回傳圖像，請嘗試調整提示詞或切換模型');
+
+      // Do NOT fall back to text when an image model was requested! Throw clear error instead.
+      const candidate = response.candidates?.[0];
+      const finishReason = candidate?.finishReason;
+      const textMsg = response.text || '';
+      throw new Error(
+        textMsg || `模型未回傳圖像 (狀態: ${finishReason || 'NO_IMAGE'})，請調整提示詞或嘗試切換模型`
+      );
     } catch (error: any) {
+      // If gemini-3.1-flash-image fails with model not found, try fallback to gemini-2.5-flash-image
+      if (
+        effectiveModelId !== 'gemini-2.5-flash-image' &&
+        (error.message?.includes('not found') ||
+          error.message?.includes('404') ||
+          error.message?.includes('unsupported'))
+      ) {
+        console.warn(`Falling back to gemini-2.5-flash-image from ${effectiveModelId}:`, error);
+        try {
+          const fallbackRes = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: [{ parts: promptParts }],
+            config: { responseModalities: [Modality.IMAGE] },
+          });
+          for (const part of fallbackRes.candidates?.[0]?.content?.parts || []) {
+            if (part.inlineData) {
+              const base64ImageBytes: string = part.inlineData.data;
+              const mimeType = part.inlineData.mimeType || 'image/png';
+              const res = await fetch(`data:${mimeType};base64,${base64ImageBytes}`);
+              const blob = await res.blob();
+              return { type: 'image', blob };
+            }
+          }
+        } catch (fallbackErr) {
+          console.error('Fallback image generation error:', fallbackErr);
+        }
+      }
       console.error('Error generating image with Gemini:', error);
       throw new Error(error.message || '圖像生成失敗，請檢查 Console 或 API Key');
     }
   }
 
-  // Handle Multimodal Text / Reasoning Models (e.g. gemini-2.5-pro, gemini-2.5-flash)
+  // Handle Multimodal Text / Reasoning Models ONLY when the user explicitly selected a text model AND did not expect image output
   try {
     const promptParts = [
       ...imageParts,
@@ -181,7 +248,7 @@ export const generateFromNodes = async (
     ];
 
     const response = await ai.models.generateContent({
-      model: modelId,
+      model: effectiveModelId,
       contents: [{ parts: promptParts }],
     });
 

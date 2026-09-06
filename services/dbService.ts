@@ -176,6 +176,73 @@ export const deleteImage = async (id: string): Promise<void> => {
   });
 };
 
+export const deleteMultipleImages = async (ids: string[]): Promise<void> => {
+  if (!ids || ids.length === 0) return;
+  ids.forEach(id => memoryBlobCache.delete(id));
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME, HASH_STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const hashStore = transaction.objectStore(HASH_STORE_NAME);
+
+    let count = 0;
+    for (const id of ids) {
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+        const item = getReq.result;
+        if (item?.hash) {
+          hashStore.delete(item.hash);
+        }
+        store.delete(id);
+      };
+    }
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => {
+      console.error('Error batch deleting images:', transaction.error);
+      reject('Error batch deleting images');
+    };
+  });
+};
+
+export const clearAllLocalImages = async (): Promise<void> => {
+  memoryBlobCache.clear();
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME, HASH_STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const hashStore = transaction.objectStore(HASH_STORE_NAME);
+
+    store.clear();
+    hashStore.clear();
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => {
+      console.error('Error clearing all local images:', transaction.error);
+      reject('Error clearing local cache');
+    };
+  });
+};
+
+export interface LocalCacheStats {
+  count: number;
+  totalBytes: number;
+}
+
+export const getLocalCacheStats = async (): Promise<LocalCacheStats> => {
+  const images = await getAllLocalImages();
+  let totalBytes = 0;
+  for (const img of images) {
+    if (img.blob) {
+      totalBytes += img.blob.size;
+    }
+  }
+  return {
+    count: images.length,
+    totalBytes,
+  };
+};
+
 export interface LocalImageRecord {
   id: string;
   blob: Blob;

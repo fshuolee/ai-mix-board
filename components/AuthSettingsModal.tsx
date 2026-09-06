@@ -15,7 +15,10 @@ import {
   ArrowRight,
   Globe,
   Sparkles,
+  Database,
+  Trash2,
 } from 'lucide-react';
+import { getLocalCacheStats, clearAllLocalImages, LocalCacheStats } from '../services/dbService';
 import {
   getCurrentUser,
   getCustomClientId,
@@ -56,12 +59,25 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [copiedOrigin, setCopiedOrigin] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const [cacheStats, setCacheStats] = useState<LocalCacheStats>({ count: 0, totalBytes: 0 });
+  const [isClearingCache, setIsClearingCache] = useState(false);
+  const [cacheClearedSuccess, setCacheClearedSuccess] = useState(false);
+
+  const loadCacheStats = async () => {
+    try {
+      const stats = await getLocalCacheStats();
+      setCacheStats(stats);
+    } catch (e) {
+      console.warn('Failed to load local cache stats:', e);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
       setApiKey(getEffectiveApiKey());
       setClientId(getCustomClientId());
       setError(null);
+      loadCacheStats();
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -82,6 +98,22 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2000);
     onAuthChange();
+  };
+
+  const handleClearCache = async () => {
+    if (window.confirm('確定要清除所有本機快取的圖片嗎？（若尚未同步至 Google Drive，這些圖片將永久遺失）')) {
+      setIsClearingCache(true);
+      try {
+        await clearAllLocalImages();
+        await loadCacheStats();
+        setCacheClearedSuccess(true);
+        setTimeout(() => setCacheClearedSuccess(false), 3000);
+      } catch (e) {
+        console.error('Failed to clear cache:', e);
+      } finally {
+        setIsClearingCache(false);
+      }
+    }
   };
 
   const handleGooglePopupSignIn = async () => {
@@ -557,6 +589,37 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                 套用 Token
               </button>
             </form>
+          </div>
+
+          {/* Section 4: Local Cache Management */}
+          <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-purple-400" />
+                <h3 className="text-sm font-semibold text-white">本機快取管理</h3>
+              </div>
+              <span className="text-xs text-gray-400">
+                目前使用量: {cacheStats.count} 張圖片 ({(cacheStats.totalBytes / (1024 * 1024)).toFixed(2)} MB)
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-400 max-w-sm">
+                清除本機快取可釋放瀏覽器儲存空間。清除前請確認重要圖片已成功備份至 Google Drive，或者您已不再需要它們。
+              </p>
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={handleClearCache}
+                  disabled={isClearingCache || cacheStats.count === 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/60 hover:bg-red-900 border border-red-800/60 disabled:opacity-50 text-red-300 text-xs font-medium rounded-lg transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isClearingCache ? '清除中...' : '清除所有快取'}</span>
+                </button>
+                {cacheClearedSuccess && (
+                  <span className="text-[10px] text-emerald-400">✓ 清除成功</span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 

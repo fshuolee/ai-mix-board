@@ -16,7 +16,7 @@ import {
   exportBoardToPng,
 } from './utils/canvasUtils';
 import { generateFromNodes } from './services/geminiService';
-import { getImage, storeImage, isDriveFileId } from './services/dbService';
+import { getImage, storeImage, isDriveFileId, deleteMultipleImages } from './services/dbService';
 import {
   subscribeAuth,
   getCurrentUser,
@@ -219,9 +219,12 @@ const App: React.FC = () => {
   const [orphanAssetModal, setOrphanAssetModal] = useState<{
     isOpen: boolean;
     orphanFiles: { fileId: string; fileName: string }[];
+    isDeleting?: boolean;
+    deletingIndex?: number;
     onConfirmDelete: () => void;
     onKeepInDrive: () => void;
   } | null>(null);
+  const [deletingNodeIds, setDeletingNodeIds] = useState<Set<string>>(new Set());
 
   // Sync & Generation state
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('offline');
@@ -788,7 +791,14 @@ const App: React.FC = () => {
   };
 
   const handleDeleteBoard = (boardId: string) => {
-    if (isProjectBusy || boards.length <= 1) return;
+    if (isProjectLoading || isSwitchingProject || isLoadingProjectData) return;
+    if (boards.length <= 1) {
+      showToast('畫布至少需保留一個分頁，無法刪除！');
+      return;
+    }
+
+    const targetBoard = boards.find(b => b.id === boardId);
+    const boardName = targetBoard?.name || '畫布分頁';
 
     const updatedBoards = boards.filter(b => b.id !== boardId);
     const updatedNodes = allNodes.filter(n => (n.boardId || boards[0]?.id) !== boardId);
@@ -816,6 +826,7 @@ const App: React.FC = () => {
     }
 
     triggerAutoSave(updatedNodes, updatedBoards, remainingViewports, remainingModels);
+    showToast(`已成功刪除畫布分頁「${boardName}」`);
   };
 
   // Duplicate node: creates a new node pointing to the EXACT same asset without cloning file
@@ -862,6 +873,9 @@ const App: React.FC = () => {
       const deleteSet = new Set(nodeIdsToDelete);
       const curAllNodes = allNodesRef.current;
 
+      // Immediately set deleting status on all target nodes
+      setDeletingNodeIds(new Set(nodeIdsToDelete));
+
       // Find deleted ImageNodes
       const deletedImageNodes = curAllNodes.filter(
         n => deleteSet.has(n.id) && n.type === 'image' && (n as ImageNode).driveFileId
@@ -882,13 +896,19 @@ const App: React.FC = () => {
         }
       });
 
-      const executeCanvasDelete = () => {
+      const executeCanvasDelete = (orphanCleanedCount?: number) => {
         updateNodesAndSave(prev => prev.filter(n => !deleteSet.has(n.id)), true);
         setSelectedNodeIds(prev => {
           const next = new Set(prev);
           nodeIdsToDelete.forEach(id => next.delete(id));
           return next;
         });
+        setDeletingNodeIds(new Set());
+        if (orphanCleanedCount && orphanCleanedCount > 0) {
+          showToast(`已成功刪除 ${nodeIdsToDelete.length} 個節點，並清理 ${orphanCleanedCount} 個雲端檔案！`);
+        } else {
+          showToast(`已成功刪除 ${nodeIdsToDelete.length} 個節點`);
+        }
       };
 
       if (orphanMap.size > 0) {
@@ -901,25 +921,34 @@ const App: React.FC = () => {
         setOrphanAssetModal({
           isOpen: true,
           orphanFiles: orphanList,
+          isDeleting: false,
+          deletingIndex: -1,
           onConfirmDelete: async () => {
-            setOrphanAssetModal(null);
+            setOrphanAssetModal(prev => (prev ? { ...prev, isDeleting: true, deletingIndex: 0 } : null));
             if (token) {
-              for (const orphan of orphanList) {
-                await deleteAssetFromDrive(token, orphan.fileId);
+              for (let i = 0; i < orphanList.length; i++) {
+                setOrphanAssetModal(prev => (prev ? { ...prev, deletingIndex: i } : null));
+                try {
+                  await deleteAssetFromDrive(token, orphanList[i].fileId);
+                } catch (delErr) {
+                  console.warn('Failed to delete orphan file from Drive:', orphanList[i].fileId, delErr);
+                }
               }
             }
-            executeCanvasDelete();
+            setOrphanAssetModal(null);
+            executeCanvasDelete(orphanList.length);
           },
           onKeepInDrive: () => {
             setOrphanAssetModal(null);
             executeCanvasDelete();
+            showToast(`已自畫布移除 ${nodeIdsToDelete.length} 個節點 (保留雲端檔案)`);
           },
         });
       } else {
         executeCanvasDelete();
       }
     },
-    [updateNodesAndSave]
+    [updateNodesAndSave, showToast]
   );
 
   const handleDeleteNode = useCallback(
@@ -1591,9 +1620,18 @@ const App: React.FC = () => {
     const capturedSelectedNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     if (capturedSelectedNodes.length === 0) return;
 
-    const capturedModelId = selectedModelId;
+    const hasImageSelection = capturedSelectedNodes.some(n => n.type === 'image');
+    let capturedModelId = selectedModelId;
+    let modelInfo = getModelById(capturedModelId);
+
+    // If reference images are passed but model doesn't support image output, route to image generation model
+    if (hasImageSelection && !modelInfo.capabilities.supportsImageOutput) {
+      capturedModelId = DEFAULT_MODEL_ID;
+      modelInfo = getModelById(capturedModelId);
+      showToast(`選取了參考圖，已自動使用多模態生圖模型 (${modelInfo.name}) 生成圖像`);
+    }
+
     const capturedBoardId = currentBoardId;
-    const modelInfo = getModelById(capturedModelId);
     const token = getAccessToken();
 
     // 2. Build prompt snippet / summary for the placeholder card
@@ -1805,8 +1843,12 @@ const App: React.FC = () => {
       setError(null);
 
       // 1. Identify model to use
-      const targetModelId = targetNode.generationModelId || selectedModelId;
-      const modelInfo = getModelById(targetModelId);
+      let targetModelId = targetNode.generationModelId || selectedModelId;
+      let modelInfo = getModelById(targetModelId);
+      if (targetNode.type === 'image' && !modelInfo.capabilities.supportsImageOutput) {
+        targetModelId = DEFAULT_MODEL_ID;
+        modelInfo = getModelById(targetModelId);
+      }
 
       // 2. Identify source nodes
       const sourceIds = new Set(targetNode.generationSourceIds || []);
@@ -2470,6 +2512,23 @@ const App: React.FC = () => {
     [currentBoardNodes, getCanvasCoords, updateNodesAndSave, showToast]
   );
 
+  // Delete local cached assets from IndexedDB
+  const handleDeleteLocalAssets = useCallback(
+    async (assetIds: string[]) => {
+      if (assetIds.length === 0) return;
+      try {
+        await deleteMultipleImages(assetIds);
+        const deletedSet = new Set(assetIds);
+        setRescuableAssets(prev => prev.filter(a => !deletedSet.has(a.id)));
+        showToast(`已成功清理 ${assetIds.length} 個本機暫存快取！`);
+      } catch (err) {
+        console.error('Failed to delete local assets:', err);
+        showToast('清理本機快取時發生錯誤');
+      }
+    },
+    [showToast]
+  );
+
   // Proactive lost asset check: scan in background for any unreferenced assets
   useEffect(() => {
     if (isLoadingProjectData) return;
@@ -2530,10 +2589,13 @@ const App: React.FC = () => {
           setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onClearCanvas={() => {
-          if (isProjectBusy) return;
-          if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
-            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId), true);
-            setSelectedNodeIds(new Set());
+          if (isProjectLoading || isSwitchingProject || isLoadingProjectData) return;
+          if (currentBoardNodes.length === 0) {
+            showToast('目前畫布已無任何節點');
+            return;
+          }
+          if (window.confirm(`確定要清空目前畫布上的所有 ${currentBoardNodes.length} 個節點嗎？`)) {
+            handleDeleteNodes(currentBoardNodes.map(n => n.id));
           }
         }}
         onExportBoardImage={handleExportBoardImage}
@@ -2719,6 +2781,7 @@ const App: React.FC = () => {
               onDeleteNode={handleDeleteNode}
               onDownloadNode={handleDownloadSingleNode}
               onRetryNode={handleRetryNode}
+              isDeleting={deletingNodeIds.has(node.id)}
               onContextMenu={handleNodeContextMenu}
             />
           ))}
@@ -2748,7 +2811,7 @@ const App: React.FC = () => {
           onRenameBoard={handleRenameBoard}
           onDeleteBoard={handleDeleteBoard}
           allNodes={allNodes}
-          disabled={isProjectBusy}
+          disabled={isProjectLoading || isSwitchingProject || isLoadingProjectData}
         />
       </div>
 
@@ -2789,6 +2852,16 @@ const App: React.FC = () => {
           )}
         </button>
       </div>
+
+      {/* Floating Deletion In-Progress Banner */}
+      {deletingNodeIds.size > 0 && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2 rounded-full bg-gray-950/95 border border-red-500/50 text-red-300 shadow-2xl backdrop-blur-md animate-fadeIn select-none pointer-events-none">
+          <Loader2 className="w-4 h-4 animate-spin text-red-400" />
+          <span className="text-xs font-semibold tracking-wide text-white">
+            正在刪除 {deletingNodeIds.size} 個節點...
+          </span>
+        </div>
+      )}
 
       {/* Error Alert Banner */}
       {error && (
@@ -2835,20 +2908,46 @@ const App: React.FC = () => {
               ))}
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 mt-2">
-              <button
-                onClick={orphanAssetModal.onKeepInDrive}
-                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-xl transition-colors border border-gray-700"
-              >
-                保留在 Drive
-              </button>
-              <button
-                onClick={orphanAssetModal.onConfirmDelete}
-                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-lg shadow-red-600/30 flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>從 Drive 刪除</span>
-              </button>
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-800">
+              {orphanAssetModal.isDeleting ? (
+                <div className="flex items-center gap-2 text-xs text-amber-300 font-medium animate-pulse">
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                  <span>
+                    正在清理雲端檔案 ({((orphanAssetModal.deletingIndex ?? 0) + 1)} / {orphanAssetModal.orphanFiles.length})...
+                  </span>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500 font-mono">
+                  共 {orphanAssetModal.orphanFiles.length} 個檔案
+                </div>
+              )}
+
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={orphanAssetModal.onKeepInDrive}
+                  disabled={orphanAssetModal.isDeleting}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-xl transition-colors border border-gray-700 disabled:opacity-50 cursor-pointer"
+                >
+                  保留在 Drive
+                </button>
+                <button
+                  onClick={orphanAssetModal.onConfirmDelete}
+                  disabled={orphanAssetModal.isDeleting}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-lg shadow-red-600/30 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {orphanAssetModal.isDeleting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>清理中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>從 Drive 刪除</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2909,9 +3008,13 @@ const App: React.FC = () => {
         onSelectAll={handleSelectAll}
         onFitToScreen={fitToView}
         onClearCanvas={() => {
-          if (window.confirm('確定要清空目前畫布上的所有節點嗎？')) {
-            updateNodesAndSave(prev => prev.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) !== currentBoardId), true);
-            setSelectedNodeIds(new Set());
+          if (isProjectLoading || isSwitchingProject || isLoadingProjectData) return;
+          if (currentBoardNodes.length === 0) {
+            showToast('目前畫布已無任何節點');
+            return;
+          }
+          if (window.confirm(`確定要清空目前畫布上的所有 ${currentBoardNodes.length} 個節點嗎？`)) {
+            handleDeleteNodes(currentBoardNodes.map(n => n.id));
           }
         }}
         onDownloadNode={handleDownloadSelectedNodes}
@@ -2958,9 +3061,8 @@ const App: React.FC = () => {
         selectedModelId={selectedModelId}
         onSelectModel={id => {
           setSelectedModelId(id);
-          const updatedModels = { ...selectedModels, [currentBoardId]: id };
-          setSelectedModels(updatedModels);
-          triggerAutoSave(allNodes, boards, viewports, updatedModels);
+          setSelectedModels(prev => ({ ...prev, [currentBoardId]: id }));
+          triggerAutoSave(allNodes, boards, viewports, { ...selectedModels, [currentBoardId]: id });
         }}
       />
 
@@ -3016,6 +3118,7 @@ const App: React.FC = () => {
         onRestore={handleRestoreRescuedAssets}
         isLoading={isScanningRescue}
         onRescan={() => handleScanLostAssets(false)}
+        onDeleteLocalAssets={handleDeleteLocalAssets}
       />
     </div>
   );
