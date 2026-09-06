@@ -1,5 +1,13 @@
-import { ProjectMetadata } from '../types';
-import { getImage, storeImage, deleteImage, calculateBlobHash, getFileIdByHash } from './dbService';
+import { ProjectMetadata, CanvasNode, ImageNode } from '../types';
+import {
+  getImage,
+  storeImage,
+  deleteImage,
+  calculateBlobHash,
+  getFileIdByHash,
+  isDriveFileId,
+  associateDriveFileId,
+} from './dbService';
 import { createProjectSpreadsheet } from './googleSheetsService';
 import { refreshGoogleToken } from './googleAuthService';
 
@@ -229,10 +237,10 @@ export async function uploadAssetToDrive(
   blob: Blob,
   fileName: string
 ): Promise<{ fileId: string; name: string; webViewLink?: string; thumbnailLink?: string }> {
-  // Check if identical asset already exists by SHA-256 fingerprint
+  // Check if identical asset already exists by SHA-256 fingerprint in Drive
   const blobHash = await calculateBlobHash(blob);
   const existingFileId = await getFileIdByHash(blobHash);
-  if (existingFileId) {
+  if (existingFileId && isDriveFileId(existingFileId)) {
     return {
       fileId: existingFileId,
       name: fileName,
@@ -276,8 +284,9 @@ export async function uploadAssetToDrive(
 
   const fileData = await res.json();
 
-  // Cache locally in IndexedDB with hash for deduplication
-  await storeImage(fileData.id, blob, blobHash);
+  // Cache locally in IndexedDB with confirmed Google Drive file ID
+  await storeImage(fileData.id, blob, blobHash, true);
+  await associateDriveFileId(fileData.id, blobHash, blob);
 
   return {
     fileId: fileData.id,
@@ -301,6 +310,11 @@ export async function getAssetBlobFromDrive(token: string, fileId: string): Prom
     console.warn('Cache lookup failed for fileId', fileId, e);
   }
 
+  // Guard against bogus local temp IDs that aren't genuine Drive file IDs
+  if (!isDriveFileId(fileId)) {
+    return null;
+  }
+
   // Fetch from Google Drive API
   try {
     const res = await driveFetch(
@@ -309,12 +323,107 @@ export async function getAssetBlobFromDrive(token: string, fileId: string): Prom
     );
     const blob = await res.blob();
     // Cache in IndexedDB for subsequent requests
-    await storeImage(fileId, blob);
+    await storeImage(fileId, blob, undefined, true);
     return blob;
   } catch (err) {
     console.error(`Failed to download asset ${fileId} from Drive:`, err);
     return null;
   }
+}
+
+/**
+ * Find parent folder of a Google Drive file (e.g., spreadsheet)
+ */
+export async function getFileParentFolderId(token: string, fileId: string): Promise<string | null> {
+  try {
+    const res = await driveFetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents`,
+      token
+    );
+    const data = await res.json();
+    if (data.parents && data.parents.length > 0) {
+      return data.parents[0];
+    }
+  } catch (e) {
+    console.warn('Could not get parent folder for file', fileId, e);
+  }
+  return null;
+}
+
+/**
+ * Scan all image nodes on the canvas that are currently only stored locally
+ * (i.e. having local IDs like timestamp or gen_*), retrieve their blobs from IndexedDB,
+ * upload them to the project's Google Drive assets folder, and return the updated nodes.
+ */
+export async function syncUnuploadedImageNodes(
+  token: string,
+  projectFolderId: string,
+  assetsFolderId: string | undefined,
+  nodes: CanvasNode[],
+  onProgress?: (synced: number, total: number) => void
+): Promise<{ updatedNodes: CanvasNode[]; syncedCount: number; resolvedAssetsFolderId: string }> {
+  // 1. Identify image nodes that need Drive upload
+  const pendingNodes = nodes.filter(
+    n => n.type === 'image' && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+  ) as ImageNode[];
+
+  const resolvedAssetsFolderId = assetsFolderId || (await ensureAssetsFolder(token, projectFolderId));
+
+  if (pendingNodes.length === 0) {
+    return { updatedNodes: nodes, syncedCount: 0, resolvedAssetsFolderId };
+  }
+
+  const replacements = new Map<string, { driveFileId: string; driveViewLink?: string }>();
+  let synced = 0;
+
+  for (const imgNode of pendingNodes) {
+    try {
+      const localKey = imgNode.driveFileId || imgNode.content || imgNode.id;
+      const blob = await getImage(localKey);
+      if (!blob) {
+        console.warn(`[Drive Sync] Blob not found locally for node ${imgNode.id}`);
+        continue;
+      }
+
+      const fileName = imgNode.originalFileName || `asset_${imgNode.id}.png`;
+      const uploaded = await uploadAssetToDrive(token, resolvedAssetsFolderId, blob, fileName);
+
+      replacements.set(imgNode.id, {
+        driveFileId: uploaded.fileId,
+        driveViewLink: uploaded.webViewLink,
+      });
+
+      // Cache under the new Drive file ID as well
+      await storeImage(uploaded.fileId, blob, undefined, true);
+
+      synced++;
+      if (onProgress) {
+        onProgress(synced, pendingNodes.length);
+      }
+    } catch (uploadErr) {
+      console.warn(`[Drive Sync] Failed to sync node ${imgNode.id} to Drive:`, uploadErr);
+    }
+  }
+
+  if (replacements.size === 0) {
+    return { updatedNodes: nodes, syncedCount: 0, resolvedAssetsFolderId };
+  }
+
+  const updatedNodes = nodes.map(n => {
+    if (n.type === 'image' && replacements.has(n.id)) {
+      const rep = replacements.get(n.id)!;
+      return {
+        ...n,
+        content: rep.driveFileId,
+        driveFileId: rep.driveFileId,
+        driveViewLink: rep.driveViewLink,
+        updatedAt: Date.now(),
+      } as ImageNode;
+    }
+    return n;
+  });
+
+  return { updatedNodes, syncedCount: synced, resolvedAssetsFolderId };
 }
 
 /**

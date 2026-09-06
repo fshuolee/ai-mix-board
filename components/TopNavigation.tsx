@@ -44,6 +44,9 @@ interface TopNavigationProps {
   onClearCanvas: () => void;
   onExportBoardImage?: () => void;
   onDownloadAllImages?: () => void;
+  isSyncingAssets?: boolean;
+  onSyncAssetsToDrive?: () => void;
+  unuploadedAssetCount?: number;
 }
 
 const TopNavigation: React.FC<TopNavigationProps> = ({
@@ -58,6 +61,9 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   syncStatus,
   lastSavedAt,
   isProjectLoading = false,
+  isSyncingAssets = false,
+  onSyncAssetsToDrive,
+  unuploadedAssetCount = 0,
   onAddTextNode,
   onUploadImage,
   onResetZoom,
@@ -231,6 +237,36 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                   )}
                 </div>
               )}
+
+              {/* Sync images button */}
+              {user && onSyncAssetsToDrive && (
+                <div className="p-2 border-t border-gray-800 bg-gray-950/60">
+                  <button
+                    onClick={() => {
+                      setProjectDropdownOpen(false);
+                      onSyncAssetsToDrive();
+                    }}
+                    disabled={isSyncingAssets}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-700/50 text-emerald-300 text-xs font-medium transition-colors disabled:opacity-50"
+                    title="掃描並上傳尚未同步至 Google Drive 的本機圖片"
+                  >
+                    {isSyncingAssets ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                        <span>圖片同步上傳中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>
+                          同步圖片至雲端硬碟
+                          {unuploadedAssetCount > 0 ? ` (${unuploadedAssetCount} 張未上傳)` : ''}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -239,18 +275,27 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
         <div
           className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-900/60 border border-gray-800 text-xs cursor-help select-none"
           title={
-            isProjectLoading || syncStatus === 'loading'
+            isSyncingAssets
+              ? '正在同步本機圖片至 Google Drive 專案資料夾...'
+              : isProjectLoading || syncStatus === 'loading'
               ? '專案資料讀取中...'
               : syncStatus === 'saving'
               ? '正在儲存同步至 Google Sheet...'
               : syncStatus === 'saved'
-              ? `已同步至雲端 (${lastSavedAt ? lastSavedAt.toLocaleTimeString() : '就緒'})`
+              ? `已同步至雲端 (${lastSavedAt ? lastSavedAt.toLocaleTimeString() : '就緒'})${
+                  unuploadedAssetCount > 0 ? ` • ${unuploadedAssetCount} 張圖片待上傳` : ''
+                }`
               : syncStatus === 'error'
               ? '雲端同步錯誤，請檢查帳號權限'
               : '本機離線暫存模式'
           }
         >
-          {isProjectLoading || syncStatus === 'loading' ? (
+          {isSyncingAssets ? (
+            <>
+              <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
+              <span className="text-emerald-400 text-[11px] font-medium">圖片同步中</span>
+            </>
+          ) : isProjectLoading || syncStatus === 'loading' ? (
             <>
               <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
               <span className="text-blue-300 text-[11px]">讀取中</span>
@@ -262,8 +307,18 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
             </>
           ) : syncStatus === 'saved' ? (
             <>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span className="text-gray-300 text-[11px]">已同步</span>
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  unuploadedAssetCount > 0 ? 'bg-amber-400' : 'bg-emerald-400'
+                }`}
+              />
+              <span
+                className={`text-[11px] ${
+                  unuploadedAssetCount > 0 ? 'text-amber-300' : 'text-gray-300'
+                }`}
+              >
+                {unuploadedAssetCount > 0 ? `${unuploadedAssetCount} 圖待傳` : '已同步'}
+              </span>
             </>
           ) : syncStatus === 'error' ? (
             <>
@@ -277,6 +332,18 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
             </>
           )}
         </div>
+
+        {/* Quick Sync Button if unuploaded images exist */}
+        {unuploadedAssetCount > 0 && !isSyncingAssets && onSyncAssetsToDrive && (
+          <button
+            onClick={onSyncAssetsToDrive}
+            className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/70 border border-amber-600/60 text-amber-300 text-[11px] hover:bg-amber-900/80 transition-colors shadow-sm cursor-pointer"
+            title="點擊將這些圖片同步上傳到 Google Drive"
+          >
+            <HardDrive className="w-3 h-3" />
+            <span>同步 {unuploadedAssetCount} 圖</span>
+          </button>
+        )}
       </div>
 
       {/* Center Section: Compact Single-Line Model Selector */}

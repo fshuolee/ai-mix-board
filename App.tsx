@@ -16,11 +16,12 @@ import {
   exportBoardToPng,
 } from './utils/canvasUtils';
 import { generateFromNodes } from './services/geminiService';
-import { storeImage } from './services/dbService';
+import { getImage, storeImage, isDriveFileId } from './services/dbService';
 import {
   subscribeAuth,
   getCurrentUser,
   getAccessToken,
+  getValidAccessToken,
   refreshGoogleToken,
   tryFetchLocalGcloudToken,
   isLocalEnvironment,
@@ -34,6 +35,8 @@ import {
   uploadAssetToDrive,
   deleteAssetFromDrive,
   ensureAssetsFolder,
+  getFileParentFolderId,
+  syncUnuploadedImageNodes,
 } from './services/googleDriveService';
 import {
   saveGraphToSheet,
@@ -235,6 +238,12 @@ const App: React.FC = () => {
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isSyncingAssets, setIsSyncingAssets] = useState(false);
+  const unuploadedAssetCount = useMemo(() => {
+    return allNodes.filter(
+      n => n.type === 'image' && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+    ).length;
+  }, [allNodes]);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -598,6 +607,75 @@ const App: React.FC = () => {
     },
     [triggerAutoSave]
   );
+
+  // Background asset sync engine: uploads any locally-stored image nodes to Google Drive
+  const runBackgroundAssetSync = useCallback(
+    async (token: string, project: ProjectMetadata, nodesToSync: CanvasNode[]) => {
+      const activeToken = (await getValidAccessToken()) || token;
+      const folderId =
+        project.folderId || (await getFileParentFolderId(activeToken, project.spreadsheetId));
+      if (!folderId) return;
+
+      setIsSyncingAssets(true);
+      try {
+        const { updatedNodes, syncedCount, resolvedAssetsFolderId } = await syncUnuploadedImageNodes(
+          activeToken,
+          folderId,
+          project.assetsFolderId,
+          nodesToSync
+        );
+
+        if (syncedCount > 0) {
+          if (project.assetsFolderId !== resolvedAssetsFolderId) {
+            setCurrentProject(prev => (prev ? { ...prev, assetsFolderId: resolvedAssetsFolderId } : prev));
+          }
+          // Update nodes state and trigger auto-save to Google Sheet
+          updateNodesAndSave(() => updatedNodes);
+          showToast(`已成功將 ${syncedCount} 張畫布圖片同步上傳至 Google Drive 專案資料夾！`);
+        }
+      } catch (err) {
+        console.warn('Background asset sync error:', err);
+      } finally {
+        setIsSyncingAssets(false);
+      }
+    },
+    [updateNodesAndSave, showToast]
+  );
+
+  const handleSyncAssetsToDrive = useCallback(async () => {
+    const activeToken = (await getValidAccessToken()) || getAccessToken();
+    const proj = currentProjectRef.current;
+    if (!activeToken || !proj) {
+      showToast('請先登入 Google 帳號以同步圖片至雲端硬碟');
+      return;
+    }
+    const nodes = allNodesRef.current;
+    const pendingCount = nodes.filter(
+      n => n.type === 'image' && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+    ).length;
+
+    if (pendingCount === 0) {
+      showToast('目前所有圖片均已同步儲存於 Google Drive！');
+      return;
+    }
+
+    showToast(`開始同步 ${pendingCount} 張圖片至 Google Drive...`);
+    await runBackgroundAssetSync(activeToken, proj, nodes);
+  }, [runBackgroundAssetSync, showToast]);
+
+  // Reactive background asset sync: whenever project data is ready, auto-backup unuploaded images
+  useEffect(() => {
+    if (!currentProject || isLoadingProjectData || isInitialLoadRef.current) return;
+    const token = getAccessToken();
+    if (!token) return;
+
+    if (unuploadedAssetCount > 0 && !isSyncingAssets) {
+      const timer = setTimeout(() => {
+        runBackgroundAssetSync(token, currentProject, allNodesRef.current);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentProject?.id, isLoadingProjectData, unuploadedAssetCount, isSyncingAssets, runBackgroundAssetSync]);
 
   const updateNode = useCallback(
     (id: string, updates: Partial<CanvasNode>) => {
@@ -1228,19 +1306,32 @@ const App: React.FC = () => {
         let driveViewLink: string | undefined;
 
         // If connected to Google Drive, upload file into project's assets folder
-        if (token && currentProject?.folderId) {
+        const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+        const targetProj = currentProjectRef.current || currentProject;
+        const projFolderId =
+          targetProj?.folderId ||
+          (activeToken && targetProj?.spreadsheetId
+            ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+            : null);
+
+        if (activeToken && projFolderId) {
           try {
             const assetsFolderId =
-              currentProject.assetsFolderId ||
-              (await ensureAssetsFolder(token, currentProject.folderId));
+              targetProj?.assetsFolderId ||
+              (await ensureAssetsFolder(activeToken, projFolderId));
             const uploaded = await uploadAssetToDrive(
-              token,
+              activeToken,
               assetsFolderId,
               file,
               file.name || `image_${id}.png`
             );
             driveFileId = uploaded.fileId;
             driveViewLink = uploaded.webViewLink;
+
+            if (driveFileId !== id) {
+              await storeImage(driveFileId, file, undefined, true);
+              nodeObjectUrlCache.set(driveFileId, base64);
+            }
           } catch (uploadErr) {
             console.warn('Upload to Google Drive assets failed, stored locally:', uploadErr);
           }
@@ -1580,19 +1671,31 @@ const App: React.FC = () => {
           let driveViewLink: string | undefined;
 
           // Upload generated image asset to Google Drive project assets folder if connected
-          if (token && currentProject?.folderId) {
+          const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+          const targetProj = currentProjectRef.current || currentProject;
+          const projFolderId =
+            targetProj?.folderId ||
+            (activeToken && targetProj?.spreadsheetId
+              ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+              : null);
+
+          if (activeToken && projFolderId) {
             try {
               const assetsFolderId =
-                currentProject.assetsFolderId ||
-                (await ensureAssetsFolder(token, currentProject.folderId));
+                targetProj?.assetsFolderId ||
+                (await ensureAssetsFolder(activeToken, projFolderId));
               const uploaded = await uploadAssetToDrive(
-                token,
+                activeToken,
                 assetsFolderId,
                 newImageBlob,
                 `gemini_gen_${jobId}.png`
               );
               driveFileId = uploaded.fileId;
               driveViewLink = uploaded.webViewLink;
+
+              if (driveFileId !== jobId) {
+                await storeImage(driveFileId, newImageBlob, undefined, true);
+              }
             } catch (uploadErr) {
               console.warn('Drive upload failed for generated image:', uploadErr);
             }
@@ -2116,6 +2219,9 @@ const App: React.FC = () => {
         syncStatus={syncStatus}
         lastSavedAt={lastSavedAt}
         isProjectLoading={isProjectBusy}
+        isSyncingAssets={isSyncingAssets}
+        onSyncAssetsToDrive={handleSyncAssetsToDrive}
+        unuploadedAssetCount={unuploadedAssetCount}
         onAddTextNode={() => {
           if (isProjectBusy) return;
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);

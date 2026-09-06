@@ -39,10 +39,23 @@ export const calculateBlobHash = async (blob: Blob): Promise<string> => {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
+export function isDriveFileId(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  if (id.startsWith('gen_') || id.startsWith('node_') || /^\d{10,18}$/.test(id)) {
+    return false;
+  }
+  return /^[a-zA-Z0-9_-]{18,60}$/.test(id);
+}
+
 // High performance in-memory Blob cache to avoid redundant IndexedDB async queries
 const memoryBlobCache = new Map<string, Blob>();
 
-export const storeImage = async (id: string, blob: Blob, hash?: string): Promise<void> => {
+export const storeImage = async (
+  id: string,
+  blob: Blob,
+  hash?: string,
+  isDriveAsset: boolean = false
+): Promise<void> => {
   memoryBlobCache.set(id, blob);
   const db = await initDB();
   const actualHash = hash || (await calculateBlobHash(blob));
@@ -53,7 +66,13 @@ export const storeImage = async (id: string, blob: Blob, hash?: string): Promise
     const hashStore = transaction.objectStore(HASH_STORE_NAME);
 
     store.put({ id, blob, hash: actualHash });
-    hashStore.put({ hash: actualHash, fileId: id });
+
+    // CRITICAL: Only map hash -> fileId in HASH_STORE_NAME if it is a genuine Google Drive file ID!
+    // Never store temporary local IDs (e.g. timestamp or gen_*),
+    // otherwise uploadAssetToDrive will mistake local IDs for completed Drive uploads and skip uploading!
+    if (isDriveAsset || isDriveFileId(id)) {
+      hashStore.put({ hash: actualHash, fileId: id });
+    }
 
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => {
@@ -63,13 +82,45 @@ export const storeImage = async (id: string, blob: Blob, hash?: string): Promise
   });
 };
 
+export const associateDriveFileId = async (
+  driveFileId: string,
+  hash: string,
+  blob?: Blob
+): Promise<void> => {
+  if (!isDriveFileId(driveFileId)) return;
+  if (blob) {
+    memoryBlobCache.set(driveFileId, blob);
+  }
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME, HASH_STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const hashStore = transaction.objectStore(HASH_STORE_NAME);
+
+    if (blob) {
+      store.put({ id: driveFileId, blob, hash });
+    }
+    hashStore.put({ hash, fileId: driveFileId });
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+  });
+};
+
 export const getFileIdByHash = async (hash: string): Promise<string | null> => {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(HASH_STORE_NAME, 'readonly');
     const store = transaction.objectStore(HASH_STORE_NAME);
     const request = store.get(hash);
-    request.onsuccess = () => resolve(request.result?.fileId || null);
+    request.onsuccess = () => {
+      const fileId = request.result?.fileId || null;
+      if (fileId && isDriveFileId(fileId)) {
+        resolve(fileId);
+      } else {
+        resolve(null);
+      }
+    };
     request.onerror = () => {
       console.error('Error finding image by hash:', request.error);
       resolve(null);
