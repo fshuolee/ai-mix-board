@@ -239,15 +239,25 @@ export async function uploadAssetToDrive(
   blob: Blob,
   fileName: string
 ): Promise<{ fileId: string; name: string; webViewLink?: string; thumbnailLink?: string }> {
-  // Check if identical asset already exists by SHA-256 fingerprint in Drive
   const blobHash = await calculateBlobHash(blob);
   const existingFileId = await getFileIdByHash(blobHash);
   if (existingFileId && isDriveFileId(existingFileId)) {
-    return {
-      fileId: existingFileId,
-      name: fileName,
-      webViewLink: `https://drive.google.com/file/d/${existingFileId}/view`,
-    };
+    try {
+      // Verify the file actually still exists in Drive and hasn't been deleted
+      await driveFetch(`https://www.googleapis.com/drive/v3/files/${existingFileId}?fields=id`, token);
+      return {
+        fileId: existingFileId,
+        name: fileName,
+        webViewLink: `https://drive.google.com/file/d/${existingFileId}/view`,
+      };
+    } catch (err: any) {
+      if (err.status === 404 || (err.message && err.message.toLowerCase().includes('not found'))) {
+        console.warn(`Hash match found for ${existingFileId}, but file is missing from Drive. Proceeding to re-upload.`);
+        // Note: We don't return here, let it fall through and upload a new one!
+      } else {
+        throw err; // Other errors (like 401/403) should still fail the upload
+      }
+    }
   }
 
   const boundary = `-------AIMixBoard${Date.now()}`;
