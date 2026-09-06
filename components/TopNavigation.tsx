@@ -319,35 +319,20 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
               : '本機離線暫存模式'
           }
         >
-          {isSyncingAssets ? (
+          {isSyncingAssets || syncStatus === 'saving' ? (
             <>
               <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
-              <span className="text-emerald-400 text-[11px] font-medium">圖片同步中</span>
+              <span className="text-emerald-400 text-[11px] font-medium">同步中</span>
             </>
           ) : isProjectLoading || syncStatus === 'loading' ? (
             <>
               <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
               <span className="text-blue-300 text-[11px]">讀取中</span>
             </>
-          ) : syncStatus === 'saving' ? (
-            <>
-              <Loader2 className="w-3 h-3 text-amber-400 animate-spin" />
-              <span className="text-amber-300 text-[11px]">同步中</span>
-            </>
           ) : syncStatus === 'saved' ? (
             <>
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  unuploadedAssetCount > 0 ? 'bg-amber-400' : 'bg-emerald-400'
-                }`}
-              />
-              <span
-                className={`text-[11px] ${
-                  unuploadedAssetCount > 0 ? 'text-amber-300' : 'text-gray-300'
-                }`}
-              >
-                {unuploadedAssetCount > 0 ? `${unuploadedAssetCount} 圖待傳` : '已同步'}
-              </span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="text-[11px] text-gray-300">已同步</span>
             </>
           ) : syncStatus === 'error' ? (
             <>
@@ -362,16 +347,11 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           )}
         </div>
 
-        {/* Auto-Syncing indicator is handled in the status dot above. 
-            We removed the manual "Sync X Images" button because users thought they HAD to click it.
-            Syncing is 100% automatic in the background! 
-        */}
-
         {/* Quick Rescue Button if lost assets found */}
         {rescuableAssetCount > 0 && onOpenRescueModal && (
           <button
             onClick={onOpenRescueModal}
-            className="hidden md:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-500/60 text-indigo-300 text-[11px] hover:bg-indigo-900 transition-colors shadow-sm cursor-pointer animate-pulse"
+            className="hidden md:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-500/60 text-indigo-300 text-[11px] hover:bg-indigo-900 transition-colors shadow-sm cursor-pointer"
             title="點擊檢視並救回遺失的圖片資源"
           >
             <ShieldCheck className="w-3 h-3 text-indigo-400" />
@@ -380,8 +360,8 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
         )}
       </div>
 
-      {/* Center Section: Compact Single-Line Model Selector */}
-      <div className="flex items-center">
+      {/* Center Section: Compact Single-Line Model Selector (Rock-solid Centered) */}
+      <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-auto">
         <button
           onClick={onOpenModelModal}
           disabled={isProjectLoading}

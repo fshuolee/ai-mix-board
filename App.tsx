@@ -80,6 +80,7 @@ import {
   LogIn,
   ExternalLink,
   ShieldCheck,
+  X,
 } from 'lucide-react';
 
 const checkOverlap = (
@@ -252,6 +253,7 @@ const App: React.FC = () => {
   const [isRescueModalOpen, setIsRescueModalOpen] = useState(false);
   const [isScanningRescue, setIsScanningRescue] = useState(false);
   const [rescuableAssets, setRescuableAssets] = useState<RescuableAsset[]>([]);
+  const [isRescueBannerDismissed, setIsRescueBannerDismissed] = useState(false);
   const [isSyncingAssets, setIsSyncingAssets] = useState(false);
   const unuploadedAssetCount = useMemo(() => {
     if (isLoadingProjectData) return 0;
@@ -655,13 +657,16 @@ const App: React.FC = () => {
           nodesToSync
         );
 
-        if (syncedCount > 0) {
-          if (project.assetsFolderId !== resolvedAssetsFolderId) {
+        const hasChanges = JSON.stringify(updatedNodes) !== JSON.stringify(nodesToSync);
+        if (hasChanges) {
+          if (resolvedAssetsFolderId && project.assetsFolderId !== resolvedAssetsFolderId) {
             setCurrentProject(prev => (prev ? { ...prev, assetsFolderId: resolvedAssetsFolderId } : prev));
           }
           // Update nodes state and trigger auto-save to Google Sheet
           updateNodesAndSave(() => updatedNodes);
-          showToast(`已成功將 ${syncedCount} 張畫布圖片同步上傳至 Google Drive 專案資料夾！`);
+          if (syncedCount > 0) {
+            showToast(`已成功將 ${syncedCount} 張畫布圖片同步上傳至 Google Drive 專案資料夾！`);
+          }
         }
       } catch (err) {
         console.warn('Background asset sync error:', err);
@@ -3135,8 +3140,8 @@ const App: React.FC = () => {
       />
 
       {/* Proactive Lost Assets Detected Pill/Banner */}
-      {rescuableAssets.length > 0 && !isProjectBusy && !isRescueModalOpen && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-gray-900/95 backdrop-blur-xl border border-amber-500/50 hover:border-amber-400 text-amber-200 text-xs font-medium rounded-2xl shadow-2xl animate-fadeIn transition-all">
+      {rescuableAssets.length > 0 && !isProjectBusy && !isRescueModalOpen && !isRescueBannerDismissed && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-gray-900/95 backdrop-blur-xl border border-amber-500/50 hover:border-amber-400 text-amber-200 text-xs font-medium rounded-2xl shadow-2xl transition-all">
           <div className="p-1 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 shrink-0">
             <ShieldCheck className="w-4 h-4" />
           </div>
@@ -3152,6 +3157,13 @@ const App: React.FC = () => {
             className="ml-1 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap"
           >
             立即救回
+          </button>
+          <button
+            onClick={() => setIsRescueBannerDismissed(true)}
+            className="p-1 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors ml-1"
+            title="關閉提示"
+          >
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
