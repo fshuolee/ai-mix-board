@@ -176,5 +176,35 @@ export const deleteImage = async (id: string): Promise<void> => {
   });
 };
 
+export interface LocalImageRecord {
+  id: string;
+  blob: Blob;
+  hash?: string;
+}
+
+/**
+ * Retrieve all locally stored images from IndexedDB.
+ */
+export const getAllLocalImages = async (): Promise<LocalImageRecord[]> => {
+  const db = await initDB();
+  return new Promise(resolve => {
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const records: LocalImageRecord[] = (request.result || []).map((item: any) => ({
+        id: item.id,
+        blob: item.blob,
+        hash: item.hash,
+      }));
+      resolve(records);
+    };
+    request.onerror = () => {
+      console.error('Error getting all local images:', request.error);
+      resolve([]);
+    };
+  });
+};
+
 // Initialize the database on startup
 initDB().catch(err => console.error("Failed to initialize DB:", err));

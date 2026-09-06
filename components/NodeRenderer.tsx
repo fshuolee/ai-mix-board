@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X } from 'lucide-react';
+import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw } from 'lucide-react';
 import type { CanvasNode, TextNode, ImageNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
@@ -15,6 +15,7 @@ interface NodeRendererProps {
   onDuplicateNode?: (node: CanvasNode) => void;
   onDeleteNode?: (nodeId: string) => void;
   onDownloadNode?: (node: CanvasNode) => void;
+  onRetryNode?: (nodeId: string) => void;
   isMultiSelecting?: boolean;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
   isSpacePressed?: boolean;
@@ -33,6 +34,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDuplicateNode,
   onDeleteNode,
   onDownloadNode,
+  onRetryNode,
   isMultiSelecting,
   onContextMenu,
   isSpacePressed = false,
@@ -284,15 +286,19 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
 
       {/* 2. Error State */}
       {node.status === 'error' && (
-        <div className="w-full h-full relative flex flex-col items-center justify-between p-3.5 overflow-hidden select-none">
-          <div className="w-full flex items-center justify-end z-10">
+        <div className="w-full h-full relative flex flex-col items-center justify-between p-3.5 overflow-hidden select-none bg-red-950/20 border-2 border-red-500/40 rounded-2xl">
+          <div className="w-full flex items-center justify-between z-10">
+            <span className="text-[10px] font-mono text-red-400 font-semibold uppercase tracking-wider flex items-center gap-1">
+              <AlertCircle className="w-3 h-3 text-red-400" />
+              <span>生成失敗</span>
+            </span>
             {onDeleteNode && (
               <button
                 onClick={e => {
                   e.stopPropagation();
                   onDeleteNode(node.id);
                 }}
-                className="p-1 rounded-lg text-gray-400 hover:text-red-400 hover:bg-gray-800/80 transition-colors pointer-events-auto"
+                className="p-1 rounded-lg text-gray-400 hover:text-red-400 hover:bg-gray-800/80 transition-colors pointer-events-auto cursor-pointer"
                 title="清除此錯誤節點"
               >
                 <X className="w-3.5 h-3.5" />
@@ -300,26 +306,49 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             )}
           </div>
 
-          <div className="flex flex-col items-center gap-2 my-auto text-center px-2 z-10">
-            <div className="p-2 rounded-full bg-red-500/10 border border-red-500/30 text-red-400">
-              <AlertCircle className="w-5 h-5" />
+          <div className="flex flex-col items-center gap-2 my-auto text-center px-2 z-10 w-full">
+            <div className="p-2.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 shadow-inner">
+              <AlertCircle className="w-6 h-6" />
             </div>
-            <div className="text-xs font-semibold text-red-400">生成失敗</div>
-            <p className="text-[10px] text-gray-400 line-clamp-3 max-w-[200px] leading-relaxed">
+            {node.generationPrompt && (
+              <div
+                className="text-[11px] text-gray-300 line-clamp-2 max-w-[220px] bg-gray-900/80 px-2.5 py-1 rounded-lg border border-gray-700/60 font-sans"
+                title={node.generationPrompt}
+              >
+                "{node.generationPrompt}"
+              </div>
+            )}
+            <p
+              className="text-[10px] text-red-300/90 line-clamp-3 max-w-[220px] leading-relaxed break-words font-mono"
+              title={node.errorMessage}
+            >
               {node.errorMessage || '請檢查網路連線或 API Key 設定。'}
             </p>
           </div>
 
-          <div className="w-full flex justify-center z-10">
+          <div className="w-full flex items-center justify-center gap-2 z-10">
+            {onRetryNode && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  onRetryNode(node.id);
+                }}
+                className="px-3.5 py-1.5 text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer pointer-events-auto"
+                title="重新發送此節點的生成任務"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>重試生成</span>
+              </button>
+            )}
             {onDeleteNode && (
               <button
                 onClick={e => {
                   e.stopPropagation();
                   onDeleteNode(node.id);
                 }}
-                className="px-2.5 py-1 text-[10px] bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-700 transition-colors pointer-events-auto"
+                className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-gray-200 bg-gray-800/90 hover:bg-gray-700/90 rounded-xl border border-gray-700/80 transition-colors pointer-events-auto cursor-pointer"
               >
-                移除節點
+                移除
               </button>
             )}
           </div>

@@ -50,6 +50,7 @@ import BoardTabs from './components/BoardTabs';
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
+import AssetRescueModal from './components/AssetRescueModal';
 import ContextMenu from './components/ContextMenu';
 import MultiSelectionBar from './components/MultiSelectionBar';
 import {
@@ -62,6 +63,11 @@ import {
 } from './services/nodeSizingService';
 import { copyNodesToClipboard } from './services/clipboardService';
 import {
+  RescuableAsset,
+  scanForLostAssets,
+  restoreAssetsToCanvas,
+} from './services/assetRescueService';
+import {
   Sparkles,
   Loader2,
   UploadCloud,
@@ -72,6 +78,7 @@ import {
   RotateCw,
   LogIn,
   ExternalLink,
+  ShieldCheck,
 } from 'lucide-react';
 
 const checkOverlap = (
@@ -238,6 +245,9 @@ const App: React.FC = () => {
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isRescueModalOpen, setIsRescueModalOpen] = useState(false);
+  const [isScanningRescue, setIsScanningRescue] = useState(false);
+  const [rescuableAssets, setRescuableAssets] = useState<RescuableAsset[]>([]);
   const [isSyncingAssets, setIsSyncingAssets] = useState(false);
   const unuploadedAssetCount = useMemo(() => {
     return allNodes.filter(
@@ -1650,6 +1660,8 @@ const App: React.FC = () => {
       status: 'generating',
       generationPrompt: promptSnippet,
       generationModel: modelInfo?.name || capturedModelId,
+      generationModelId: capturedModelId,
+      generationSourceIds: capturedSelectedNodes.map(n => n.id),
       createdAt: Date.now(),
     };
 
@@ -1761,6 +1773,10 @@ const App: React.FC = () => {
               ...node,
               status: 'error',
               errorMessage: errorMsg,
+              generationPrompt: (node as ImageNode).generationPrompt || promptSnippet,
+              generationModel: (node as ImageNode).generationModel || (modelInfo?.name || capturedModelId),
+              generationModelId: (node as ImageNode).generationModelId || capturedModelId,
+              generationSourceIds: (node as ImageNode).generationSourceIds || capturedSelectedNodes.map(n => n.id),
               updatedAt: Date.now(),
             };
           });
@@ -1779,6 +1795,188 @@ const App: React.FC = () => {
     getCanvasCoords,
     updateNodesAndSave,
   ]);
+
+  // Retry a failed generation node
+  const handleRetryNode = useCallback(
+    async (nodeId: string) => {
+      const targetNode = allNodesRef.current.find(n => n.id === nodeId);
+      if (!targetNode || targetNode.status !== 'error') return;
+
+      setError(null);
+
+      // 1. Identify model to use
+      const targetModelId = targetNode.generationModelId || selectedModelId;
+      const modelInfo = getModelById(targetModelId);
+
+      // 2. Identify source nodes
+      const sourceIds = new Set(targetNode.generationSourceIds || []);
+      let sourceNodes = allNodesRef.current.filter(n => sourceIds.has(n.id));
+
+      // If source nodes no longer exist, use the saved prompt snippet as fallback text input
+      if (sourceNodes.length === 0 && targetNode.generationPrompt) {
+        const syntheticPromptNode: TextNode = {
+          id: `prompt_${nodeId}`,
+          type: 'text',
+          x: targetNode.x,
+          y: targetNode.y,
+          width: 200,
+          height: 50,
+          rotation: 0,
+          content: targetNode.generationPrompt,
+          boardId: targetNode.boardId,
+          createdAt: Date.now(),
+        };
+        sourceNodes = [syntheticPromptNode];
+      }
+
+      if (sourceNodes.length === 0) {
+        showToast('找不到此節點當初生成時的輸入內容或提示詞，無法重試');
+        return;
+      }
+
+      // 3. Mark node as generating & clear error
+      updateNodesAndSave(prev =>
+        prev.map(n => {
+          if (n.id !== nodeId) return n;
+          return {
+            ...n,
+            status: 'generating',
+            errorMessage: undefined,
+            generationModel: modelInfo?.name || targetModelId,
+            generationModelId: targetModelId,
+            updatedAt: Date.now(),
+          };
+        })
+      );
+
+      setActiveJobCount(c => c + 1);
+      showToast('已開始重試生成節點...');
+
+      // 4. Run async generation
+      (async () => {
+        const token = getAccessToken();
+        const defaultSize = getDefaultNodeSize();
+
+        try {
+          const result = await generateFromNodes(sourceNodes, targetModelId);
+
+          if (result.type === 'image') {
+            const newImageBlob = result.blob;
+            await storeImage(nodeId, newImageBlob);
+
+            let driveFileId = nodeId;
+            let driveViewLink: string | undefined;
+
+            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+            const targetProj = currentProjectRef.current || currentProject;
+            const projFolderId =
+              targetProj?.folderId ||
+              (activeToken && targetProj?.spreadsheetId
+                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                : null);
+
+            if (activeToken && projFolderId) {
+              try {
+                const assetsFolderId =
+                  targetProj?.assetsFolderId ||
+                  (await ensureAssetsFolder(activeToken, projFolderId));
+                const uploaded = await uploadAssetToDrive(
+                  activeToken,
+                  assetsFolderId,
+                  newImageBlob,
+                  `gemini_gen_${nodeId}.png`
+                );
+                driveFileId = uploaded.fileId;
+                driveViewLink = uploaded.webViewLink;
+
+                if (driveFileId !== nodeId) {
+                  await storeImage(driveFileId, newImageBlob, undefined, true);
+                }
+              } catch (uploadErr) {
+                console.warn('Drive upload failed for retried image:', uploadErr);
+              }
+            }
+
+            const objectUrl = URL.createObjectURL(newImageBlob);
+            nodeObjectUrlCache.set(driveFileId, objectUrl);
+            nodeObjectUrlCache.set(nodeId, objectUrl);
+
+            const base64 = await blobToBase64(newImageBlob);
+            const img = new Image();
+            img.onload = () => {
+              const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+              updateNodesAndSave(prev => {
+                const exists = prev.some(n => n.id === nodeId);
+                if (!exists) return prev;
+                return prev.map(node => {
+                  if (node.id !== nodeId) return node;
+                  return {
+                    ...node,
+                    width: fitted.width,
+                    height: fitted.height,
+                    content: driveFileId,
+                    driveFileId,
+                    originalFileName: `generated_${nodeId}.png`,
+                    driveViewLink,
+                    status: 'idle',
+                    errorMessage: undefined,
+                    updatedAt: Date.now(),
+                  };
+                });
+              });
+              showToast('節點重試生成成功！');
+            };
+            img.src = base64;
+          } else {
+            // Text output
+            updateNodesAndSave(prev => {
+              const exists = prev.some(n => n.id === nodeId);
+              if (!exists) return prev;
+              return prev.map(node => {
+                if (node.id !== nodeId) return node;
+                return {
+                  ...node,
+                  type: 'text',
+                  content: result.text,
+                  status: 'idle',
+                  errorMessage: undefined,
+                  updatedAt: Date.now(),
+                };
+              });
+            });
+            showToast('節點重試生成成功！');
+          }
+        } catch (err: any) {
+          console.error('Retry generation error for node:', nodeId, err);
+          const errorMsg = err.message || '重試失敗，請檢查 API Key 或網路設定。';
+          updateNodesAndSave(prev => {
+            const exists = prev.some(n => n.id === nodeId);
+            if (!exists) return prev;
+            return prev.map(node => {
+              if (node.id !== nodeId) return node;
+              return {
+                ...node,
+                status: 'error',
+                errorMessage: errorMsg,
+                updatedAt: Date.now(),
+              };
+            });
+          });
+          showToast('重試生成失敗：' + (err.message || '未知錯誤'));
+        } finally {
+          setActiveJobCount(c => Math.max(0, c - 1));
+        }
+      })();
+    },
+    [selectedModelId, currentProject, updateNodesAndSave, showToast]
+  );
+
+  // Retry all selected nodes that are in error state
+  const handleRetrySelectedErrorNodes = useCallback(() => {
+    const errorNodes = currentBoardNodes.filter(n => selectedNodeIds.has(n.id) && n.status === 'error');
+    if (errorNodes.length === 0) return;
+    errorNodes.forEach(n => handleRetryNode(n.id));
+  }, [currentBoardNodes, selectedNodeIds, handleRetryNode]);
 
   const fitToView = useCallback((targetNodes?: CanvasNode[]) => {
     const nodesToFit = targetNodes && targetNodes.length > 0
@@ -1850,6 +2048,7 @@ const App: React.FC = () => {
         isModelModalOpen ||
         isProjectModalOpen ||
         isAuthModalOpen ||
+        isRescueModalOpen ||
         Boolean(orphanAssetModal?.isOpen);
 
       // Space key for panning cursor - completely enter pan mode
@@ -1984,7 +2183,7 @@ const App: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, orphanAssetModal]);
+  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, orphanAssetModal]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -2204,6 +2403,82 @@ const App: React.FC = () => {
     }
   }, [currentBoardNodes, showToast]);
 
+  // Scan for lost/unreferenced assets from Local IndexedDB and Google Drive
+  const handleScanLostAssets = useCallback(
+    async (silent: boolean = false) => {
+      const activeToken = (await getValidAccessToken()) || getAccessToken();
+      const proj = currentProjectRef.current;
+      setIsScanningRescue(true);
+
+      try {
+        const discovered = await scanForLostAssets(
+          allNodesRef.current,
+          activeToken,
+          proj?.folderId,
+          proj?.spreadsheetId,
+          proj?.assetsFolderId
+        );
+        setRescuableAssets(discovered);
+
+        if (!silent) {
+          setIsRescueModalOpen(true);
+          if (discovered.length === 0) {
+            showToast('未發現任何遺失或未使用的圖片資源');
+          }
+        }
+      } catch (err: any) {
+        console.warn('Scan lost assets failed:', err);
+        if (!silent) {
+          showToast('掃描遺失資源時發生錯誤');
+        }
+      } finally {
+        setIsScanningRescue(false);
+      }
+    },
+    [showToast]
+  );
+
+  // Restore selected rescued assets onto canvas
+  const handleRestoreRescuedAssets = useCallback(
+    async (selectedAssets: RescuableAsset[]) => {
+      if (selectedAssets.length === 0) return;
+      const activeToken = (await getValidAccessToken()) || getAccessToken();
+      const proj = currentProjectRef.current;
+      const boardId = currentBoardIdRef.current;
+
+      const canvasCenter = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+
+      const { restoredNodes } = await restoreAssetsToCanvas(
+        selectedAssets,
+        currentBoardNodes,
+        boardId,
+        canvasCenter,
+        activeToken,
+        proj?.folderId,
+        proj?.assetsFolderId
+      );
+
+      if (restoredNodes.length > 0) {
+        updateNodesAndSave(prev => [...prev, ...restoredNodes]);
+        setSelectedNodeIds(new Set(restoredNodes.map(n => n.id)));
+        const restoredSourceIds = new Set(selectedAssets.map(a => a.id));
+        setRescuableAssets(prev => prev.filter(a => !restoredSourceIds.has(a.id)));
+        setIsRescueModalOpen(false);
+        showToast(`已成功救回 ${restoredNodes.length} 個圖片節點至畫布！`);
+      }
+    },
+    [currentBoardNodes, getCanvasCoords, updateNodesAndSave, showToast]
+  );
+
+  // Proactive lost asset check: scan in background for any unreferenced assets
+  useEffect(() => {
+    if (isLoadingProjectData) return;
+    const timer = setTimeout(() => {
+      handleScanLostAssets(true);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets]);
+
   return (
     <div className="w-screen h-screen relative select-none overflow-hidden bg-gray-950 font-sans text-gray-100">
       {/* Top Navigation Bar */}
@@ -2222,6 +2497,8 @@ const App: React.FC = () => {
         isSyncingAssets={isSyncingAssets}
         onSyncAssetsToDrive={handleSyncAssetsToDrive}
         unuploadedAssetCount={unuploadedAssetCount}
+        onOpenRescueModal={() => handleScanLostAssets(false)}
+        rescuableAssetCount={rescuableAssets.length}
         onAddTextNode={() => {
           if (isProjectBusy) return;
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
@@ -2441,6 +2718,7 @@ const App: React.FC = () => {
               onDuplicateNode={handleDuplicateNode}
               onDeleteNode={handleDeleteNode}
               onDownloadNode={handleDownloadSingleNode}
+              onRetryNode={handleRetryNode}
               onContextMenu={handleNodeContextMenu}
             />
           ))}
@@ -2590,6 +2868,7 @@ const App: React.FC = () => {
           onDeselectAll={() => setSelectedNodeIds(new Set())}
           onGenerate={handleExecute}
           onDownloadSelected={handleDownloadSelectedNodes}
+          onRetrySelectedErrors={handleRetrySelectedErrorNodes}
         />
       </div>
 
@@ -2638,6 +2917,8 @@ const App: React.FC = () => {
         onDownloadNode={handleDownloadSelectedNodes}
         onExportBoardImage={handleExportBoardImage}
         onDownloadAllBoardImages={handleDownloadAllBoardImages}
+        onRescueAssets={() => handleScanLostAssets(false)}
+        onRetryNode={handleRetrySelectedErrorNodes}
       />
 
       {/* Floating Toast Notification Banner */}
@@ -2703,6 +2984,38 @@ const App: React.FC = () => {
             loadProjects();
           }
         }}
+      />
+
+      {/* Proactive Lost Assets Detected Pill/Banner */}
+      {rescuableAssets.length > 0 && !isProjectBusy && !isRescueModalOpen && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-gray-900/95 backdrop-blur-xl border border-amber-500/50 hover:border-amber-400 text-amber-200 text-xs font-medium rounded-2xl shadow-2xl animate-fadeIn transition-all">
+          <div className="p-1 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 shrink-0">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-white">
+              {currentBoardNodes.length === 0
+                ? `畫布為空，但發現 ${rescuableAssets.length} 個可救回的圖片資源`
+                : `發現 ${rescuableAssets.length} 個未放置的專案圖片`}
+            </span>
+          </div>
+          <button
+            onClick={() => setIsRescueModalOpen(true)}
+            className="ml-1 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+          >
+            立即救回
+          </button>
+        </div>
+      )}
+
+      {/* Asset Rescue Modal */}
+      <AssetRescueModal
+        isOpen={isRescueModalOpen}
+        onClose={() => setIsRescueModalOpen(false)}
+        assets={rescuableAssets}
+        onRestore={handleRestoreRescuedAssets}
+        isLoading={isScanningRescue}
+        onRescan={() => handleScanLostAssets(false)}
       />
     </div>
   );

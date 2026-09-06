@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   ExternalLink,
   Download,
+  ShieldCheck,
 } from 'lucide-react';
 import { ProjectMetadata, GoogleUserProfile, SyncStatus } from '../types';
 import { getModelById } from '../services/modelsConfig';
@@ -47,6 +48,8 @@ interface TopNavigationProps {
   isSyncingAssets?: boolean;
   onSyncAssetsToDrive?: () => void;
   unuploadedAssetCount?: number;
+  onOpenRescueModal?: () => void;
+  rescuableAssetCount?: number;
 }
 
 const TopNavigation: React.FC<TopNavigationProps> = ({
@@ -64,6 +67,8 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   isSyncingAssets = false,
   onSyncAssetsToDrive,
   unuploadedAssetCount = 0,
+  onOpenRescueModal,
+  rescuableAssetCount = 0,
   onAddTextNode,
   onUploadImage,
   onResetZoom,
@@ -238,6 +243,30 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                 </div>
               )}
 
+              {/* Rescue lost assets button */}
+              {onOpenRescueModal && (
+                <div className="p-2 border-t border-gray-800 bg-gray-950/40">
+                  <button
+                    onClick={() => {
+                      setProjectDropdownOpen(false);
+                      onOpenRescueModal();
+                    }}
+                    className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-700/50 text-indigo-300 text-xs font-medium transition-colors cursor-pointer"
+                    title="掃描本機 IndexedDB 快取與 Google Drive 專案資料夾，救回遺失或未呈現在畫布上的圖片"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>救回遺失圖片資源</span>
+                    </div>
+                    {rescuableAssetCount > 0 ? (
+                      <span className="px-1.5 py-0.2 rounded-full bg-indigo-600 text-white text-[10px] font-bold">
+                        {rescuableAssetCount}
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              )}
+
               {/* Sync images button */}
               {user && onSyncAssetsToDrive && (
                 <div className="p-2 border-t border-gray-800 bg-gray-950/60">
@@ -342,6 +371,18 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           >
             <HardDrive className="w-3 h-3" />
             <span>同步 {unuploadedAssetCount} 圖</span>
+          </button>
+        )}
+
+        {/* Quick Rescue Button if lost assets found */}
+        {rescuableAssetCount > 0 && onOpenRescueModal && (
+          <button
+            onClick={onOpenRescueModal}
+            className="hidden md:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-500/60 text-indigo-300 text-[11px] hover:bg-indigo-900 transition-colors shadow-sm cursor-pointer animate-pulse"
+            title="點擊檢視並救回遺失的圖片資源"
+          >
+            <ShieldCheck className="w-3 h-3 text-indigo-400" />
+            <span>救回 {rescuableAssetCount} 圖</span>
           </button>
         )}
       </div>

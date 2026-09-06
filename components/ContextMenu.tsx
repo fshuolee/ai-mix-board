@@ -20,6 +20,8 @@ import {
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
   Download,
+  ShieldCheck,
+  RotateCw,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -49,6 +51,8 @@ export interface ContextMenuProps {
   onDownloadNode?: () => void;
   onExportBoardImage?: () => void;
   onDownloadAllBoardImages?: () => void;
+  onRescueAssets?: () => void;
+  onRetryNode?: () => void;
 }
 
 const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -76,6 +80,8 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onDownloadNode,
   onExportBoardImage,
   onDownloadAllBoardImages,
+  onRescueAssets,
+  onRetryNode,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const defaultSize = getDefaultNodeSize();
@@ -339,6 +345,24 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               <span className="text-[10px] text-amber-400 font-mono">Shift+Enter</span>
             </button>
 
+            {selectedNodes.some(n => n.status === 'error') && onRetryNode && (
+              <button
+                onClick={() => {
+                  onRetryNode();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-white transition-colors text-left font-medium"
+              >
+                <div className="flex items-center gap-2">
+                  <RotateCw className="w-4 h-4 text-blue-400" />
+                  <span>重試失敗節點</span>
+                </div>
+                <span className="text-[10px] text-blue-400 font-mono">
+                  {selectedNodes.filter(n => n.status === 'error').length} 個失敗
+                </span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 onDelete();
@@ -478,7 +502,22 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <div className="h-px bg-gray-800/80 my-1" />
 
-          <div className="py-1">
+          <div className="py-1 space-y-0.5">
+            {onRescueAssets && (
+              <button
+                onClick={() => {
+                  onRescueAssets();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-indigo-600/20 hover:text-indigo-300 transition-colors text-left text-indigo-300"
+              >
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                  <span>救回遺失圖片資源</span>
+                </div>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 onClearCanvas();

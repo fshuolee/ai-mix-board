@@ -481,3 +481,69 @@ export async function deleteProject(token: string, folderId: string): Promise<vo
     body: JSON.stringify({ trashed: true }),
   });
 }
+
+export interface DriveAssetRecord {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink?: string;
+  thumbnailLink?: string;
+  createdTime?: string;
+  size?: number;
+}
+
+/**
+ * List all image files residing in the project folder and assets folder in Google Drive.
+ */
+export async function listAllDriveProjectAssets(
+  token: string,
+  projectFolderId?: string,
+  assetsFolderId?: string
+): Promise<DriveAssetRecord[]> {
+  const assetRecords: DriveAssetRecord[] = [];
+  const seenIds = new Set<string>();
+
+  const folderIdsToScan: string[] = [];
+  if (assetsFolderId) folderIdsToScan.push(assetsFolderId);
+  if (projectFolderId && !assetsFolderId) {
+    try {
+      const resolved = await ensureAssetsFolder(token, projectFolderId);
+      if (resolved) folderIdsToScan.push(resolved);
+    } catch {}
+    folderIdsToScan.push(projectFolderId);
+  } else if (projectFolderId && !folderIdsToScan.includes(projectFolderId)) {
+    folderIdsToScan.push(projectFolderId);
+  }
+
+  for (const fId of folderIdsToScan) {
+    try {
+      const query = `'${fId}' in parents and mimeType contains 'image/' and trashed = false`;
+      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+        query
+      )}&fields=files(id, name, mimeType, webViewLink, thumbnailLink, createdTime, size)&pageSize=100`;
+
+      const res = await driveFetch(url, token);
+      const data = await res.json();
+      const files: any[] = data.files || [];
+
+      for (const f of files) {
+        if (!seenIds.has(f.id)) {
+          seenIds.add(f.id);
+          assetRecords.push({
+            id: f.id,
+            name: f.name || `image_${f.id.slice(0, 6)}`,
+            mimeType: f.mimeType || 'image/png',
+            webViewLink: f.webViewLink,
+            thumbnailLink: f.thumbnailLink,
+            createdTime: f.createdTime,
+            size: f.size ? parseInt(f.size, 10) : undefined,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(`Error scanning folder ${fId} for assets:`, e);
+    }
+  }
+
+  return assetRecords;
+}

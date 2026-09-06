@@ -14,6 +14,8 @@ export interface BaseNode {
   errorMessage?: string;
   generationPrompt?: string;
   generationModel?: string;
+  generationModelId?: string;
+  generationSourceIds?: string[];
 }
 
 export interface TextNode extends BaseNode {

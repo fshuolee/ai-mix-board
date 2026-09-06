@@ -13,6 +13,7 @@ import {
   Layers,
   ClipboardCopy,
   Download,
+  RotateCw,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -29,6 +30,7 @@ export interface MultiSelectionBarProps {
   onDeselectAll: () => void;
   onGenerate?: () => void;
   onDownloadSelected?: () => void;
+  onRetrySelectedErrors?: () => void;
 }
 
 const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
@@ -42,6 +44,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   onDelete,
   onDeselectAll,
   onDownloadSelected,
+  onRetrySelectedErrors,
 }) => {
   const [showArrangeMenu, setShowArrangeMenu] = useState(false);
   const defaultSize = getDefaultNodeSize();
@@ -62,6 +65,18 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         <span className="font-mono font-semibold">{count}</span>
         <span className="text-blue-300/80 text-[11px]">選取</span>
       </div>
+
+      {/* Retry Failed Nodes CTA */}
+      {selectedNodes.some(n => n.status === 'error') && onRetrySelectedErrors && (
+        <button
+          onClick={onRetrySelectedErrors}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+          title="重試選取項目中所有失敗的生成任務"
+        >
+          <RotateCw className="w-3.5 h-3.5" />
+          <span>重試失敗 ({selectedNodes.filter(n => n.status === 'error').length})</span>
+        </button>
+      )}
 
       <div className="w-px h-5 bg-gray-800 mx-0.5" />
 
