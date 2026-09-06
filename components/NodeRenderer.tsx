@@ -604,6 +604,7 @@ export default React.memo(NodeRenderer, (prevProps, nextProps) => {
   return (
     isNodeEqual &&
     prevProps.isSelected === nextProps.isSelected &&
+    prevProps.isCut === nextProps.isCut &&
     prevProps.isDeleting === nextProps.isDeleting &&
     prevProps.isMultiSelecting === nextProps.isMultiSelecting &&
     prevProps.isSpacePressed === nextProps.isSpacePressed &&
