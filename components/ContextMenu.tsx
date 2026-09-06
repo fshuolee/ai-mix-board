@@ -22,6 +22,7 @@ import {
   Download,
   ShieldCheck,
   RotateCw,
+  Scissors,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -36,6 +37,7 @@ export interface ContextMenuProps {
   onResetAspect: () => void;
   onApplyDefaultSize: () => void;
   onSaveAsDefaultSize: () => void;
+  onCut?: () => void;
   onCopyToClipboard: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -65,6 +67,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onResetAspect,
   onApplyDefaultSize,
   onSaveAsDefaultSize,
+  onCut,
   onCopyToClipboard,
   onDuplicate,
   onDelete,
@@ -294,6 +297,22 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                   </span>
                 </div>
                 <span className="text-[10px] text-emerald-400/80 font-mono">Download</span>
+              </button>
+            )}
+
+            {onCut && (
+              <button
+                onClick={() => {
+                  onCut();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-blue-600/20 hover:text-blue-300 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <Scissors className="w-4 h-4 text-blue-400" />
+                  <span>剪下物件</span>
+                </div>
+                <span className="text-[10px] text-gray-400 font-mono">Cmd+X</span>
               </button>
             )}
 

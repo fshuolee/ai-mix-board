@@ -3095,6 +3095,7 @@ const App: React.FC = () => {
         onResetAspect={handleResetAspect}
         onApplyDefaultSize={handleApplyDefaultSize}
         onSaveAsDefaultSize={handleSaveAsDefaultSize}
+        onCut={handleCut}
         onCopyToClipboard={handleCopy}
         onDuplicate={handleDuplicateSelected}
         onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
