@@ -339,7 +339,29 @@ export async function getAssetBlobFromDrive(token: string, fileId: string): Prom
     return blob;
   } catch (err: any) {
     if (err.status === 404 || (err.message && err.message.toLowerCase().includes('not found'))) {
-      console.warn(`Asset ${fileId} not found in Drive (404). It may have been deleted or not synced yet.`);
+      console.warn(`Asset ${fileId} not found in Drive (404). Attempting fallback to Drive快取檔案...`);
+      try {
+        const shortId = fileId.slice(0, 8);
+        const q = `name contains 'Drive快取檔案 (${shortId}' and trashed = false`;
+        const searchRes = await driveFetch(
+          `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=1`,
+          token
+        );
+        const searchData = await searchRes.json();
+        if (searchData.files && searchData.files.length > 0) {
+          const fallbackId = searchData.files[0].id;
+          const fallbackRes = await driveFetch(
+            `https://www.googleapis.com/drive/v3/files/${fallbackId}?alt=media`,
+            token
+          );
+          const blob = await fallbackRes.blob();
+          await storeImage(fileId, blob, undefined, true);
+          await storeImage(fallbackId, blob, undefined, true);
+          return blob;
+        }
+      } catch (fallbackErr) {
+        console.warn('Fallback search failed for asset:', fileId, fallbackErr);
+      }
     } else {
       console.error(`Failed to download asset ${fileId} from Drive:`, err);
     }

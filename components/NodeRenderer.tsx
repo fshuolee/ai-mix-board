@@ -404,8 +404,37 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               draggable={false}
             />
           ) : (
-            <div className="text-gray-500 text-xs text-center p-2">
-              無法載入圖像資源
+            <div className="text-gray-500 text-xs text-center p-3 flex flex-col items-center justify-center gap-2">
+              <span className="font-medium text-gray-400">無法載入圖像資源</span>
+              {imageNode?.originalFileName && (
+                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[180px]" title={imageNode.originalFileName}>
+                  {imageNode.originalFileName}
+                </span>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (targetFileId) nodeObjectUrlCache.delete(targetFileId);
+                  setIsLoadingImage(true);
+                  const token = getAccessToken();
+                  if (token && imageNode?.driveFileId) {
+                    getAssetBlobFromDrive(token, imageNode.driveFileId)
+                      .then((b) => {
+                        if (b) {
+                          const url = URL.createObjectURL(b);
+                          nodeObjectUrlCache.set(targetFileId, url);
+                          setImageUrl(url);
+                        }
+                      })
+                      .finally(() => setIsLoadingImage(false));
+                  } else {
+                    setIsLoadingImage(false);
+                  }
+                }}
+                className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-[11px] text-gray-300 transition-colors border border-gray-700"
+              >
+                重試載入
+              </button>
             </div>
           )}
 
