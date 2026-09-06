@@ -36,13 +36,30 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
 
   const isImage = node.type === 'image';
   const imageNode = isImage ? (node as ImageNode) : null;
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   const handleCopy = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => {
-      setCopiedKey(null);
-    }, 2000);
+    try {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          setCopiedKey(key);
+          setTimeout(() => {
+            setCopiedKey(null);
+          }, 2000);
+        }).catch(() => {});
+      }
+    } catch {}
   };
 
   const formatDate = (timestamp?: number) => {

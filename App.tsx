@@ -2371,11 +2371,22 @@ const App: React.FC = () => {
         setSelectedNodeIds(new Set(currentBoardNodes.map(n => n.id)));
       }
 
-      // Escape to Deselect All & Close Context Menu & Cancel Cut
+      // Escape to Close Modals / Context Menu / Deselect All & Cancel Cut
       if (e.key === 'Escape') {
+        if (infoModalNode) {
+          setInfoModalNode(null);
+          return;
+        }
+        if (orphanAssetModal?.isOpen) {
+          orphanAssetModal.onKeepInDrive();
+          return;
+        }
+        if (contextMenu.isOpen) {
+          setContextMenu(prev => ({ ...prev, isOpen: false }));
+          return;
+        }
         setSelectedNodeIds(new Set());
         setCutNodeIds(new Set());
-        setContextMenu(prev => ({ ...prev, isOpen: false }));
       }
 
       // Auto Arrange (Alt+G)

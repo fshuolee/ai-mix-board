@@ -215,7 +215,7 @@ async function initializeSheetHeaders(
             values: boardRows,
           },
           {
-            range: 'Nodes!A1:M1',
+            range: 'Nodes!A1:S1',
             values: [nodeHeaders],
           },
           {
@@ -253,11 +253,16 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
   if (verifiedSpreadsheets.has(spreadsheetId)) return;
   try {
     const metaRes = await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(title))`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title,gridProperties))`,
       token
     );
     const meta = await metaRes.json();
-    const sheetTitles: string[] = (meta.sheets || []).map((s: any) => s.properties?.title || '');
+    const sheetsList: Array<{ sheetId: number; title: string; columnCount?: number }> = (meta.sheets || []).map((s: any) => ({
+      sheetId: s.properties?.sheetId,
+      title: s.properties?.title || '',
+      columnCount: s.properties?.gridProperties?.columnCount,
+    }));
+    const sheetTitles = sheetsList.map(s => s.title);
 
     const requests: any[] = [];
     if (!sheetTitles.includes('Boards')) {
@@ -279,6 +284,20 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
           },
         },
       });
+    } else {
+      // If Nodes sheet exists but has fewer than 20 columns, auto-expand to accommodate columns N-S
+      const nodesSheet = sheetsList.find(s => s.title === 'Nodes');
+      if (nodesSheet && typeof nodesSheet.columnCount === 'number' && nodesSheet.columnCount < 20) {
+        requests.push({
+          updateSheetProperties: {
+            properties: {
+              sheetId: nodesSheet.sheetId,
+              gridProperties: { columnCount: 20 },
+            },
+            fields: 'gridProperties.columnCount',
+          },
+        });
+      }
     }
     if (!sheetTitles.includes('Viewport')) {
       requests.push({

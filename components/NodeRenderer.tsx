@@ -100,6 +100,9 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           if (blob) {
             const url = URL.createObjectURL(blob);
             nodeObjectUrlCache.set(targetFileId, url);
+            if (imageNode.driveFileId && imageNode.driveFileId !== targetFileId) {
+              nodeObjectUrlCache.set(imageNode.driveFileId, url);
+            }
             setImageUrl(url);
           } else {
             setImageUrl(null);
@@ -595,6 +598,9 @@ export default React.memo(NodeRenderer, (prevProps, nextProps) => {
     prevProps.node.height === nextProps.node.height &&
     prevProps.node.content === nextProps.node.content &&
     prevProps.node.status === nextProps.node.status &&
+    prevProps.node.errorMessage === nextProps.node.errorMessage &&
+    (prevProps.node as ImageNode).driveFileId === (nextProps.node as ImageNode).driveFileId &&
+    (prevProps.node as ImageNode).originalFileName === (nextProps.node as ImageNode).originalFileName &&
     // Check if x/y changed by something OTHER than dragging (e.g. alignment or undo)
     // If we're dragging, the App component isn't passing down new x/y until pointerUp.
     // However, if the props.x/y differ, we still should render if it's a significant change.
