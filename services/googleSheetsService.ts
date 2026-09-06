@@ -1,5 +1,6 @@
 import { BoardMetadata, CanvasNode, ImageNode, TextNode, ViewportState } from '../types';
 import { refreshGoogleToken } from './googleAuthService';
+import { isDriveFileId } from './dbService';
 
 async function sheetsFetch(
   url: string,
@@ -634,7 +635,15 @@ export async function loadGraphFromSheet(
       const nodeBoardId = boardIdCol ? String(boardIdCol) : defaultBoardId;
 
       if (type === 'image') {
-        const fileId = driveFileId || content || id;
+        const rawDriveId = driveFileId ? String(driveFileId) : undefined;
+        const rawContent = content ? String(content) : undefined;
+        const validDriveId =
+          rawDriveId && isDriveFileId(rawDriveId) && rawDriveId !== String(id)
+            ? rawDriveId
+            : rawContent && isDriveFileId(rawContent) && rawContent !== String(id)
+            ? rawContent
+            : undefined;
+
         const imageNode: ImageNode = {
           id: String(id),
           type: 'image',
@@ -644,10 +653,10 @@ export async function loadGraphFromSheet(
           height,
           rotation,
           boardId: nodeBoardId,
-          content: fileId,
-          driveFileId: fileId,
+          content: validDriveId || rawContent || String(id),
+          driveFileId: validDriveId,
           originalFileName: origFileName || undefined,
-          driveViewLink: fileId ? `https://drive.google.com/file/d/${fileId}/view` : undefined,
+          driveViewLink: validDriveId ? `https://drive.google.com/file/d/${validDriveId}/view` : undefined,
           createdAt: Number(createdAtStr) || undefined,
         };
         nodes.push(imageNode);

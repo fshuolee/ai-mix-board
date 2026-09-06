@@ -41,10 +41,15 @@ export const calculateBlobHash = async (blob: Blob): Promise<string> => {
 
 export function isDriveFileId(id?: string | null): boolean {
   if (!id || typeof id !== 'string') return false;
-  if (id.startsWith('gen_') || id.startsWith('node_') || /^\d{10,18}$/.test(id)) {
+  if (id.startsWith('gen_') || id.startsWith('node_') || /^\d{10,18}/.test(id)) {
     return false;
   }
-  return /^[a-zA-Z0-9_-]{18,60}$/.test(id);
+  // Standard nanoid generated in this app is 21 chars (e.g. VCDXFquWTHtUGd_8EEVCA).
+  // Real Google Drive file IDs are 28 to 44 base64 characters.
+  if (id.length === 21 || id.length < 25) {
+    return false;
+  }
+  return /^[a-zA-Z0-9_-]{25,60}$/.test(id);
 }
 
 // High performance in-memory Blob cache to avoid redundant IndexedDB async queries

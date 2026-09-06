@@ -37,6 +37,7 @@ import {
   ensureAssetsFolder,
   getFileParentFolderId,
   syncUnuploadedImageNodes,
+  healProjectImageNodes,
 } from './services/googleDriveService';
 import {
   saveGraphToSheet,
@@ -525,6 +526,20 @@ const App: React.FC = () => {
             isInitialLoadRef.current = false;
           }
         }, 300);
+
+        // Non-destructively auto-heal any unlinked image nodes from Drive
+        healProjectImageNodes(
+          token,
+          currentProject.folderId,
+          currentProject.spreadsheetId,
+          currentProject.assetsFolderId,
+          loadedData.nodes
+        ).then(({ healedNodes, healedCount }) => {
+          if (isMounted && healedCount > 0) {
+            setAllNodes(healedNodes);
+            allNodesRef.current = healedNodes;
+          }
+        }).catch(err => console.warn('Auto-healing nodes non-destructively failed:', err));
       })
       .catch(err => {
         if (!isMounted) return;

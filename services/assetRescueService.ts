@@ -68,6 +68,11 @@ export async function scanForLostAssets(
         );
 
         for (const driveFile of driveRecords) {
+          // Ignore automatic Drive cache files to avoid exponential duplication across projects
+          if (driveFile.name?.startsWith('Drive快取檔案')) {
+            continue;
+          }
+
           // If not currently used in nodes and not duplicate of local record
           if (!usedIdentifiers.has(driveFile.id) && !seenKeys.has(driveFile.id)) {
             const asset: RescuableAsset = {
