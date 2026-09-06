@@ -1388,6 +1388,12 @@ const App: React.FC = () => {
             if (driveFileId !== id) {
               await storeImage(driveFileId, file, undefined, true);
               nodeObjectUrlCache.set(driveFileId, base64);
+              // Clean up the temporary local ID to prevent infinite cache accumulation
+              try {
+                deleteMultipleImages([id]);
+              } catch (e) {
+                console.warn('Failed to cleanup temp local id', e);
+              }
             }
           } catch (uploadErr) {
             console.warn('Upload to Google Drive assets failed, stored locally:', uploadErr);
@@ -1763,6 +1769,9 @@ const App: React.FC = () => {
 
               if (driveFileId !== jobId) {
                 await storeImage(driveFileId, newImageBlob, undefined, true);
+                try {
+                  deleteMultipleImages([jobId]);
+                } catch (e) {}
               }
             } catch (uploadErr) {
               console.warn('Drive upload failed for generated image:', uploadErr);
@@ -1951,6 +1960,9 @@ const App: React.FC = () => {
 
                 if (driveFileId !== nodeId) {
                   await storeImage(driveFileId, newImageBlob, undefined, true);
+                  try {
+                    deleteMultipleImages([nodeId]);
+                  } catch (e) {}
                 }
               } catch (uploadErr) {
                 console.warn('Drive upload failed for retried image:', uploadErr);

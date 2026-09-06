@@ -47,37 +47,10 @@ export async function scanForLostAssets(
   const discoveredAssets: RescuableAsset[] = [];
   const seenKeys = new Set<string>();
 
-  // 2. Scan Local IndexedDB
-  try {
-    const localRecords = await getAllLocalImages();
-    for (const rec of localRecords) {
-      if (!usedIdentifiers.has(rec.id)) {
-        let previewUrl: string | undefined;
-        try {
-          previewUrl = URL.createObjectURL(rec.blob);
-        } catch {}
-
-        const isDrive = isDriveFileId(rec.id);
-        const asset: RescuableAsset = {
-          id: `local_${rec.id}`,
-          source: 'local',
-          name: isDrive ? `Drive快取檔案 (${rec.id.slice(0, 8)}...)` : `本機圖片 (${rec.id.slice(0, 10)})`,
-          blob: rec.blob,
-          previewUrl,
-          driveFileId: isDrive ? rec.id : undefined,
-          driveViewLink: isDrive ? `https://drive.google.com/file/d/${rec.id}/view` : undefined,
-          size: rec.blob.size,
-          createdAt: /^\d{10,18}$/.test(rec.id) ? parseInt(rec.id, 10) : undefined,
-        };
-
-        seenKeys.add(rec.id);
-        if (rec.hash) seenKeys.add(rec.hash);
-        discoveredAssets.push(asset);
-      }
-    }
-  } catch (err) {
-    console.warn('Error scanning local IndexedDB for lost assets:', err);
-  }
+  // 2. We NO LONGER scan Local IndexedDB for lost assets.
+  // Because IndexedDB is global per origin, scanning it pulls in "lost" assets from ALL OTHER projects,
+  // causing exponential cache duplication when switching projects.
+  // Lost assets should ONLY be recovered from the project's specific Google Drive folder.
 
   // 3. Scan Google Drive (if token and project folders available)
   if (token) {

@@ -163,7 +163,13 @@ export const deleteImage = async (id: string): Promise<void> => {
     getReq.onsuccess = () => {
       const item = getReq.result;
       if (item?.hash) {
-        hashStore.delete(item.hash);
+        const hashGetReq = hashStore.get(item.hash);
+        hashGetReq.onsuccess = () => {
+          const hashRecord = hashGetReq.result;
+          if (hashRecord && hashRecord.fileId === id) {
+            hashStore.delete(item.hash);
+          }
+        };
       }
       store.delete(id);
     };
@@ -191,7 +197,15 @@ export const deleteMultipleImages = async (ids: string[]): Promise<void> => {
       getReq.onsuccess = () => {
         const item = getReq.result;
         if (item?.hash) {
-          hashStore.delete(item.hash);
+          const hashGetReq = hashStore.get(item.hash);
+          hashGetReq.onsuccess = () => {
+            const hashRecord = hashGetReq.result;
+            // Only delete the hash mapping if it's pointing to the exact local ID we are deleting.
+            // If it's pointing to a permanent Drive ID, we must preserve it!
+            if (hashRecord && hashRecord.fileId === id) {
+              hashStore.delete(item.hash);
+            }
+          };
         }
         store.delete(id);
       };

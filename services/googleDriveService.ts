@@ -412,6 +412,14 @@ export async function syncUnuploadedImageNodes(
       // Cache under the new Drive file ID as well
       await storeImage(uploaded.fileId, blob, undefined, true);
 
+      // Clean up the temporary local ID to prevent cache accumulation
+      try {
+        const { deleteMultipleImages } = await import('./dbService');
+        await deleteMultipleImages([localKey]);
+      } catch (e) {
+        console.warn('[Drive Sync] Failed to cleanup temp local id', e);
+      }
+
       synced++;
       if (onProgress) {
         onProgress(synced, pendingNodes.length);
