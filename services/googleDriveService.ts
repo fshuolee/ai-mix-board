@@ -653,31 +653,24 @@ export async function healProjectImageNodes(
       assetsFolderId
     );
 
-    // Also fetch user's drive images if project assets didn't have enough matches
-    let allDriveImages: Array<{ id: string; name: string; webViewLink?: string }> = driveRecords;
-    if (driveRecords.length < unlinkedImageNodes.length) {
-      try {
-        const globalRes = await driveFetch(
-          `https://www.googleapis.com/drive/v3/files?q=mimeType+contains+'image/'+and+trashed=false&fields=files(id,name,webViewLink)&pageSize=1000`,
-          token
-        );
-        const globalData = await globalRes.json();
-        if (globalData.files) {
-          allDriveImages = globalData.files;
-        }
-      } catch (e) {
-        console.warn('Failed to query global Drive images for healing:', e);
-      }
-    }
+    // CRITICAL: Strictly restrict healing to the project's own assets folder and project folder.
+    // NEVER query the user's entire Google Drive globally, as generic file names (e.g. image.png)
+    // from other unrelated folders (like Google AI Studio or personal files) would be erroneously matched!
+    const allDriveImages = driveRecords;
+
+    const GENERIC_FILE_NAMES = new Set(['image.png', 'image.jpg', 'image.jpeg', 'screenshot.png', 'blob', 'unnamed.png', 'untitled.png']);
 
     const byExactName = new Map<string, { id: string; webViewLink?: string }>();
     const byNormName = new Map<string, { id: string; webViewLink?: string }>();
     const byShortId = new Map<string, { id: string; webViewLink?: string }>();
 
     allDriveImages.forEach(f => {
-      byExactName.set(f.name, f);
-      const norm = f.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      byNormName.set(norm, f);
+      const lowerName = f.name.toLowerCase();
+      if (!GENERIC_FILE_NAMES.has(lowerName)) {
+        byExactName.set(f.name, f);
+        const norm = f.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        byNormName.set(norm, f);
+      }
 
       byShortId.set(f.id.slice(0, 8), f);
       const m = f.name.match(/Drive快取檔案 \(([a-zA-Z0-9_-]+)\.\.\.\)/);
@@ -696,7 +689,13 @@ export async function healProjectImageNodes(
       const fn = img.originalFileName || '';
       const normFn = fn.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      let matched = byExactName.get(fn) || byNormName.get(normFn);
+      let matched: { id: string; webViewLink?: string } | undefined = undefined;
+
+      // Only match by name if the filename is not generic
+      if (!GENERIC_FILE_NAMES.has(fn.toLowerCase())) {
+        matched = byExactName.get(fn) || byNormName.get(normFn);
+      }
+
       if (!matched && fn.includes('Drive快取檔案')) {
         const m = fn.match(/\(([a-zA-Z0-9_-]+)\.\.\.\)/);
         if (m) {
