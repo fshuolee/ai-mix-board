@@ -14,6 +14,7 @@ import {
   ClipboardCopy,
   Download,
   RotateCw,
+  Scissors,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -24,6 +25,7 @@ export interface MultiSelectionBarProps {
   onResetAspect: () => void;
   onApplyDefaultSize: () => void;
   onSaveAsDefaultSize: () => void;
+  onCut?: () => void;
   onCopyToClipboard?: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -39,6 +41,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   onResetAspect,
   onApplyDefaultSize,
   onSaveAsDefaultSize,
+  onCut,
   onCopyToClipboard,
   onDuplicate,
   onDelete,
@@ -176,12 +179,23 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         </button>
       )}
 
+      {/* Cut to Clipboard */}
+      {onCut && (
+        <button
+          onClick={onCut}
+          className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-blue-300 transition-colors"
+          title="剪下物件 (Cmd+X)"
+        >
+          <Scissors className="w-4 h-4 text-blue-400" />
+        </button>
+      )}
+
       {/* Copy to Clipboard */}
       {onCopyToClipboard && (
         <button
           onClick={onCopyToClipboard}
           className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-blue-300 transition-colors"
-          title="複製節點 (Ctrl+C)"
+          title="複製節點 (Cmd+C)"
         >
           <ClipboardCopy className="w-4 h-4 text-blue-400" />
         </button>
