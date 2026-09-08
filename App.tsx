@@ -9,6 +9,7 @@ import type {
   GoogleUserProfile,
   SyncStatus,
   ViewportState,
+  ClipboardPayload,
 } from './types';
 import {
   blobToBase64,
@@ -43,6 +44,7 @@ import {
 import {
   saveGraphToSheet,
   loadGraphFromSheet,
+  removeNodesFromProjectSpreadsheet,
   isSheetsRateLimited,
   getSheetsRateLimitRemainingSeconds,
 } from './services/googleSheetsService';
@@ -66,7 +68,12 @@ import {
   autoArrangeNodes,
   fitDimensions,
 } from './services/nodeSizingService';
-import { copyNodesToClipboard } from './services/clipboardService';
+import {
+  copyNodesToClipboard,
+  getInternalClipboardPayload,
+  clearInternalCutState,
+  isInternalNodeClipboardText,
+} from './services/clipboardService';
 import {
   RescuableAsset,
   scanForLostAssets,
@@ -154,13 +161,28 @@ const App: React.FC = () => {
   const [projects, setProjects] = useState<ProjectMetadata[]>([]);
   const [currentProject, setCurrentProject] = useState<ProjectMetadata | null>(() => {
     try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlProjectId = urlParams.get('project');
+
       const u = getCurrentUser();
-      if (!u) return null;
-      const email = u.email;
+      const email = u?.email;
       const raw = email ? localStorage.getItem(`ai_mix_board_last_project_meta_${email}`) : null;
       const fallback = localStorage.getItem('ai_mix_board_last_project_meta');
       const item = raw || fallback;
-      return item ? JSON.parse(item) : null;
+      const parsed = item ? JSON.parse(item) : null;
+
+      if (urlProjectId) {
+        if (parsed && parsed.id === urlProjectId) {
+          return parsed;
+        }
+        return {
+          id: urlProjectId,
+          name: '載入中...',
+          folderId: urlProjectId,
+          spreadsheetId: '',
+        };
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -176,7 +198,14 @@ const App: React.FC = () => {
   const [boards, setBoards] = useState<BoardMetadata[]>([
     { id: DEFAULT_BOARD_ID, name: 'MAIN', createdAt: new Date().toISOString() },
   ]);
-  const [activeBoardId, setActiveBoardId] = useState<string>(DEFAULT_BOARD_ID);
+  const [activeBoardId, setActiveBoardId] = useState<string>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlBoardId = urlParams.get('board');
+      if (urlBoardId) return urlBoardId;
+    } catch {}
+    return DEFAULT_BOARD_ID;
+  });
   const [allNodes, setAllNodes] = useState<CanvasNode[]>([]);
   const [viewports, setViewports] = useState<Record<string, ViewportState>>({});
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
@@ -240,6 +269,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [copiedNodesClipboard, setCopiedNodesClipboard] = useState<CanvasNode[]>([]);
   const [cutNodeIds, setCutNodeIds] = useState<Set<string>>(new Set());
+  const [clipboardMeta, setClipboardMeta] = useState<ClipboardPayload | null>(() => getInternalClipboardPayload());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -415,9 +445,16 @@ const App: React.FC = () => {
           console.warn('Failed to read last project from localStorage:', e);
         }
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlProjectId = urlParams.get('project');
+
+        const matchedByUrl = urlProjectId ? list.find(p => p.id === urlProjectId) : null;
         const matchedProject = savedProjectId ? list.find(p => p.id === savedProjectId) : null;
 
         setCurrentProject(prev => {
+          if (urlProjectId && matchedByUrl) {
+            return matchedByUrl;
+          }
           if (prev && list.some(p => p.id === prev.id)) {
             const fresh = list.find(p => p.id === prev.id);
             return fresh || prev;
@@ -472,6 +509,46 @@ const App: React.FC = () => {
     }
   }, [currentProject, user?.email]);
 
+  // Keep URL query parameters (?project=...&board=...) synchronized with active project and board
+  useEffect(() => {
+    if (!currentProject?.id) return;
+    const url = new URL(window.location.href);
+    let changed = false;
+
+    if (url.searchParams.get('project') !== currentProject.id) {
+      url.searchParams.set('project', currentProject.id);
+      changed = true;
+    }
+    if (currentBoardId && url.searchParams.get('board') !== currentBoardId) {
+      url.searchParams.set('board', currentBoardId);
+      changed = true;
+    }
+    if (changed) {
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+  }, [currentProject?.id, currentBoardId]);
+
+  // Handle browser Back / Forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const pId = params.get('project');
+      const bId = params.get('board');
+
+      if (pId && pId !== currentProjectRef.current?.id) {
+        const found = projects.find(p => p.id === pId);
+        if (found) {
+          setCurrentProject(found);
+        }
+      }
+      if (bId && bId !== currentBoardIdRef.current) {
+        setActiveBoardId(bId);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [projects]);
+
   // 3. Load multi-board graph data from Google Sheet when current project changes
   useEffect(() => {
     if (!currentProject || !currentProject.spreadsheetId) return;
@@ -498,14 +575,20 @@ const App: React.FC = () => {
           ? loadedData.boards
           : [{ id: DEFAULT_BOARD_ID, name: 'MAIN', createdAt: new Date().toISOString() }];
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlBoardId = urlParams.get('board');
+
         let savedBoardId: string | null = null;
         try {
           savedBoardId = localStorage.getItem(`ai_mix_board_last_board_${currentProject.id}`);
         } catch {}
 
-        const initialBoardId = (savedBoardId && loadedBoards.some(b => b.id === savedBoardId))
-          ? savedBoardId
-          : loadedBoards[0].id;
+        const initialBoardId =
+          (urlBoardId && loadedBoards.some(b => b.id === urlBoardId))
+            ? urlBoardId
+            : ((savedBoardId && loadedBoards.some(b => b.id === savedBoardId))
+                ? savedBoardId
+                : loadedBoards[0].id);
 
         setBoards(loadedBoards);
         setActiveBoardId(initialBoardId);
@@ -517,6 +600,14 @@ const App: React.FC = () => {
         });
         setSelectedModels(migratedModels);
         setSelectedNodeIds(new Set());
+
+        // Restore cut ghosting only if cut originated from this project
+        const curPayload = getInternalClipboardPayload();
+        if (curPayload && curPayload.isCut && curPayload.sourceProjectId === currentProject.id) {
+          setCutNodeIds(new Set(curPayload.sourceNodeIds || []));
+        } else {
+          setCutNodeIds(new Set());
+        }
 
         const initialView = loadedData.viewports[initialBoardId] || { x: 0, y: 0, zoom: 1 };
         setView(initialView);
@@ -1545,18 +1636,28 @@ const App: React.FC = () => {
     const selectedNodes = currentBoardNodes.filter(n => idsToCut.has(n.id));
     if (selectedNodes.length === 0) return;
 
-    // Set clipboard and mark nodes as cut (semi-transparent ghosted)
-    // Professional behavior: DO NOT delete yet, and NEVER prompt or touch cloud files!
+    const idsArray = Array.from(idsToCut);
+    const clipPayload: ClipboardPayload = {
+      clipId: `aimix_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: Date.now(),
+      nodes: selectedNodes,
+      isCut: true,
+      sourceProjectId: currentProject?.id,
+      sourceSpreadsheetId: currentProject?.spreadsheetId,
+      sourceNodeIds: idsArray,
+    };
+
     setCopiedNodesClipboard(selectedNodes);
     setCutNodeIds(new Set(idsToCut));
+    setClipboardMeta(clipPayload);
     showToast(`已剪下 ${selectedNodes.length} 個物件 (前往目標位置按 Cmd+V 貼上)`);
 
     try {
-      await copyNodesToClipboard(selectedNodes);
+      await copyNodesToClipboard(selectedNodes, clipPayload);
     } catch (e) {
       console.warn('Clipboard write warning:', e);
     }
-  }, [selectedNodeIds, currentBoardNodes, showToast]);
+  }, [selectedNodeIds, currentBoardNodes, currentProject?.id, currentProject?.spreadsheetId, showToast]);
 
   const handleCopy = useCallback(async (targetNodeIds?: string[]) => {
     const idsToCopy = targetNodeIds && targetNodeIds.length > 0 ? new Set(targetNodeIds) : selectedNodeIds;
@@ -1564,10 +1665,23 @@ const App: React.FC = () => {
     const selectedNodes = currentBoardNodes.filter(n => idsToCopy.has(n.id));
     if (selectedNodes.length === 0) return;
 
+    const clipPayload: ClipboardPayload = {
+      clipId: `aimix_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: Date.now(),
+      nodes: selectedNodes,
+      isCut: false,
+      sourceProjectId: currentProject?.id,
+      sourceSpreadsheetId: currentProject?.spreadsheetId,
+      sourceNodeIds: Array.from(idsToCopy),
+    };
+
     setCutNodeIds(new Set()); // Cancel any pending cut
+    clearInternalCutState();
     setCopiedNodesClipboard(selectedNodes);
+    setClipboardMeta(clipPayload);
+
     try {
-      const res = await copyNodesToClipboard(selectedNodes);
+      const res = await copyNodesToClipboard(selectedNodes, clipPayload);
       if (res?.message) {
         showToast(res.message);
       } else {
@@ -1576,16 +1690,12 @@ const App: React.FC = () => {
     } catch {
       showToast(`已複製 ${selectedNodes.length} 個物件`);
     }
-  }, [selectedNodeIds, currentBoardNodes, showToast]);
+  }, [selectedNodeIds, currentBoardNodes, currentProject?.id, currentProject?.spreadsheetId, showToast]);
 
   const handlePasteNodes = useCallback((targetCoords?: { x: number; y: number }) => {
-    let nodesToPaste = copiedNodesClipboard;
-    if (nodesToPaste.length === 0) {
-      try {
-        const stored = sessionStorage.getItem('ai_mix_board_clipboard');
-        if (stored) nodesToPaste = JSON.parse(stored);
-      } catch {}
-    }
+    const payload = getInternalClipboardPayload() || clipboardMeta;
+    let nodesToPaste = payload?.nodes || copiedNodesClipboard;
+
     if (!nodesToPaste || nodesToPaste.length === 0) return false;
 
     let minX = Infinity;
@@ -1606,8 +1716,13 @@ const App: React.FC = () => {
 
     const newSelectedIds = new Set<string>();
     const newPastedNodes: CanvasNode[] = [];
-    const isMovingCut = cutNodeIds.size > 0;
-    const cutIdsSnapshot = new Set(cutNodeIds);
+    const sourceNodeIds = payload?.sourceNodeIds || Array.from(cutNodeIds);
+    const isMovingCut = Boolean(
+      (payload?.isCut || cutNodeIds.size > 0) && sourceNodeIds.length > 0
+    );
+    const isCrossProject = Boolean(
+      isMovingCut && payload?.sourceProjectId && payload.sourceProjectId !== currentProject?.id
+    );
 
     nodesToPaste.forEach((node, idx) => {
       const newId = `${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`;
@@ -1628,14 +1743,40 @@ const App: React.FC = () => {
     });
 
     if (isMovingCut) {
-      // Complete the Cut -> Paste move: remove original cut nodes and insert new ones.
-      // Cloud storage is 100% preserved because the assets are simply moved to their new destination.
-      updateNodesAndSave(prev => [
-        ...prev.filter(n => !cutIdsSnapshot.has(n.id)),
-        ...newPastedNodes,
-      ]);
+      if (isCrossProject && payload?.sourceSpreadsheetId) {
+        // Cross-project Cut -> Paste:
+        // 1. Add new nodes to the active project
+        updateNodesAndSave(prev => [...prev, ...newPastedNodes]);
+
+        // 2. Remove original cut nodes from the source project Google Sheet
+        const token = getAccessToken();
+        const srcSpreadsheetId = payload.sourceSpreadsheetId;
+        const srcNodeIds = sourceNodeIds;
+        if (token && srcSpreadsheetId) {
+          removeNodesFromProjectSpreadsheet(token, srcSpreadsheetId, srcNodeIds)
+            .then(success => {
+              if (success) {
+                console.log(`Successfully removed ${srcNodeIds.length} cut nodes from source project sheet`);
+              }
+            })
+            .catch(err => {
+              console.warn('Failed to remove cut nodes from source project:', err);
+            });
+        }
+        showToast(`已自原專案移動 ${newPastedNodes.length} 個物件至此專案`);
+      } else {
+        // Same-project Cut -> Paste: remove original cut nodes and append new ones
+        const cutIdsSnapshot = new Set(sourceNodeIds);
+        updateNodesAndSave(prev => [
+          ...prev.filter(n => !cutIdsSnapshot.has(n.id)),
+          ...newPastedNodes,
+        ]);
+        showToast(`已移動 ${newPastedNodes.length} 個物件`);
+      }
+
       setCutNodeIds(new Set());
-      showToast(`已移動 ${newPastedNodes.length} 個物件`);
+      clearInternalCutState();
+      setClipboardMeta(prev => (prev ? { ...prev, isCut: false } : null));
     } else {
       updateNodesAndSave(prev => [...prev, ...newPastedNodes]);
       showToast(`已貼上 ${newPastedNodes.length} 個物件`);
@@ -1643,35 +1784,65 @@ const App: React.FC = () => {
 
     setSelectedNodeIds(newSelectedIds);
     return true;
-  }, [copiedNodesClipboard, cutNodeIds, currentBoardId, getCanvasCoords, updateNodesAndSave, showToast]);
+  }, [
+    clipboardMeta,
+    copiedNodesClipboard,
+    cutNodeIds,
+    currentProject?.id,
+    currentBoardId,
+    getCanvasCoords,
+    updateNodesAndSave,
+    showToast,
+  ]);
 
   const handlePasteFromContextMenu = useCallback(async () => {
     const coords = getCanvasCoords(contextMenu.position.x, contextMenu.position.y);
-    const didPasteNodes = handlePasteNodes(coords);
-    if (didPasteNodes) {
-      showToast('已貼上物件');
-      return;
-    }
+    const payload = getInternalClipboardPayload();
 
-    // Fallback: try reading system clipboard
+    // 1. Try reading system clipboard for external images first
     try {
       if (navigator.clipboard?.read) {
         const items = await navigator.clipboard.read();
         for (const item of items) {
-          for (const type of item.types) {
-            if (type.startsWith('image/')) {
-              const blob = await item.getType(type);
-              const file = new File([blob], `pasted_${Date.now()}.png`, { type });
-              await handleUploadImageFile(file, coords);
-              showToast('已貼上圖片');
-              return;
+          let isInternalMarker = false;
+          if (item.types.includes('text/plain')) {
+            try {
+              const textBlob = await item.getType('text/plain');
+              const textStr = await textBlob.text();
+              isInternalMarker = isInternalNodeClipboardText(textStr);
+            } catch {}
+          }
+
+          if (!isInternalMarker) {
+            for (const type of item.types) {
+              if (type.startsWith('image/')) {
+                const blob = await item.getType(type);
+                const file = new File([blob], `pasted_${Date.now()}.png`, { type });
+                await handleUploadImageFile(file, coords);
+                showToast('已貼上圖片');
+                return;
+              }
             }
           }
         }
       }
+    } catch (err) {
+      console.warn('System clipboard image read failed (lack permission or not focused):', err);
+    }
+
+    // 2. Try pasting internal canvas nodes
+    if (payload && payload.nodes && payload.nodes.length > 0) {
+      const didPasteNodes = handlePasteNodes(coords);
+      if (didPasteNodes) {
+        return;
+      }
+    }
+
+    // 3. Fallback: try reading system text
+    try {
       if (navigator.clipboard?.readText) {
         const text = await navigator.clipboard.readText();
-        if (text && text.trim()) {
+        if (text && text.trim() && !isInternalNodeClipboardText(text)) {
           addNode({
             id: Date.now().toString(),
             type: 'text',
@@ -1689,9 +1860,17 @@ const App: React.FC = () => {
         }
       }
     } catch (err) {
-      console.warn('Clipboard paste failed:', err);
+      console.warn('Clipboard text read error:', err);
     }
-  }, [contextMenu.position, getCanvasCoords, handlePasteNodes, handleUploadImageFile, addNode, currentBoardId, showToast]);
+  }, [
+    contextMenu.position,
+    getCanvasCoords,
+    handlePasteNodes,
+    handleUploadImageFile,
+    addNode,
+    currentBoardId,
+    showToast,
+  ]);
 
   const handlePaste = useCallback(
     async (e: ClipboardEvent) => {
@@ -1700,16 +1879,54 @@ const App: React.FC = () => {
       }
       e.preventDefault();
 
-      // 1. Try pasting copied canvas nodes first (cross-board supported)
-      if (copiedNodesClipboard.length > 0 || sessionStorage.getItem('ai_mix_board_clipboard')) {
+      const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
+      const payload = getInternalClipboardPayload();
+
+      // Check for image files/items in system clipboard
+      const files = Array.from(e.clipboardData?.files || []);
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+
+      const items = Array.from(e.clipboardData?.items || []);
+      const imageItems = items.filter(it => it.type.startsWith('image/'));
+
+      const text = e.clipboardData?.getData('text/plain') || '';
+      const isInternalMarker = isInternalNodeClipboardText(text);
+
+      // 1. If system clipboard contains image(s) and it is NOT an internal node copy:
+      // This handles external screenshots, browser "Copy Image", and image files from Finder!
+      if ((imageFiles.length > 0 || imageItems.length > 0) && !isInternalMarker) {
+        const filesToUpload: File[] = [];
+        if (imageFiles.length > 0) {
+          filesToUpload.push(...imageFiles);
+        } else {
+          for (const it of imageItems) {
+            const f = it.getAsFile();
+            if (f) filesToUpload.push(f);
+          }
+        }
+
+        if (filesToUpload.length > 0) {
+          for (let i = 0; i < filesToUpload.length; i++) {
+            const file = filesToUpload[i];
+            const offsetCoords = {
+              x: initialCoords.x + i * 40,
+              y: initialCoords.y + i * 40,
+            };
+            await handleUploadImageFile(file, offsetCoords);
+          }
+          showToast(filesToUpload.length === 1 ? '已貼上圖片' : `已貼上 ${filesToUpload.length} 張圖片`);
+          return;
+        }
+      }
+
+      // 2. If it's an internal node copy or active cut:
+      if (isInternalMarker || payload?.isCut || cutNodeIds.size > 0) {
         const didPaste = handlePasteNodes();
         if (didPaste) return;
       }
 
-      // 2. Check pasted plain text
-      const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
-      const text = e.clipboardData?.getData('text/plain');
-      if (text) {
+      // 3. If there is external plain text in clipboard:
+      if (text && text.trim() && !isInternalMarker) {
         const width = 220;
         const height = 100;
         const { x, y } = findOpenPosition(initialCoords.x, initialCoords.y, width, height, currentBoardNodes);
@@ -1722,27 +1939,29 @@ const App: React.FC = () => {
           height,
           rotation: 0,
           boardId: currentBoardId,
-          content: text,
+          content: text.trim(),
           createdAt: Date.now(),
         });
+        showToast('已貼上文字');
         return;
       }
 
-      // 3. Check pasted image
-      const items = e.clipboardData?.items;
-      if (items) {
-        for (const item of items) {
-          if (item.type.startsWith('image/')) {
-            const file = item.getAsFile();
-            if (file) {
-              await handleUploadImageFile(file);
-            }
-            return;
-          }
-        }
+      // 4. Fallback: try pasting any stored canvas nodes
+      if (payload && payload.nodes && payload.nodes.length > 0) {
+        const didPaste = handlePasteNodes();
+        if (didPaste) return;
       }
     },
-    [copiedNodesClipboard, handlePasteNodes, getCanvasCoords, currentBoardNodes, addNode, currentBoardId, handleUploadImageFile]
+    [
+      cutNodeIds,
+      handlePasteNodes,
+      getCanvasCoords,
+      currentBoardNodes,
+      addNode,
+      currentBoardId,
+      handleUploadImageFile,
+      showToast,
+    ]
   );
 
   // Execute Generation (Concurrent & Non-blocking)
@@ -2387,6 +2606,8 @@ const App: React.FC = () => {
         }
         setSelectedNodeIds(new Set());
         setCutNodeIds(new Set());
+        clearInternalCutState();
+        setClipboardMeta(prev => (prev ? { ...prev, isCut: false } : null));
       }
 
       // Auto Arrange (Alt+G)

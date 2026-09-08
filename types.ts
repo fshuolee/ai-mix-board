@@ -79,6 +79,16 @@ export interface ProjectMetadata {
 
 export type SyncStatus = 'saved' | 'saving' | 'error' | 'offline' | 'loading';
 
+export interface ClipboardPayload {
+  clipId: string;
+  timestamp: number;
+  nodes: CanvasNode[];
+  isCut?: boolean;
+  sourceProjectId?: string;
+  sourceSpreadsheetId?: string;
+  sourceNodeIds?: string[];
+}
+
 export interface GoogleUserProfile {
   email: string;
   name: string;

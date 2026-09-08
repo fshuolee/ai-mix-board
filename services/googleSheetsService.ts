@@ -854,3 +854,42 @@ export async function loadGraphFromSheet(
   };
 }
 
+/**
+ * Remove specified nodes from a remote project's Google Sheet (used for cross-project cut and move)
+ */
+export async function removeNodesFromProjectSpreadsheet(
+  token: string,
+  spreadsheetId: string,
+  nodeIdsToRemove: string[]
+): Promise<boolean> {
+  if (!token || !spreadsheetId || !nodeIdsToRemove || nodeIdsToRemove.length === 0) {
+    return false;
+  }
+  const deleteSet = new Set(nodeIdsToRemove);
+
+  try {
+    const loadedData = await loadGraphFromSheet(token, spreadsheetId);
+    const originalCount = loadedData.nodes.length;
+    const remainingNodes = loadedData.nodes.filter(n => !deleteSet.has(n.id));
+
+    if (remainingNodes.length === originalCount) {
+      // Nodes already removed or not present
+      return true;
+    }
+
+    await saveGraphToSheet(
+      token,
+      spreadsheetId,
+      remainingNodes,
+      loadedData.boards,
+      loadedData.viewports,
+      loadedData.selectedModels,
+      true // allow empty in case all nodes were cut
+    );
+
+    return true;
+  } catch (err) {
+    console.error(`Failed to remove cut nodes from project spreadsheet (${spreadsheetId}):`, err);
+    return false;
+  }
+}
