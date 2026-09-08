@@ -60,12 +60,17 @@ import AssetRescueModal from './components/AssetRescueModal';
 import { NodeInfoModal } from './components/NodeInfoModal';
 import ContextMenu from './components/ContextMenu';
 import MultiSelectionBar from './components/MultiSelectionBar';
+import { Minimap } from './components/Minimap';
 import {
   getDefaultNodeSize,
   setDefaultNodeSize,
   resetNodesAspectRatio,
   applyOptimalSizeToNodes,
   autoArrangeNodes,
+  alignNodes,
+  distributeNodes,
+  AlignType,
+  DistributeType,
   fitDimensions,
 } from './services/nodeSizingService';
 import {
@@ -325,6 +330,12 @@ const App: React.FC = () => {
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitialLoadRef = useRef<boolean>(true);
   const loadedProjectIdRef = useRef<string | null>(null);
+
+  // Undo / Redo History Stack (up to 50 steps)
+  const undoStackRef = useRef<CanvasNode[][]>([]);
+  const redoStackRef = useRef<CanvasNode[][]>([]);
+  const isPerformingHistoryActionRef = useRef<boolean>(false);
+  const [historyCounts, setHistoryCounts] = useState<{ undo: number; redo: number }>({ undo: 0, redo: 0 });
 
   // Filter nodes for the current active board
   const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
@@ -593,6 +604,9 @@ const App: React.FC = () => {
         setBoards(loadedBoards);
         setActiveBoardId(initialBoardId);
         setAllNodes(loadedData.nodes);
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+        setHistoryCounts({ undo: 0, redo: 0 });
         setViewports(loadedData.viewports);
         const migratedModels: Record<string, string> = {};
         Object.entries(loadedData.selectedModels || {}).forEach(([bId, mId]) => {
@@ -775,6 +789,21 @@ const App: React.FC = () => {
       if (isProjectBusyRef.current) return;
       setAllNodes(prevAll => {
         const nextAll = updater(prevAll);
+        if (nextAll !== prevAll && !isPerformingHistoryActionRef.current) {
+          const snapshot = JSON.parse(JSON.stringify(prevAll));
+          const last = undoStackRef.current[undoStackRef.current.length - 1];
+          if (!last || JSON.stringify(last) !== JSON.stringify(snapshot)) {
+            undoStackRef.current.push(snapshot);
+            if (undoStackRef.current.length > 50) {
+              undoStackRef.current.shift();
+            }
+            redoStackRef.current = [];
+            setHistoryCounts({
+              undo: undoStackRef.current.length,
+              redo: 0,
+            });
+          }
+        }
         const updatedViewports = { ...viewportsRef.current, [currentBoardIdRef.current]: viewRef.current };
         const updatedModels = { ...selectedModelsRef.current, [currentBoardIdRef.current]: selectedModelIdRef.current };
         triggerAutoSave(nextAll, boardsRef.current, updatedViewports, updatedModels, allowEmptyNodes);
@@ -1338,16 +1367,43 @@ const App: React.FC = () => {
       } else if (lastDrag?.type === 'drag_node') {
         if (lastDrag.currentPositions) {
           const finalPositions = lastDrag.currentPositions;
-          setAllNodes(prev => {
-            const nextNodes = prev.map(n => {
-              const newPos = finalPositions.get(n.id);
-              return newPos ? { ...n, x: newPos.x, y: newPos.y } : n;
+          let moved = false;
+          if (lastDrag.nodes) {
+            for (const [id, startPos] of lastDrag.nodes.entries()) {
+              const cur = finalPositions.get(id);
+              if (cur && (cur.x !== startPos.x || cur.y !== startPos.y)) {
+                moved = true;
+                break;
+              }
+            }
+          }
+          if (moved) {
+            setAllNodes(prev => {
+              if (!isPerformingHistoryActionRef.current) {
+                const snapshot = JSON.parse(JSON.stringify(prev));
+                const last = undoStackRef.current[undoStackRef.current.length - 1];
+                if (!last || JSON.stringify(last) !== JSON.stringify(snapshot)) {
+                  undoStackRef.current.push(snapshot);
+                  if (undoStackRef.current.length > 50) {
+                    undoStackRef.current.shift();
+                  }
+                  redoStackRef.current = [];
+                  setHistoryCounts({
+                    undo: undoStackRef.current.length,
+                    redo: 0,
+                  });
+                }
+              }
+              const nextNodes = prev.map(n => {
+                const newPos = finalPositions.get(n.id);
+                return newPos ? { ...n, x: newPos.x, y: newPos.y } : n;
+              });
+              setTimeout(() => {
+                triggerAutoSave(nextNodes, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
+              }, 0);
+              return nextNodes;
             });
-            setTimeout(() => {
-               triggerAutoSave(nextNodes, boardsRef.current, viewportsRef.current, selectedModelsRef.current);
-            }, 0);
-            return nextNodes;
-          });
+          }
         }
       }
 
@@ -2483,6 +2539,117 @@ const App: React.FC = () => {
     setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
   }, [currentBoardNodes, selectedNodeIds, currentBoardId]);
 
+  // History Action Handlers (Undo / Redo)
+  const handleUndo = useCallback(() => {
+    if (undoStackRef.current.length === 0) return;
+    const previousState = undoStackRef.current.pop();
+    if (!previousState) return;
+
+    redoStackRef.current.push(JSON.parse(JSON.stringify(allNodesRef.current)));
+    if (redoStackRef.current.length > 50) {
+      redoStackRef.current.shift();
+    }
+    setHistoryCounts({
+      undo: undoStackRef.current.length,
+      redo: redoStackRef.current.length,
+    });
+
+    isPerformingHistoryActionRef.current = true;
+    try {
+      setAllNodes(previousState);
+      allNodesRef.current = previousState;
+      const existingIds = new Set(previousState.map(n => n.id));
+      setSelectedNodeIds(prev => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (existingIds.has(id)) next.add(id);
+        }
+        selectedNodeIdsRef.current = next;
+        return next;
+      });
+      triggerAutoSave(previousState, boardsRef.current, viewportsRef.current, selectedModelsRef.current, true);
+      showToast('已復原 (Undo)');
+    } finally {
+      isPerformingHistoryActionRef.current = false;
+    }
+  }, [triggerAutoSave, showToast]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStackRef.current.length === 0) return;
+    const nextState = redoStackRef.current.pop();
+    if (!nextState) return;
+
+    undoStackRef.current.push(JSON.parse(JSON.stringify(allNodesRef.current)));
+    if (undoStackRef.current.length > 50) {
+      undoStackRef.current.shift();
+    }
+    setHistoryCounts({
+      undo: undoStackRef.current.length,
+      redo: redoStackRef.current.length,
+    });
+
+    isPerformingHistoryActionRef.current = true;
+    try {
+      setAllNodes(nextState);
+      allNodesRef.current = nextState;
+      const existingIds = new Set(nextState.map(n => n.id));
+      setSelectedNodeIds(prev => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (existingIds.has(id)) next.add(id);
+        }
+        selectedNodeIdsRef.current = next;
+        return next;
+      });
+      triggerAutoSave(nextState, boardsRef.current, viewportsRef.current, selectedModelsRef.current, true);
+      showToast('已重做 (Redo)');
+    } finally {
+      isPerformingHistoryActionRef.current = false;
+    }
+  }, [triggerAutoSave, showToast]);
+
+  // Alignment and Distribution Handlers
+  const handleAlignNodes = useCallback(
+    (type: AlignType) => {
+      const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+      if (selected.length <= 1) return;
+      alignNodes(selected, type, updateMultipleNodes);
+      const names: Record<AlignType, string> = {
+        left: '靠左對齊',
+        center: '水平置中',
+        right: '靠右對齊',
+        top: '靠頂對齊',
+        middle: '垂直置中',
+        bottom: '靠底對齊',
+      };
+      showToast(`已套用${names[type] || '對齊'}`);
+    },
+    [currentBoardNodes, selectedNodeIds, updateMultipleNodes, showToast]
+  );
+
+  const handleDistributeNodes = useCallback(
+    (type: DistributeType) => {
+      const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
+      if (selected.length <= 2) return;
+      distributeNodes(selected, type, updateMultipleNodes);
+      showToast(`已套用${type === 'horizontal' ? '水平' : '垂直'}等距分佈`);
+    },
+    [currentBoardNodes, selectedNodeIds, updateMultipleNodes, showToast]
+  );
+
+  // Minimap Navigation Handler
+  const handlePanTo = useCallback((worldX: number, worldY: number) => {
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
+    const currentZoom = viewRef.current.zoom;
+    const newX = screenW / 2 - worldX * currentZoom;
+    const newY = screenH / 2 - worldY * currentZoom;
+    const newView = { ...viewRef.current, x: Math.round(newX), y: Math.round(newY) };
+    viewRef.current = newView;
+    setView(newView);
+    setViewports(prev => ({ ...prev, [currentBoardIdRef.current]: newView }));
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2507,6 +2674,27 @@ const App: React.FC = () => {
           setIsSpacePressed(true);
         }
         return;
+      }
+
+      // Undo with Cmd+Z / Ctrl+Z (without Shift)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        if (!isInputActive && !isAnyModalOpen) {
+          e.preventDefault();
+          handleUndo();
+          return;
+        }
+      }
+
+      // Redo with Cmd+Shift+Z / Ctrl+Shift+Z / Ctrl+Y
+      if (
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'z') ||
+        (!e.metaKey && e.ctrlKey && e.key.toLowerCase() === 'y')
+      ) {
+        if (!isInputActive && !isAnyModalOpen) {
+          e.preventDefault();
+          handleRedo();
+          return;
+        }
       }
 
       // Execute with Shift+Enter
@@ -2645,7 +2833,7 @@ const App: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, infoModalNode, orphanAssetModal]);
+  }, [handleUndo, handleRedo, handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, infoModalNode, orphanAssetModal]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -2973,6 +3161,10 @@ const App: React.FC = () => {
         syncStatus={syncStatus}
         lastSavedAt={lastSavedAt}
         isProjectLoading={isProjectBusy}
+        canUndo={historyCounts.undo > 0}
+        canRedo={historyCounts.redo > 0}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         isSyncingAssets={isSyncingAssets}
         onSyncAssetsToDrive={handleSyncAssetsToDrive}
         unuploadedAssetCount={unuploadedAssetCount}
@@ -3179,6 +3371,7 @@ const App: React.FC = () => {
 
         {/* Nodes Layer */}
         <div
+          data-testid="canvas-nodes-layer"
           className={`absolute top-0 left-0 ${isSpacePressed ? 'pointer-events-none' : ''}`}
           style={{
             transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.zoom})`,
@@ -3380,6 +3573,8 @@ const App: React.FC = () => {
         <MultiSelectionBar
           selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
           onAutoArrange={handleAutoArrange}
+          onAlign={handleAlignNodes}
+          onDistribute={handleDistributeNodes}
           onResetAspect={handleResetAspect}
           onApplyDefaultSize={handleApplyDefaultSize}
           onSaveAsDefaultSize={handleSaveAsDefaultSize}
@@ -3401,7 +3596,13 @@ const App: React.FC = () => {
         targetType={contextMenu.targetType}
         selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
         onClose={() => setContextMenu(prev => ({ ...prev, isOpen: false }))}
+        canUndo={historyCounts.undo > 0}
+        canRedo={historyCounts.redo > 0}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onAutoArrange={handleAutoArrange}
+        onAlign={handleAlignNodes}
+        onDistribute={handleDistributeNodes}
         onResetAspect={handleResetAspect}
         onApplyDefaultSize={handleApplyDefaultSize}
         onSaveAsDefaultSize={handleSaveAsDefaultSize}
@@ -3466,6 +3667,27 @@ const App: React.FC = () => {
             const found = allNodesRef.current.find(n => n.id === targetId);
             if (found) setInfoModalNode(found);
           }
+        }}
+      />
+
+      {/* Canvas Minimap */}
+      <Minimap
+        nodes={currentBoardNodes}
+        selectedNodeIds={selectedNodeIds}
+        viewport={view}
+        onPanTo={handlePanTo}
+        onResetZoom={fitToView}
+        onZoomIn={() => {
+          if (isProjectBusy) return;
+          const newView = { ...view, zoom: Math.min(5, view.zoom * 1.2) };
+          setView(newView);
+          setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
+        }}
+        onZoomOut={() => {
+          if (isProjectBusy) return;
+          const newView = { ...view, zoom: Math.max(0.1, view.zoom / 1.2) };
+          setView(newView);
+          setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
       />
 

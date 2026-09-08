@@ -24,6 +24,11 @@ import {
   RotateCw,
   Scissors,
   Info,
+  Undo2,
+  Redo2,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
@@ -34,7 +39,13 @@ export interface ContextMenuProps {
   targetType: 'node' | 'canvas';
   selectedNodes: CanvasNode[];
   onClose: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onAutoArrange: (layout: 'grid' | 'horizontal' | 'vertical') => void;
+  onAlign?: (type: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
+  onDistribute?: (type: 'horizontal' | 'vertical') => void;
   onResetAspect: () => void;
   onApplyDefaultSize: () => void;
   onSaveAsDefaultSize: () => void;
@@ -66,6 +77,12 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   selectedNodes,
   onClose,
   onAutoArrange,
+  onAlign,
+  onDistribute,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
   onResetAspect,
   onApplyDefaultSize,
   onSaveAsDefaultSize,
@@ -163,29 +180,134 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             </button>
 
             {count > 1 && (
-              <div className="flex items-center gap-1 px-1 pt-1">
-                <button
-                  onClick={() => {
-                    onAutoArrange('horizontal');
-                    onClose();
-                  }}
-                  className="flex-1 px-2 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800 text-[11px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                  title="向右水平排列一列"
-                >
-                  <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-                  <span>水平</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onAutoArrange('vertical');
-                    onClose();
-                  }}
-                  className="flex-1 px-2 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800 text-[11px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                  title="向下垂直排列一行"
-                >
-                  <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-                  <span>垂直</span>
-                </button>
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center gap-1 px-1">
+                  <button
+                    onClick={() => {
+                      onAutoArrange('horizontal');
+                      onClose();
+                    }}
+                    className="flex-1 px-2 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800 text-[11px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                    title="向右水平排列一列"
+                  >
+                    <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
+                    <span>水平</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAutoArrange('vertical');
+                      onClose();
+                    }}
+                    className="flex-1 px-2 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800 text-[11px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                    title="向下垂直排列一行"
+                  >
+                    <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
+                    <span>垂直</span>
+                  </button>
+                </div>
+
+                {onAlign && (
+                  <div className="pt-1 border-t border-gray-800/60">
+                    <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">對齊</div>
+                    <div className="grid grid-cols-3 gap-1 px-1">
+                      <button
+                        onClick={() => {
+                          onAlign('left');
+                          onClose();
+                        }}
+                        className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        title="靠左對齊"
+                      >
+                        <AlignLeft className="w-3 h-3 text-blue-400" />
+                        <span>靠左</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          onAlign('center');
+                          onClose();
+                        }}
+                        className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        title="水平置中"
+                      >
+                        <AlignCenter className="w-3 h-3 text-blue-400" />
+                        <span>置中</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          onAlign('right');
+                          onClose();
+                        }}
+                        className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        title="靠右對齊"
+                      >
+                        <AlignRight className="w-3 h-3 text-blue-400" />
+                        <span>靠右</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 px-1 pt-1">
+                      <button
+                        onClick={() => {
+                          onAlign('top');
+                          onClose();
+                        }}
+                        className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center transition-colors"
+                        title="靠頂對齊"
+                      >
+                        <span>靠頂</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          onAlign('middle');
+                          onClose();
+                        }}
+                        className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center transition-colors"
+                        title="垂直置中"
+                      >
+                        <span>垂直中</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          onAlign('bottom');
+                          onClose();
+                        }}
+                        className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center transition-colors"
+                        title="靠底對齊"
+                      >
+                        <span>靠底</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {onDistribute && count > 2 && (
+                  <div className="pt-1 border-t border-gray-800/60">
+                    <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">等距分佈</div>
+                    <div className="flex items-center gap-1 px-1">
+                      <button
+                        onClick={() => {
+                          onDistribute('horizontal');
+                          onClose();
+                        }}
+                        className="flex-1 px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        title="水平等距分佈"
+                      >
+                        <AlignHorizontalDistributeCenter className="w-3 h-3 text-blue-400" />
+                        <span>水平等距</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          onDistribute('vertical');
+                          onClose();
+                        }}
+                        className="flex-1 px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
+                        title="垂直等距分佈"
+                      >
+                        <AlignVerticalDistributeCenter className="w-3 h-3 text-blue-400" />
+                        <span>垂直等距</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -425,6 +547,48 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
           </div>
 
           <div className="py-1">
+            {onUndo && (
+              <button
+                onClick={() => {
+                  onUndo();
+                  onClose();
+                }}
+                disabled={!canUndo}
+                className={`w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between transition-colors text-left ${
+                  !canUndo
+                    ? 'opacity-40 cursor-not-allowed text-gray-500'
+                    : 'hover:bg-gray-800 text-gray-300 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Undo2 className="w-4 h-4 text-blue-400" />
+                  <span>復原</span>
+                </div>
+                <span className="text-[10px] text-gray-500 font-mono">⌘Z</span>
+              </button>
+            )}
+
+            {onRedo && (
+              <button
+                onClick={() => {
+                  onRedo();
+                  onClose();
+                }}
+                disabled={!canRedo}
+                className={`w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between transition-colors text-left ${
+                  !canRedo
+                    ? 'opacity-40 cursor-not-allowed text-gray-500'
+                    : 'hover:bg-gray-800 text-gray-300 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Redo2 className="w-4 h-4 text-blue-400" />
+                  <span>重做</span>
+                </div>
+                <span className="text-[10px] text-gray-500 font-mono">⌘⇧Z</span>
+              </button>
+            )}
+
             {onPaste && (
               <button
                 onClick={() => {

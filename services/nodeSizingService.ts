@@ -250,3 +250,125 @@ export function autoArrangeNodes(
     onUpdateNodes(updates);
   }
 }
+
+export type AlignType = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
+export type DistributeType = 'horizontal' | 'vertical';
+
+/**
+ * Align selected nodes to left, center, right, top, middle, or bottom
+ */
+export function alignNodes(
+  nodes: CanvasNode[],
+  type: AlignType,
+  onUpdateNodes: (updates: { id: string; updates: Partial<CanvasNode> }[]) => void
+): void {
+  if (nodes.length <= 1) return;
+
+  const minX = Math.min(...nodes.map(n => n.x));
+  const maxX = Math.max(...nodes.map(n => n.x + n.width));
+  const minY = Math.min(...nodes.map(n => n.y));
+  const maxY = Math.max(...nodes.map(n => n.y + n.height));
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+
+  const updates: { id: string; updates: Partial<CanvasNode> }[] = [];
+
+  nodes.forEach(node => {
+    let targetX = node.x;
+    let targetY = node.y;
+
+    switch (type) {
+      case 'left':
+        targetX = minX;
+        break;
+      case 'center':
+        targetX = Math.round(centerX - node.width / 2);
+        break;
+      case 'right':
+        targetX = Math.round(maxX - node.width);
+        break;
+      case 'top':
+        targetY = minY;
+        break;
+      case 'middle':
+        targetY = Math.round(centerY - node.height / 2);
+        break;
+      case 'bottom':
+        targetY = Math.round(maxY - node.height);
+        break;
+    }
+
+    if (targetX !== node.x || targetY !== node.y) {
+      updates.push({ id: node.id, updates: { x: targetX, y: targetY } });
+    }
+  });
+
+  if (updates.length > 0) {
+    onUpdateNodes(updates);
+  }
+}
+
+/**
+ * Distribute selected nodes evenly along horizontal or vertical axis
+ */
+export function distributeNodes(
+  nodes: CanvasNode[],
+  type: DistributeType,
+  onUpdateNodes: (updates: { id: string; updates: Partial<CanvasNode> }[]) => void
+): void {
+  if (nodes.length <= 2) return;
+
+  const updates: { id: string; updates: Partial<CanvasNode> }[] = [];
+
+  if (type === 'horizontal') {
+    const sorted = [...nodes].sort((a, b) => a.x - b.x);
+    const minX = sorted[0].x;
+    const rightmost = sorted[sorted.length - 1];
+    const totalSpan = rightmost.x + rightmost.width - minX;
+    const totalNodeWidths = sorted.reduce((sum, n) => sum + n.width, 0);
+    const remainingSpace = totalSpan - totalNodeWidths;
+    const gap = Math.max(12, remainingSpace / (sorted.length - 1));
+
+    let curX = minX;
+    sorted.forEach((node, idx) => {
+      if (idx === 0) {
+        curX += node.width + gap;
+        return;
+      }
+      if (idx === sorted.length - 1) return;
+
+      const newX = Math.round(curX);
+      if (newX !== node.x) {
+        updates.push({ id: node.id, updates: { x: newX } });
+      }
+      curX += node.width + gap;
+    });
+  } else {
+    const sorted = [...nodes].sort((a, b) => a.y - b.y);
+    const minY = sorted[0].y;
+    const bottommost = sorted[sorted.length - 1];
+    const totalSpan = bottommost.y + bottommost.height - minY;
+    const totalNodeHeights = sorted.reduce((sum, n) => sum + n.height, 0);
+    const remainingSpace = totalSpan - totalNodeHeights;
+    const gap = Math.max(12, remainingSpace / (sorted.length - 1));
+
+    let curY = minY;
+    sorted.forEach((node, idx) => {
+      if (idx === 0) {
+        curY += node.height + gap;
+        return;
+      }
+      if (idx === sorted.length - 1) return;
+
+      const newY = Math.round(curY);
+      if (newY !== node.y) {
+        updates.push({ id: node.id, updates: { y: newY } });
+      }
+      curY += node.height + gap;
+    });
+  }
+
+  if (updates.length > 0) {
+    onUpdateNodes(updates);
+  }
+}

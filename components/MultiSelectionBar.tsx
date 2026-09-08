@@ -10,6 +10,13 @@ import {
   ChevronUp,
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignStartHorizontal,
+  AlignEndHorizontal,
   Layers,
   ClipboardCopy,
   Download,
@@ -22,6 +29,8 @@ import { getDefaultNodeSize } from '../services/nodeSizingService';
 export interface MultiSelectionBarProps {
   selectedNodes: CanvasNode[];
   onAutoArrange: (layout: 'grid' | 'horizontal' | 'vertical') => void;
+  onAlign?: (type: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
+  onDistribute?: (type: 'horizontal' | 'vertical') => void;
   onResetAspect: () => void;
   onApplyDefaultSize: () => void;
   onSaveAsDefaultSize: () => void;
@@ -38,6 +47,8 @@ export interface MultiSelectionBarProps {
 const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   selectedNodes,
   onAutoArrange,
+  onAlign,
+  onDistribute,
   onResetAspect,
   onApplyDefaultSize,
   onSaveAsDefaultSize,
@@ -50,6 +61,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   onRetrySelectedErrors,
 }) => {
   const [showArrangeMenu, setShowArrangeMenu] = useState(false);
+  const [showAlignMenu, setShowAlignMenu] = useState(false);
   const defaultSize = getDefaultNodeSize();
 
   const count = selectedNodes.length;
@@ -136,6 +148,136 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
           </div>
         )}
       </div>
+
+      {/* Alignment & Distribution Popover */}
+      {onAlign && (
+        <div className="relative flex items-center">
+          <button
+            onClick={() => {
+              setShowAlignMenu(prev => !prev);
+              setShowArrangeMenu(false);
+            }}
+            className={`p-1.5 rounded-lg transition-colors ${
+              showAlignMenu ? 'bg-blue-600/30 text-blue-300' : 'hover:bg-gray-800 text-gray-300 hover:text-white'
+            }`}
+            title="對齊與等距分佈"
+          >
+            <AlignCenterHorizontal className="w-4 h-4 text-blue-400" />
+          </button>
+
+          {showAlignMenu && (
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl space-y-2 min-w-[190px] animate-in fade-in zoom-in-95 duration-100 z-50">
+              <div>
+                <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">水平對齊</div>
+                <div className="grid grid-cols-3 gap-1">
+                  <button
+                    onClick={() => {
+                      onAlign('left');
+                      setShowAlignMenu(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
+                    title="靠左對齊"
+                  >
+                    <AlignLeft className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-[10px]">靠左</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAlign('center');
+                      setShowAlignMenu(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
+                    title="水平置中"
+                  >
+                    <AlignCenter className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-[10px]">置中</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAlign('right');
+                      setShowAlignMenu(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
+                    title="靠右對齊"
+                  >
+                    <AlignRight className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-[10px]">靠右</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-1 border-t border-gray-800">
+                <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">垂直對齊</div>
+                <div className="grid grid-cols-3 gap-1">
+                  <button
+                    onClick={() => {
+                      onAlign('top');
+                      setShowAlignMenu(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
+                    title="靠頂對齊"
+                  >
+                    <AlignStartHorizontal className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-[10px]">靠頂</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAlign('middle');
+                      setShowAlignMenu(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
+                    title="垂直置中"
+                  >
+                    <AlignCenterVertical className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-[10px]">置中</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onAlign('bottom');
+                      setShowAlignMenu(false);
+                    }}
+                    className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
+                    title="靠底對齊"
+                  >
+                    <AlignEndHorizontal className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-[10px]">靠底</span>
+                  </button>
+                </div>
+              </div>
+
+              {onDistribute && count > 2 && (
+                <div className="pt-1 border-t border-gray-800">
+                  <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">等距分佈</div>
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      onClick={() => {
+                        onDistribute('horizontal');
+                        setShowAlignMenu(false);
+                      }}
+                      className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex items-center justify-center gap-1.5 transition-colors"
+                      title="水平等距分佈"
+                    >
+                      <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="text-[10px]">水平等距</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        onDistribute('vertical');
+                        setShowAlignMenu(false);
+                      }}
+                      className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex items-center justify-center gap-1.5 transition-colors"
+                      title="垂直等距分佈"
+                    >
+                      <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="text-[10px]">垂直等距</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Reset Aspect Ratio */}
       {hasImage && (

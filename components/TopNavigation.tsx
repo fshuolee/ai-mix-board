@@ -20,6 +20,8 @@ import {
   ExternalLink,
   Download,
   ShieldCheck,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import { ProjectMetadata, GoogleUserProfile, SyncStatus } from '../types';
 import { getModelById } from '../services/modelsConfig';
@@ -37,6 +39,10 @@ interface TopNavigationProps {
   syncStatus: SyncStatus;
   lastSavedAt?: Date | null;
   isProjectLoading?: boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onAddTextNode: () => void;
   onUploadImage: (file: File) => void;
   onResetZoom: () => void;
@@ -64,6 +70,10 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   syncStatus,
   lastSavedAt,
   isProjectLoading = false,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
   isSyncingAssets = false,
   onSyncAssetsToDrive,
   unuploadedAssetCount = 0,
@@ -421,6 +431,34 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
             className="hidden"
             onChange={handleFileChange}
           />
+
+          <div className="w-px h-4 bg-gray-800 mx-0.5" />
+
+          {/* Undo / Redo controls */}
+          <button
+            onClick={onUndo}
+            disabled={!canUndo || isProjectLoading}
+            className={`p-1.5 rounded-lg transition-colors ${
+              !canUndo || isProjectLoading
+                ? 'opacity-30 cursor-not-allowed text-gray-500'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            }`}
+            title="復原 (Cmd+Z)"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onRedo}
+            disabled={!canRedo || isProjectLoading}
+            className={`p-1.5 rounded-lg transition-colors ${
+              !canRedo || isProjectLoading
+                ? 'opacity-30 cursor-not-allowed text-gray-500'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            }`}
+            title="重做 (Cmd+Shift+Z)"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+          </button>
 
           <div className="w-px h-4 bg-gray-800 mx-0.5" />
 
