@@ -1,4 +1,4 @@
-import { ProjectMetadata, CanvasNode, ImageNode } from '../types';
+import { ProjectMetadata, CanvasNode, ImageNode, VideoNode } from '../types';
 import {
   getImage,
   storeImage,
@@ -400,10 +400,10 @@ export async function syncUnuploadedImageNodes(
   nodes: CanvasNode[],
   onProgress?: (synced: number, total: number) => void
 ): Promise<{ updatedNodes: CanvasNode[]; syncedCount: number; resolvedAssetsFolderId: string }> {
-  // 1. Identify image nodes that need Drive upload
+  // 1. Identify media nodes (image or video) that need Drive upload
   const pendingNodes = nodes.filter(
-    n => n.type === 'image' && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
-  ) as ImageNode[];
+    n => (n.type === 'image' || n.type === 'video') && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+  ) as (ImageNode | VideoNode)[];
 
   const resolvedAssetsFolderId = assetsFolderId || (await ensureAssetsFolder(token, projectFolderId));
 
@@ -414,20 +414,21 @@ export async function syncUnuploadedImageNodes(
   const replacements = new Map<string, { driveFileId?: string; driveViewLink?: string; status?: 'error' }>();
   let synced = 0;
 
-  for (const imgNode of pendingNodes) {
+  for (const mediaNode of pendingNodes) {
     try {
-      const localKey = imgNode.driveFileId || imgNode.content || imgNode.id;
+      const localKey = mediaNode.driveFileId || mediaNode.content || mediaNode.id;
       const blob = await getImage(localKey);
       if (!blob) {
-        console.warn(`[Drive Sync] Blob not found locally for node ${imgNode.id}. Marking as error to prevent infinite sync loop.`);
-        replacements.set(imgNode.id, { status: 'error' });
+        console.warn(`[Drive Sync] Blob not found locally for node ${mediaNode.id}. Marking as error to prevent infinite sync loop.`);
+        replacements.set(mediaNode.id, { status: 'error' });
         continue;
       }
 
-      const fileName = imgNode.originalFileName || `asset_${imgNode.id}.png`;
+      const defaultExt = mediaNode.type === 'video' ? '.mp4' : '.png';
+      const fileName = mediaNode.originalFileName || `asset_${mediaNode.id}${defaultExt}`;
       const uploaded = await uploadAssetToDrive(token, resolvedAssetsFolderId, blob, fileName);
 
-      replacements.set(imgNode.id, {
+      replacements.set(mediaNode.id, {
         driveFileId: uploaded.fileId,
         driveViewLink: uploaded.webViewLink,
       });
@@ -441,7 +442,7 @@ export async function syncUnuploadedImageNodes(
         onProgress(synced, pendingNodes.length);
       }
     } catch (uploadErr) {
-      console.warn(`[Drive Sync] Failed to sync node ${imgNode.id} to Drive:`, uploadErr);
+      console.warn(`[Drive Sync] Failed to sync node ${mediaNode.id} to Drive:`, uploadErr);
     }
   }
 
@@ -450,14 +451,14 @@ export async function syncUnuploadedImageNodes(
   }
 
   const updatedNodes = nodes.map(n => {
-    if (n.type === 'image' && replacements.has(n.id)) {
+    if ((n.type === 'image' || n.type === 'video') && replacements.has(n.id)) {
       const rep = replacements.get(n.id)!;
       if (rep.status === 'error') {
         return {
           ...n,
           status: 'error',
           updatedAt: Date.now(),
-        } as ImageNode;
+        } as CanvasNode;
       }
       return {
         ...n,
@@ -466,7 +467,7 @@ export async function syncUnuploadedImageNodes(
         driveViewLink: rep.driveViewLink,
         status: 'idle', // Reset any error status upon successful upload
         updatedAt: Date.now(),
-      } as ImageNode;
+      } as CanvasNode;
     }
     return n;
   });

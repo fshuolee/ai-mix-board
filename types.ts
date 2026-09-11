@@ -1,8 +1,8 @@
-export type NodeType = 'text' | 'image';
+export type NodeType = 'text' | 'image' | 'video';
 
 export interface SourceDetail {
   id: string;
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'video';
   content?: string;
   driveFileId?: string;
   originalFileName?: string;
@@ -41,7 +41,17 @@ export interface ImageNode extends BaseNode {
   driveViewLink?: string;
 }
 
-export type CanvasNode = TextNode | ImageNode;
+export interface VideoNode extends BaseNode {
+  type: 'video';
+  content: string; // Used as display ID or driveFileId
+  driveFileId?: string; // Google Drive File ID
+  originalFileName?: string;
+  mimeType?: string;
+  driveViewLink?: string;
+  duration?: number;
+}
+
+export type CanvasNode = TextNode | ImageNode | VideoNode;
 
 export interface ViewportState {
   x: number;
@@ -117,6 +127,7 @@ export interface RawApiModelInfo {
 export interface ModelCapability {
   supportsImageOutput: boolean;
   supportsImageInput: boolean;
+  supportsVideoOutput?: boolean;
   supportsText: boolean;
   isFast: boolean;
   isPro: boolean;
@@ -126,7 +137,7 @@ export interface ModelCapability {
 export interface ModelInfo {
   id: string;
   name: string;
-  category: 'recommended' | 'image' | 'fast' | 'reasoning' | 'atlascloud';
+  category: 'recommended' | 'image' | 'video' | 'fast' | 'reasoning' | 'atlascloud';
   provider?: 'gemini' | 'atlascloud';
   description: string;
   capabilities: ModelCapability;

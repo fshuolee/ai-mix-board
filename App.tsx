@@ -299,7 +299,7 @@ const App: React.FC = () => {
   const unuploadedAssetCount = useMemo(() => {
     if (isLoadingProjectData) return 0;
     return allNodes.filter(
-      n => n.type === 'image' && n.status !== 'generating' && n.status !== 'error' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+      n => (n.type === 'image' || n.type === 'video') && n.status !== 'generating' && n.status !== 'error' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
     ).length;
   }, [allNodes, isLoadingProjectData]);
 
@@ -859,15 +859,15 @@ const App: React.FC = () => {
     }
     const nodes = allNodesRef.current;
     const pendingCount = nodes.filter(
-      n => n.type === 'image' && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+      n => (n.type === 'image' || n.type === 'video') && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
     ).length;
 
     if (pendingCount === 0) {
-      showToast('目前所有圖片均已同步儲存於 Google Drive！');
+      showToast('目前所有媒體檔案均已同步儲存於 Google Drive！');
       return;
     }
 
-    showToast(`開始同步 ${pendingCount} 張圖片至 Google Drive...`);
+    showToast(`開始同步 ${pendingCount} 個媒體檔案至 Google Drive...`);
     await runBackgroundAssetSync(activeToken, proj, nodes);
   }, [runBackgroundAssetSync, showToast]);
 
@@ -1071,23 +1071,23 @@ const App: React.FC = () => {
       // Immediately set deleting status on all target nodes
       setDeletingNodeIds(new Set(nodeIdsToDelete));
 
-      // Find deleted ImageNodes
-      const deletedImageNodes = curAllNodes.filter(
-        n => deleteSet.has(n.id) && n.type === 'image' && (n as ImageNode).driveFileId
-      ) as ImageNode[];
+      // Find deleted media nodes (image or video)
+      const deletedMediaNodes = curAllNodes.filter(
+        n => deleteSet.has(n.id) && (n.type === 'image' || n.type === 'video') && (n as ImageNode | VideoNode).driveFileId
+      ) as (ImageNode | VideoNode)[];
 
       // Check which driveFileIds will have 0 references across ALL boards in the project
       const remainingNodes = curAllNodes.filter(n => !deleteSet.has(n.id));
       const orphanMap = new Map<string, string>();
 
-      deletedImageNodes.forEach(img => {
-        const fileId = img.driveFileId!;
+      deletedMediaNodes.forEach(media => {
+        const fileId = media.driveFileId!;
         const remainingCount = remainingNodes.filter(
-          n => n.type === 'image' && (n as ImageNode).driveFileId === fileId
+          n => (n.type === 'image' || n.type === 'video') && (n as ImageNode | VideoNode).driveFileId === fileId
         ).length;
 
         if (remainingCount === 0 && !orphanMap.has(fileId)) {
-          orphanMap.set(fileId, img.originalFileName || `asset_${fileId.slice(0, 6)}.png`);
+          orphanMap.set(fileId, media.originalFileName || `asset_${fileId.slice(0, 6)}.${media.type === 'video' ? 'mp4' : 'png'}`);
         }
       });
 
@@ -2032,9 +2032,10 @@ const App: React.FC = () => {
     const hasImageSelection = capturedSelectedNodes.some(n => n.type === 'image');
     let capturedModelId = selectedModelId;
     let modelInfo = getModelById(capturedModelId);
+    const isTargetVideo = Boolean(modelInfo?.capabilities?.supportsVideoOutput || modelInfo?.category === 'video');
 
-    // If reference images are passed but model doesn't support image output, route to image generation model
-    if (hasImageSelection && !modelInfo.capabilities.supportsImageOutput) {
+    // If reference images are passed but model doesn't support image or video output, route to image generation model
+    if (hasImageSelection && !modelInfo.capabilities.supportsImageOutput && !isTargetVideo) {
       capturedModelId = DEFAULT_MODEL_ID;
       modelInfo = getModelById(capturedModelId);
       showToast(`選取了參考圖，已自動使用多模態生圖模型 (${modelInfo.name}) 生成圖像`);
@@ -2057,9 +2058,9 @@ const App: React.FC = () => {
         promptSnippet += ` (+${imageCount} 張圖)`;
       }
     } else if (imageCount > 0) {
-      promptSnippet = `${imageCount} 張參考圖片合成`;
+      promptSnippet = isTargetVideo ? `${imageCount} 張參考圖片生成影片` : `${imageCount} 張參考圖片合成`;
     } else {
-      promptSnippet = 'AI 圖像合成生成';
+      promptSnippet = isTargetVideo ? 'AI 影片生成' : 'AI 圖像合成生成';
     }
 
     if (promptSnippet.length > 80) {
@@ -2068,8 +2069,8 @@ const App: React.FC = () => {
 
     // 3. Determine open position for the placeholder node
     const defaultSize = getDefaultNodeSize();
-    const placeholderWidth = defaultSize.width || 384;
-    const placeholderHeight = defaultSize.height || 384;
+    const placeholderWidth = isTargetVideo ? 480 : (defaultSize.width || 384);
+    const placeholderHeight = isTargetVideo ? 270 : (defaultSize.height || 384);
 
     const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
     let anchorX = initialCoords.x;
@@ -2097,14 +2098,14 @@ const App: React.FC = () => {
       id: n.id,
       type: n.type,
       content: n.type === 'text' ? (n as TextNode).content : undefined,
-      driveFileId: n.type === 'image' ? (n as ImageNode).driveFileId || n.content : undefined,
-      originalFileName: n.type === 'image' ? (n as ImageNode).originalFileName : undefined,
+      driveFileId: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).driveFileId || n.content : undefined,
+      originalFileName: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).originalFileName : undefined,
     }));
 
     // 4. Create and place the placeholder node immediately
-    const placeholderNode: ImageNode = {
+    const placeholderNode: CanvasNode = {
       id: jobId,
-      type: 'image',
+      type: isTargetVideo ? 'video' : 'image',
       x,
       y,
       width: placeholderWidth,
@@ -2131,7 +2132,71 @@ const App: React.FC = () => {
       try {
         const result = await generateFromNodes(capturedSelectedNodes, capturedModelId);
 
-        if (result.type === 'image') {
+        if (result.type === 'video') {
+          const newVideoBlob = result.blob;
+          await storeImage(jobId, newVideoBlob);
+
+          let driveFileId = jobId;
+          let driveViewLink: string | undefined;
+
+          // Upload generated video asset to Google Drive project assets folder if connected
+          const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+          const targetProj = currentProjectRef.current || currentProject;
+          const projFolderId =
+            targetProj?.folderId ||
+            (activeToken && targetProj?.spreadsheetId
+              ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+              : null);
+
+          if (activeToken && projFolderId) {
+            try {
+              const assetsFolderId =
+                targetProj?.assetsFolderId ||
+                (await ensureAssetsFolder(activeToken, projFolderId));
+              const uploaded = await uploadAssetToDrive(
+                activeToken,
+                assetsFolderId,
+                newVideoBlob,
+                `video_gen_${jobId}.mp4`
+              );
+              driveFileId = uploaded.fileId;
+              driveViewLink = uploaded.webViewLink;
+
+              if (driveFileId !== jobId) {
+                await storeImage(driveFileId, newVideoBlob, undefined, true);
+                await storeImage(jobId, newVideoBlob, undefined, true);
+              }
+            } catch (uploadErr) {
+              console.warn('Drive upload failed for generated video:', uploadErr);
+            }
+          }
+
+          // Pre-populate memory ObjectURL cache
+          const objectUrl = URL.createObjectURL(newVideoBlob);
+          nodeObjectUrlCache.set(driveFileId, objectUrl);
+          nodeObjectUrlCache.set(jobId, objectUrl);
+
+          updateNodesAndSave(prev => {
+            const exists = prev.some(n => n.id === jobId);
+            if (!exists) return prev;
+            return prev.map(node => {
+              if (node.id !== jobId) return node;
+              return {
+                ...node,
+                type: 'video',
+                width: 480,
+                height: 270,
+                content: driveFileId,
+                driveFileId,
+                originalFileName: `video_${jobId}.mp4`,
+                driveViewLink,
+                status: 'idle',
+                errorMessage: undefined,
+                updatedAt: Date.now(),
+              };
+            });
+          });
+        } else if (result.type === 'image') {
           const newImageBlob = result.blob;
           await storeImage(jobId, newImageBlob);
 
@@ -2265,7 +2330,9 @@ const App: React.FC = () => {
       let targetModelId = targetNode.generationModelId || selectedModelId;
       let modelInfo = getModelById(targetModelId);
       targetModelId = modelInfo?.id || targetModelId;
-      if (targetNode.type === 'image' && !modelInfo.capabilities.supportsImageOutput) {
+      const isTargetVideo = targetNode.type === 'video' || Boolean(modelInfo?.capabilities?.supportsVideoOutput || modelInfo?.category === 'video');
+
+      if (targetNode.type === 'image' && !modelInfo.capabilities.supportsImageOutput && !isTargetVideo) {
         targetModelId = DEFAULT_MODEL_ID;
         modelInfo = getModelById(targetModelId);
         targetModelId = modelInfo?.id || DEFAULT_MODEL_ID;
@@ -2280,11 +2347,11 @@ const App: React.FC = () => {
         const foundIds = new Set(sourceNodes.map(n => n.id));
         for (const detail of targetNode.generationSourceDetails) {
           if (!foundIds.has(detail.id)) {
-            if (detail.type === 'image' && (detail.driveFileId || detail.content)) {
+            if ((detail.type === 'image' || detail.type === 'video') && (detail.driveFileId || detail.content)) {
               const fileId = detail.driveFileId || detail.content!;
               sourceNodes.push({
                 id: detail.id,
-                type: 'image',
+                type: detail.type,
                 x: targetNode.x,
                 y: targetNode.y,
                 width: 300,
@@ -2295,7 +2362,7 @@ const App: React.FC = () => {
                 driveFileId: fileId,
                 originalFileName: detail.originalFileName,
                 createdAt: Date.now(),
-              });
+              } as CanvasNode);
               foundIds.add(detail.id);
             } else if (detail.type === 'text' && detail.content) {
               sourceNodes.push({
@@ -2364,7 +2431,70 @@ const App: React.FC = () => {
         try {
           const result = await generateFromNodes(sourceNodes, targetModelId);
 
-          if (result.type === 'image') {
+          if (result.type === 'video') {
+            const newVideoBlob = result.blob;
+            await storeImage(nodeId, newVideoBlob);
+
+            let driveFileId = nodeId;
+            let driveViewLink: string | undefined;
+
+            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+            const targetProj = currentProjectRef.current || currentProject;
+            const projFolderId =
+              targetProj?.folderId ||
+              (activeToken && targetProj?.spreadsheetId
+                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                : null);
+
+            if (activeToken && projFolderId) {
+              try {
+                const assetsFolderId =
+                  targetProj?.assetsFolderId ||
+                  (await ensureAssetsFolder(activeToken, projFolderId));
+                const uploaded = await uploadAssetToDrive(
+                  activeToken,
+                  assetsFolderId,
+                  newVideoBlob,
+                  `video_gen_${nodeId}.mp4`
+                );
+                driveFileId = uploaded.fileId;
+                driveViewLink = uploaded.webViewLink;
+
+                if (driveFileId !== nodeId) {
+                  await storeImage(driveFileId, newVideoBlob, undefined, true);
+                  await storeImage(nodeId, newVideoBlob, undefined, true);
+                }
+              } catch (uploadErr) {
+                console.warn('Drive upload failed for retried video:', uploadErr);
+              }
+            }
+
+            const objectUrl = URL.createObjectURL(newVideoBlob);
+            nodeObjectUrlCache.set(driveFileId, objectUrl);
+            nodeObjectUrlCache.set(nodeId, objectUrl);
+
+            updateNodesAndSave(prev => {
+              const exists = prev.some(n => n.id === nodeId);
+              if (!exists) return prev;
+              return prev.map(node => {
+                if (node.id !== nodeId) return node;
+                return {
+                  ...node,
+                  type: 'video',
+                  width: 480,
+                  height: 270,
+                  content: driveFileId,
+                  driveFileId,
+                  originalFileName: `video_${nodeId}.mp4`,
+                  driveViewLink,
+                  status: 'idle',
+                  errorMessage: undefined,
+                  updatedAt: Date.now(),
+                };
+              });
+            });
+            showToast('影片節點重試生成成功！');
+          } else if (result.type === 'image') {
             const newImageBlob = result.blob;
             await storeImage(nodeId, newImageBlob);
 
@@ -2979,7 +3109,7 @@ const App: React.FC = () => {
   // Download & Export Handlers
   const handleDownloadSingleNode = useCallback(
     async (node: CanvasNode) => {
-      showToast(`正在準備下載 ${node.type === 'image' ? '圖片' : '文字'}...`);
+      showToast(`正在準備下載 ${node.type === 'video' ? '影片' : node.type === 'image' ? '圖片' : '文字'}...`);
       try {
         const ok = await downloadSingleNode(node);
         if (ok) {
@@ -3036,22 +3166,22 @@ const App: React.FC = () => {
   }, [currentBoardNodes, boards, currentBoardId, currentProject?.name, showToast]);
 
   const handleDownloadAllBoardImages = useCallback(async () => {
-    const images = currentBoardNodes.filter(n => n.type === 'image');
-    if (images.length === 0) {
-      showToast('目前畫布沒有圖片可供下載');
+    const media = currentBoardNodes.filter(n => n.type === 'image' || n.type === 'video');
+    if (media.length === 0) {
+      showToast('目前畫布沒有媒體檔案可供下載');
       return;
     }
-    showToast(`開始下載畫布中的 ${images.length} 張圖片...`);
+    showToast(`開始下載畫布中的 ${media.length} 個媒體檔案...`);
     try {
-      const { successCount, failCount } = await batchDownloadNodes(images);
+      const { successCount, failCount } = await batchDownloadNodes(media);
       if (failCount === 0) {
-        showToast(`已成功下載 ${images.length} 張圖片`);
+        showToast(`已成功下載 ${media.length} 個媒體檔案`);
       } else {
-        showToast(`下載完成：成功 ${successCount} 張，失敗 ${failCount} 張`);
+        showToast(`下載完成：成功 ${successCount} 個，失敗 ${failCount} 個`);
       }
     } catch (err) {
-      console.error('Download all images error:', err);
-      showToast('批次下載圖片時發生錯誤');
+      console.error('Download all board media error:', err);
+      showToast('下載媒體檔案時發生錯誤');
     }
   }, [currentBoardNodes, showToast]);
 

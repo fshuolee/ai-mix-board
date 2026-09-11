@@ -1,4 +1,4 @@
-import { CanvasNode, ImageNode, TextNode } from '../types';
+import { CanvasNode, ImageNode, TextNode, VideoNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
 import { getAccessToken } from '../services/googleAuthService';
@@ -41,6 +41,7 @@ export const downloadText = (content: string, filename: string): void => {
  */
 function getExtensionFromMime(mimeType?: string): string {
   if (!mimeType) return '.png';
+  if (mimeType.includes('mp4') || mimeType.includes('video')) return '.mp4';
   if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return '.jpg';
   if (mimeType.includes('webp')) return '.webp';
   if (mimeType.includes('gif')) return '.gif';
@@ -109,6 +110,54 @@ export async function getNodeBlob(
       // Ensure has extension
       if (!filename.includes('.')) {
         filename = `${filename}${ext}`;
+      }
+    }
+
+    return { blob, filename, mimeType: mime };
+  }
+
+  if (node.type === 'video') {
+    const vidNode = node as VideoNode;
+    const fileId = vidNode.driveFileId || vidNode.content || node.id;
+    const authToken = token || getAccessToken() || undefined;
+
+    let blob: Blob | null = null;
+    try {
+      blob = await getImage(fileId);
+    } catch (err) {
+      console.warn('Failed to retrieve video from IndexedDB:', err);
+    }
+
+    if (!blob && vidNode.driveFileId && authToken) {
+      try {
+        blob = await getAssetBlobFromDrive(authToken, vidNode.driveFileId);
+      } catch (err) {
+        console.warn('Failed to retrieve video from Drive:', err);
+      }
+    }
+
+    if (!blob && vidNode.content && (vidNode.content.startsWith('blob:') || vidNode.content.startsWith('data:') || vidNode.content.startsWith('http'))) {
+      try {
+        const res = await fetch(vidNode.content);
+        if (res.ok) {
+          blob = await res.blob();
+        }
+      } catch (err) {
+        console.warn('Failed to fetch video from content URL:', err);
+      }
+    }
+
+    if (!blob) {
+      return null;
+    }
+
+    const mime = blob.type || vidNode.mimeType || 'video/mp4';
+    let filename = vidNode.originalFileName;
+    if (!filename) {
+      filename = `video_${node.id.slice(-6)}.mp4`;
+    } else if (!filename.toLowerCase().endsWith('.mp4')) {
+      if (!filename.includes('.')) {
+        filename = `${filename}.mp4`;
       }
     }
 

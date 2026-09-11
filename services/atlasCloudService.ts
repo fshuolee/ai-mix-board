@@ -362,6 +362,265 @@ export const ATLAS_IMAGE_MODELS: ModelInfo[] = [
   },
 ];
 
+/**
+ * Curated Atlas Cloud Video Generation models (Text-to-Video & Image-to-Video)
+ */
+export const ATLAS_VIDEO_MODELS: ModelInfo[] = [
+  {
+    id: 'minimax/h3-fast/image-to-video',
+    name: 'MiniMax H3 Fast (圖生影/極速高性價)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: 'MiniMax 次世代高性價比圖生影片模型，動態自然生動、運鏡細膩，支援快速生成。',
+    badge: 'MiniMax 圖生影',
+    tag: '極速影片',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'minimax/h3-fast/text-to-video',
+    name: 'MiniMax H3 Fast (文生影/極速高性價)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: 'MiniMax 高速文字生影片模型，以提示詞生成富有張力之動態場景與短片。',
+    badge: 'MiniMax 文生影',
+    tag: '極速文生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: false,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'minimax/h3/image-to-video',
+    name: 'MiniMax H3 Pro (720P 高清圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: 'MiniMax 專業級 720P 高清圖生影片，具備卓越人物肢體協調度與光影一致性。',
+    badge: 'MiniMax 720P',
+    tag: '高清圖生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'minimax/h3/text-to-video',
+    name: 'MiniMax H3 Pro (720P 高清文生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: 'MiniMax 專業級高清文字生影片模型，細緻渲染複雜動作與氛圍特效。',
+    badge: 'MiniMax 旗艦',
+    tag: '高清文生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: false,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: false,
+    },
+  },
+  {
+    id: 'minimax/h3-max/image-to-video',
+    name: 'MiniMax H3 Max (頂級旗艦圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: 'MiniMax 頂級電影感大模型，支援超長運動軌跡與複雜光線動態。',
+    badge: 'MiniMax Max',
+    tag: '頂級圖生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: false,
+    },
+  },
+  {
+    id: 'alibaba/wan-3.0/image-to-video',
+    name: 'Alibaba Wan 3.0 (通義萬相圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '阿里萬相 3.0 次世代影片生成旗艦，原生高畫質渲染與自然物理動態表現。',
+    badge: '萬相 3.0 影片',
+    tag: '萬相圖生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'alibaba/wan-3.0/text-to-video',
+    name: 'Alibaba Wan 3.0 (通義萬相文生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '阿里萬相 3.0 次世代文生影片，頂級語意理解與電影級視訊構圖。',
+    badge: '萬相 3.0 文生影',
+    tag: '萬相文生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: false,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'alibaba/wan-3.0-prime/image-to-video',
+    name: 'Alibaba Wan 3.0 Prime (電影級圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '阿里頂級 Prime 電影級影像轉視訊，專業鏡頭景深變焦與複雜場景交互。',
+    badge: '萬相 Prime',
+    tag: '電影級圖生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'alibaba/wan-2.5/image-to-video',
+    name: 'Alibaba Wan 2.5 (圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '阿里萬相 2.5 經典影片模型，支援高保真人物與場景轉化為流暢短影音。',
+    badge: '萬相 2.5',
+    tag: '圖生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: false,
+    },
+  },
+  {
+    id: 'alibaba/wan-2.5/text-to-video',
+    name: 'Alibaba Wan 2.5 (文生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '阿里萬相 2.5 文生影片，快速生成動態場景。',
+    badge: '萬相 2.5 文生影',
+    tag: '文生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: false,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: false,
+    },
+  },
+  {
+    id: 'bytedance/seedance-2.5/image-to-video',
+    name: 'ByteDance Seedance 2.5 (字節圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '字節跳動 Seedance 2.5 旗艦圖生影片，擅長人物動態演繹與超流暢幀率。',
+    badge: 'Seedance 2.5',
+    tag: '字節圖生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'bytedance/seedance-2.5/text-to-video',
+    name: 'ByteDance Seedance 2.5 (字節文生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '字節跳動 Seedance 2.5 旗艦文生短影音，創意動態分鏡與寫實質感。',
+    badge: 'Seedance 文生影',
+    tag: '字節文生影',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: false,
+      supportsText: true,
+      isFast: false,
+      isPro: true,
+      isRecommended: true,
+    },
+  },
+  {
+    id: 'bytedance/seedance-2.0-mini/image-to-video',
+    name: 'ByteDance Seedance 2.0 Mini (極速圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: '字節輕量極速圖生影片模型，快速預覽動態創意與過渡動畫。',
+    badge: 'Seedance Mini',
+    tag: '極速影片',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: false,
+    },
+  },
+  {
+    id: 'google/gemini-omni-flash/image-to-video',
+    name: 'Google Gemini Omni Flash (圖生影)',
+    category: 'video',
+    provider: 'atlascloud',
+    description: 'Google 全模態影像轉動態短片實驗模型，支援提示詞引導運鏡。',
+    badge: 'Google Omni 影片',
+    tag: 'Omni 影片',
+    capabilities: {
+      supportsImageOutput: false,
+      supportsVideoOutput: true,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: true,
+    },
+  },
+];
+
+
 export const ATLAS_TEXT_MODELS: ModelInfo[] = [
   {
     id: 'deepseek-ai/DeepSeek-V3.1',
@@ -468,6 +727,7 @@ export const ATLAS_TEXT_MODELS: ModelInfo[] = [
  * Curated baseline fallback Atlas Cloud models combining image and text models
  */
 export const DEFAULT_ATLAS_MODELS: ModelInfo[] = [
+  ...ATLAS_VIDEO_MODELS,
   ...ATLAS_IMAGE_MODELS,
   ...ATLAS_TEXT_MODELS,
 ];
@@ -548,25 +808,36 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
   const inputMods: string[] = Array.isArray(raw.input_modalities) ? raw.input_modalities : [];
   const outputMods: string[] = Array.isArray(raw.output_modalities) ? raw.output_modalities : [];
 
+  const isVideo =
+    id.toLowerCase().includes('video') ||
+    id.toLowerCase().includes('image-to-video') ||
+    id.toLowerCase().includes('text-to-video') ||
+    id.toLowerCase().includes('seedance') ||
+    id.toLowerCase().includes('h3-fast') ||
+    outputMods.includes('video');
+
+  const supportsVideoOutput = isVideo;
+
   const isImageEdit =
     id.toLowerCase().includes('edit') ||
     id.toLowerCase().includes('image-edit') ||
     id.toLowerCase().includes('inpainting');
 
   const supportsImageOutput =
-    outputMods.includes('image') ||
-    isImageEdit ||
-    id.toLowerCase().includes('image') ||
-    id.toLowerCase().includes('flux') ||
-    id.toLowerCase().includes('dream') ||
-    id.toLowerCase().includes('kling') ||
-    id.toLowerCase().includes('wan') ||
-    id.toLowerCase().includes('sd') ||
-    id.toLowerCase().includes('diffusion') ||
-    id.toLowerCase().includes('ideogram');
+    !supportsVideoOutput &&
+    (outputMods.includes('image') ||
+      isImageEdit ||
+      id.toLowerCase().includes('image') ||
+      id.toLowerCase().includes('flux') ||
+      id.toLowerCase().includes('dream') ||
+      id.toLowerCase().includes('kling') ||
+      id.toLowerCase().includes('sd') ||
+      id.toLowerCase().includes('diffusion') ||
+      id.toLowerCase().includes('ideogram'));
 
   const supportsImageInput =
     inputMods.includes('image') ||
+    supportsVideoOutput ||
     isImageEdit ||
     id.toLowerCase().includes('vision') ||
     id.toLowerCase().includes('vl') ||
@@ -598,6 +869,9 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
 
   const isRecommended =
     id.includes('qwen-image') ||
+    id.includes('h3-fast') ||
+    id.includes('wan-3.0') ||
+    id.includes('seedance') ||
     id.includes('DeepSeek-V3') ||
     id.includes('deepseek-v4') ||
     id.includes('qwen3-vl') ||
@@ -606,8 +880,10 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
     id.includes('FLUX.1') ||
     id.includes('seedream');
 
-  let category: 'recommended' | 'image' | 'fast' | 'reasoning' | 'atlascloud' = 'atlascloud';
-  if (supportsImageOutput) {
+  let category: 'recommended' | 'video' | 'image' | 'fast' | 'reasoning' | 'atlascloud' = 'atlascloud';
+  if (supportsVideoOutput) {
+    category = 'video';
+  } else if (supportsImageOutput) {
     category = 'image';
   } else if (thinking) {
     category = 'reasoning';
@@ -616,7 +892,9 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
   }
 
   let badge = 'Atlas Cloud';
-  if (isImageEdit) {
+  if (supportsVideoOutput) {
+    badge = 'Atlas 影片生成';
+  } else if (isImageEdit) {
     badge = 'Atlas 圖像編輯';
   } else if (supportsImageOutput) {
     badge = 'Atlas 影像生成';
@@ -636,6 +914,8 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
 
   const tag = contextK
     ? `${contextK} 上下文`
+    : supportsVideoOutput
+    ? '影片生成'
     : isImageEdit
     ? '圖生圖編輯'
     : supportsImageOutput
@@ -651,6 +931,7 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
     capabilities: {
       supportsImageOutput,
       supportsImageInput,
+      supportsVideoOutput,
       supportsText: true,
       isFast,
       isPro,
@@ -666,7 +947,7 @@ export function parseAtlasCloudModel(raw: any): ModelInfo {
 }
 
 /**
- * Fetch dynamic model catalog from Atlas Cloud API, ensuring all image models are preserved and indexed
+ * Fetch dynamic model catalog from Atlas Cloud API, ensuring all image and video models are preserved and indexed
  */
 export async function fetchAtlasCloudModels(customApiKey?: string): Promise<ModelInfo[]> {
   const apiKey = (customApiKey || getEffectiveAtlasCloudApiKey()).trim();
@@ -689,11 +970,17 @@ export async function fetchAtlasCloudModels(customApiKey?: string): Promise<Mode
       }
     }
 
-    // Merge dedicated image models (Qwen Image Edit, FLUX, Seedream, etc.) with dynamic models
+    // Merge dedicated video and image models with dynamic models
     const mergedMap = new Map<string, ModelInfo>();
 
+    for (const vidModel of ATLAS_VIDEO_MODELS) {
+      mergedMap.set(vidModel.id, vidModel);
+    }
+
     for (const imgModel of ATLAS_IMAGE_MODELS) {
-      mergedMap.set(imgModel.id, imgModel);
+      if (!mergedMap.has(imgModel.id)) {
+        mergedMap.set(imgModel.id, imgModel);
+      }
     }
 
     for (const textModel of ATLAS_TEXT_MODELS) {
@@ -709,9 +996,11 @@ export async function fetchAtlasCloudModels(customApiKey?: string): Promise<Mode
     }
 
     const sorted = Array.from(mergedMap.values()).sort((a: ModelInfo, b: ModelInfo) => {
-      // Group: recommended first, then image output models, then alphabetical
+      // Group: recommended first, then video models, then image models, then alphabetical
       if (a.capabilities.isRecommended && !b.capabilities.isRecommended) return -1;
       if (!a.capabilities.isRecommended && b.capabilities.isRecommended) return 1;
+      if (a.capabilities.supportsVideoOutput && !b.capabilities.supportsVideoOutput) return -1;
+      if (!a.capabilities.supportsVideoOutput && b.capabilities.supportsVideoOutput) return 1;
       if (a.capabilities.supportsImageOutput && !b.capabilities.supportsImageOutput) return -1;
       if (!a.capabilities.supportsImageOutput && b.capabilities.supportsImageOutput) return 1;
       return a.name.localeCompare(b.name);
@@ -747,12 +1036,16 @@ export function isAtlasCloudModel(modelId: string, modelInfo?: ModelInfo): boole
       lower.startsWith('zai-org/') ||
       lower.startsWith('moonshotai/') ||
       lower.startsWith('minimaxai/') ||
+      lower.startsWith('minimax/') ||
+      lower.startsWith('bytedance/') ||
       lower.startsWith('black-forest-labs/') ||
       lower.startsWith('stabilityai/') ||
       lower.startsWith('ideogram-ai/') ||
       lower.startsWith('hidream-ai/') ||
       lower.startsWith('seedream') ||
+      lower.startsWith('seedance') ||
       lower.startsWith('kling') ||
+      lower.startsWith('wan') ||
       lower.startsWith('google/')) {
     return true;
   }
@@ -761,6 +1054,7 @@ export function isAtlasCloudModel(modelId: string, modelInfo?: ModelInfo): boole
 
 export type GenerationResult =
   | { type: 'image'; blob: Blob }
+  | { type: 'video'; blob: Blob; mimeType?: string }
   | { type: 'text'; text: string };
 
 /**
@@ -825,6 +1119,129 @@ export async function generateWithAtlasCloud(
     throw new Error('請至少選取一個包含文字或圖片的節點');
   }
 
+  const isVideoModel =
+    actualModelInfo?.capabilities?.supportsVideoOutput ||
+    actualModelInfo?.category === 'video' ||
+    actualModelId.toLowerCase().includes('video') ||
+    actualModelId.toLowerCase().includes('image-to-video') ||
+    actualModelId.toLowerCase().includes('text-to-video') ||
+    actualModelId.toLowerCase().includes('seedance') ||
+    actualModelId.toLowerCase().includes('h3-fast') ||
+    actualModelId.toLowerCase().includes('wan-3') ||
+    actualModelId.toLowerCase().includes('wan-2');
+
+  // 1. VIDEO GENERATION PATH
+  if (isVideoModel) {
+    let finalPrompt = promptText;
+    if (!finalPrompt) {
+      if (imageParts.length > 0) {
+        finalPrompt = 'Dynamic cinematic motion, natural fluid animation, high quality video';
+      } else {
+        finalPrompt = 'Cinematic dynamic camera movement with high definition rendering';
+      }
+    }
+
+    let referenceImageUrls: string[] = [];
+    if (imageParts.length > 0) {
+      const uploadPromises = imageParts.map(async (part) => {
+        const uploaded = await uploadMediaToAtlas(part.blob, apiKey);
+        if (uploaded) return uploaded;
+        return `data:${part.mimeType};base64,${part.data}`;
+      });
+      referenceImageUrls = await Promise.all(uploadPromises);
+    }
+
+    const payload: any = {
+      model: actualModelId,
+      prompt: finalPrompt,
+      ratio: '16:9',
+    };
+
+    if (referenceImageUrls.length > 0) {
+      payload.image = referenceImageUrls[0];
+      payload.images = referenceImageUrls;
+    }
+
+    if (actualModelId.includes('h3-fast')) {
+      payload.resolution = '480P';
+    } else if (actualModelId.includes('h3')) {
+      payload.resolution = '720P';
+    }
+
+    payload.duration = 5;
+
+    const res = await fetch('https://api.atlascloud.ai/api/v1/model/generateVideo', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Atlas Cloud 影片任務建立失敗 (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    const predictionId = data?.data?.id || data?.id || data?.prediction_id;
+
+    if (!predictionId) {
+      const directOutputs = data?.data?.outputs || data?.outputs;
+      const targetUrl = Array.isArray(directOutputs) ? directOutputs[0] : directOutputs;
+      if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
+        const blob = await fetchImageBlob(targetUrl);
+        return { type: 'video', blob, mimeType: 'video/mp4' };
+      }
+      throw new Error('未取得影片生成任務 ID');
+    }
+
+    // Poll prediction status (up to 90 attempts ~180 seconds)
+    const maxAttempts = 90;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(r => setTimeout(r, 2000));
+
+      let statusRes: Response;
+      try {
+        statusRes = await fetch(`https://api.atlascloud.ai/api/v1/model/prediction/${predictionId}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+          },
+        });
+      } catch (netErr) {
+        console.warn('Network issue polling video status:', netErr);
+        continue;
+      }
+
+      let statusData: any;
+      try {
+        statusData = await statusRes.json();
+      } catch {
+        continue;
+      }
+
+      const dataObj = statusData?.data || statusData;
+      const status = dataObj?.status?.toLowerCase();
+
+      if (status === 'completed' || status === 'succeeded') {
+        const outputs = dataObj?.outputs || dataObj?.output;
+        let targetUrl = Array.isArray(outputs) ? outputs[0] : outputs;
+        if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
+          const blob = await fetchImageBlob(targetUrl);
+          return { type: 'video', blob, mimeType: 'video/mp4' };
+        }
+        throw new Error('影片生成成功但未取得有效影片網址');
+      }
+
+      if (status === 'failed' || status === 'error' || (!statusRes.ok && statusRes.status >= 400 && dataObj?.error)) {
+        throw new Error(dataObj?.error || statusData?.message || `Atlas Cloud 影片生成失敗 (${statusRes.status})`);
+      }
+    }
+
+    throw new Error('Atlas Cloud 影片生成等待逾時，請稍後重試');
+  }
+
   const isEditModel =
     actualModelId.toLowerCase().includes('edit') ||
     actualModelInfo?.tag?.includes('編輯') ||
@@ -839,7 +1256,7 @@ export async function generateWithAtlasCloud(
     actualModelId.toLowerCase().includes('kling') ||
     actualModelId.toLowerCase().includes('image');
 
-  // 1. IMAGE GENERATION / EDITING PATH
+  // 2. IMAGE GENERATION / EDITING PATH
   if (supportsImageOutput) {
     let finalPrompt = promptText;
     if (!finalPrompt) {

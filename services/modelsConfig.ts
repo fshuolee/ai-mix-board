@@ -23,6 +23,13 @@ export const MODEL_CATEGORIES: ModelCategoryConfig[] = [
     icon: 'Sparkles',
   },
   {
+    id: 'video',
+    title: '🎬 影片創作 (Video Generation)',
+    shortTitle: '影片創作',
+    subtitle: '圖生影片與文生影片 (MiniMax H3 / 萬相 Wan 3.0 / 字節 Seedance 2.5)',
+    icon: 'Video',
+  },
+  {
     id: 'image',
     title: '🎨 圖像創作與編輯 (Image Generation & Edit)',
     shortTitle: '圖像創作與編輯',
@@ -534,28 +541,39 @@ export function getModelById(modelId: string): ModelInfo {
 
   // Check if it's an Atlas Cloud model
   if (isAtlasCloudModel(cleanId)) {
+    const isVideo =
+      cleanId.includes('video') ||
+      cleanId.includes('image-to-video') ||
+      cleanId.includes('text-to-video') ||
+      cleanId.includes('seedance') ||
+      cleanId.includes('h3-fast') ||
+      cleanId.includes('wan-3') ||
+      cleanId.includes('wan-2');
     const isEdit = cleanId.includes('edit');
+    const supportsVideoOutput = isVideo;
     const supportsImageOutput =
-      isEdit ||
-      cleanId.includes('image') ||
-      cleanId.includes('flux') ||
-      cleanId.includes('seedream') ||
-      cleanId.includes('kling') ||
-      cleanId.includes('ideogram');
+      !supportsVideoOutput &&
+      (isEdit ||
+        cleanId.includes('image') ||
+        cleanId.includes('flux') ||
+        cleanId.includes('seedream') ||
+        cleanId.includes('kling') ||
+        cleanId.includes('ideogram'));
     const isFast = cleanId.includes('flash') || cleanId.includes('mini') || cleanId.includes('lite');
     const isPro = cleanId.includes('pro') || cleanId.includes('opus') || cleanId.includes('r1');
 
     return {
       id: cleanId,
       name: cleanId,
-      category: supportsImageOutput ? 'image' : isPro ? 'reasoning' : isFast ? 'fast' : 'atlascloud',
+      category: supportsVideoOutput ? 'video' : supportsImageOutput ? 'image' : isPro ? 'reasoning' : isFast ? 'fast' : 'atlascloud',
       provider: 'atlascloud',
       description: `Atlas Cloud 端點: ${cleanId}`,
-      badge: isEdit ? 'Atlas 圖像編輯' : supportsImageOutput ? 'Atlas 影像生成' : 'Atlas Cloud 模型',
-      tag: isEdit ? '圖生圖編輯' : supportsImageOutput ? '影像生成' : 'Atlas API',
+      badge: supportsVideoOutput ? 'Atlas 影片生成' : isEdit ? 'Atlas 圖像編輯' : supportsImageOutput ? 'Atlas 影像生成' : 'Atlas Cloud 模型',
+      tag: supportsVideoOutput ? '影片生成' : isEdit ? '圖生圖編輯' : supportsImageOutput ? '影像生成' : 'Atlas API',
       capabilities: {
         supportsImageOutput,
         supportsImageInput: true,
+        supportsVideoOutput,
         supportsText: true,
         isFast,
         isPro,

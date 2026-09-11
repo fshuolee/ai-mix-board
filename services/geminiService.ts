@@ -56,6 +56,7 @@ function base64ToPart(base64: string) {
 
 export type GenerationResult =
   | { type: 'image'; blob: Blob }
+  | { type: 'video'; blob: Blob; mimeType?: string }
   | { type: 'text'; text: string };
 
 /**

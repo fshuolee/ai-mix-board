@@ -1,4 +1,4 @@
-import { BoardMetadata, CanvasNode, ImageNode, SourceDetail, TextNode, ViewportState } from '../types';
+import { BoardMetadata, CanvasNode, ImageNode, VideoNode, SourceDetail, TextNode, ViewportState } from '../types';
 import { refreshGoogleToken } from './googleAuthService';
 import { isDriveFileId } from './dbService';
 
@@ -413,13 +413,13 @@ export async function saveGraphToSheet(
   const assetRefMap = new Map<string, { count: number; name?: string }>();
 
   nodes.forEach(node => {
-    const isImage = node.type === 'image';
-    const imageNode = isImage ? (node as ImageNode) : null;
-    const driveFileId = imageNode?.driveFileId || (isImage ? node.content : '');
+    const isMedia = node.type === 'image' || node.type === 'video';
+    const mediaNode = isMedia ? (node as ImageNode | VideoNode) : null;
+    const driveFileId = mediaNode?.driveFileId || (isMedia ? node.content : '');
     const nodeBoardId = node.boardId || defaultBoardId;
 
-    if (isImage && driveFileId) {
-      const existing = assetRefMap.get(driveFileId) || { count: 0, name: imageNode?.originalFileName };
+    if (isMedia && driveFileId) {
+      const existing = assetRefMap.get(driveFileId) || { count: 0, name: mediaNode?.originalFileName };
       existing.count += 1;
       assetRefMap.set(driveFileId, existing);
     }
@@ -434,7 +434,7 @@ export async function saveGraphToSheet(
       node.rotation || 0,
       node.type === 'text' ? (node as TextNode).content : driveFileId,
       driveFileId,
-      imageNode?.originalFileName || '',
+      mediaNode?.originalFileName || '',
       node.createdAt || '',
       new Date().toISOString(),
       nodeBoardId,
@@ -725,7 +725,7 @@ export async function loadGraphFromSheet(
         ? (nodeStatus as 'idle' | 'generating' | 'error')
         : undefined;
 
-      if (type === 'image') {
+      if (type === 'image' || type === 'video') {
         const rawDriveId = driveFileId ? String(driveFileId) : undefined;
         const rawContent = content ? String(content) : undefined;
         const validDriveId =
@@ -735,29 +735,55 @@ export async function loadGraphFromSheet(
             ? rawContent
             : undefined;
 
-        const imageNode: ImageNode = {
-          id: String(id),
-          type: 'image',
-          x,
-          y,
-          width,
-          height,
-          rotation,
-          boardId: nodeBoardId,
-          content: validDriveId || rawContent || String(id),
-          driveFileId: validDriveId,
-          originalFileName: origFileName || undefined,
-          driveViewLink: validDriveId ? `https://drive.google.com/file/d/${validDriveId}/view` : undefined,
-          createdAt: Number(createdAtStr) || undefined,
-          generationPrompt: genPrompt ? String(genPrompt) : undefined,
-          generationModel: genModel ? String(genModel) : undefined,
-          generationModelId: genModel ? String(genModel) : undefined,
-          generationSourceIds: parsedSourceIds,
-          generationSourceDetails: parsedSourceDetails,
-          status: statusVal,
-          errorMessage: nodeErrorMsg ? String(nodeErrorMsg) : undefined,
-        };
-        nodes.push(imageNode);
+        if (type === 'video') {
+          const videoNode: VideoNode = {
+            id: String(id),
+            type: 'video',
+            x,
+            y,
+            width,
+            height,
+            rotation,
+            boardId: nodeBoardId,
+            content: validDriveId || rawContent || String(id),
+            driveFileId: validDriveId,
+            originalFileName: origFileName || undefined,
+            driveViewLink: validDriveId ? `https://drive.google.com/file/d/${validDriveId}/view` : undefined,
+            createdAt: Number(createdAtStr) || undefined,
+            generationPrompt: genPrompt ? String(genPrompt) : undefined,
+            generationModel: genModel ? String(genModel) : undefined,
+            generationModelId: genModel ? String(genModel) : undefined,
+            generationSourceIds: parsedSourceIds,
+            generationSourceDetails: parsedSourceDetails,
+            status: statusVal,
+            errorMessage: nodeErrorMsg ? String(nodeErrorMsg) : undefined,
+          };
+          nodes.push(videoNode);
+        } else {
+          const imageNode: ImageNode = {
+            id: String(id),
+            type: 'image',
+            x,
+            y,
+            width,
+            height,
+            rotation,
+            boardId: nodeBoardId,
+            content: validDriveId || rawContent || String(id),
+            driveFileId: validDriveId,
+            originalFileName: origFileName || undefined,
+            driveViewLink: validDriveId ? `https://drive.google.com/file/d/${validDriveId}/view` : undefined,
+            createdAt: Number(createdAtStr) || undefined,
+            generationPrompt: genPrompt ? String(genPrompt) : undefined,
+            generationModel: genModel ? String(genModel) : undefined,
+            generationModelId: genModel ? String(genModel) : undefined,
+            generationSourceIds: parsedSourceIds,
+            generationSourceDetails: parsedSourceDetails,
+            status: statusVal,
+            errorMessage: nodeErrorMsg ? String(nodeErrorMsg) : undefined,
+          };
+          nodes.push(imageNode);
+        }
       } else {
         const textNode: TextNode = {
           id: String(id),

@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info } from 'lucide-react';
-import type { CanvasNode, TextNode, ImageNode } from '../types';
+import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info, Film } from 'lucide-react';
+import type { CanvasNode, TextNode, ImageNode, VideoNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
 import { getAccessToken } from '../services/googleAuthService';
@@ -47,17 +47,16 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
 }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const fileId = node.type === 'image' ? ((node as ImageNode).driveFileId || (node as ImageNode).content || node.id) : null;
-  const [imageUrl, setImageUrl] = useState<string | null>(fileId ? nodeObjectUrlCache.get(fileId) || null : null);
+  const isMedia = node.type === 'image' || node.type === 'video';
+  const mediaNode = isMedia ? (node as ImageNode | VideoNode) : null;
+  const targetFileId = isMedia ? (mediaNode?.driveFileId || mediaNode?.content || node.id) : null;
+  const [imageUrl, setImageUrl] = useState<string | null>(targetFileId ? nodeObjectUrlCache.get(targetFileId) || null : null);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
 
-    if (node.type === 'image' && node.status !== 'generating' && node.status !== 'error') {
-      const imageNode = node as ImageNode;
-      const targetFileId = imageNode.driveFileId || imageNode.content || node.id;
-
+    if (isMedia && node.status !== 'generating' && node.status !== 'error') {
       if (!targetFileId) return;
 
       if (nodeObjectUrlCache.has(targetFileId)) {
@@ -71,27 +70,27 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         try {
           // 1. Try local IndexedDB cache across all candidate keys
           let blob = await getImage(targetFileId);
-          if (!blob && imageNode.driveFileId && imageNode.driveFileId !== targetFileId) {
-            blob = await getImage(imageNode.driveFileId);
+          if (!blob && mediaNode?.driveFileId && mediaNode.driveFileId !== targetFileId) {
+            blob = await getImage(mediaNode.driveFileId);
           }
-          if (!blob && imageNode.content && imageNode.content !== targetFileId) {
-            blob = await getImage(imageNode.content);
+          if (!blob && mediaNode?.content && mediaNode.content !== targetFileId) {
+            blob = await getImage(mediaNode.content);
           }
           if (!blob && node.id && node.id !== targetFileId) {
             blob = await getImage(node.id);
           }
 
           // 2. If not found locally, fetch from Google Drive
-          if (!blob && imageNode.driveFileId) {
+          if (!blob && mediaNode?.driveFileId) {
             const token = getAccessToken();
             if (token) {
-              blob = await getAssetBlobFromDrive(token, imageNode.driveFileId);
+              blob = await getAssetBlobFromDrive(token, mediaNode.driveFileId);
             }
           }
-          if (!blob && imageNode.content && imageNode.content !== imageNode.driveFileId) {
+          if (!blob && mediaNode?.content && mediaNode.content !== mediaNode?.driveFileId) {
             const token = getAccessToken();
             if (token) {
-              blob = await getAssetBlobFromDrive(token, imageNode.content);
+              blob = await getAssetBlobFromDrive(token, mediaNode.content);
             }
           }
 
@@ -100,15 +99,15 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           if (blob) {
             const url = URL.createObjectURL(blob);
             nodeObjectUrlCache.set(targetFileId, url);
-            if (imageNode.driveFileId && imageNode.driveFileId !== targetFileId) {
-              nodeObjectUrlCache.set(imageNode.driveFileId, url);
+            if (mediaNode?.driveFileId && mediaNode.driveFileId !== targetFileId) {
+              nodeObjectUrlCache.set(mediaNode.driveFileId, url);
             }
             setImageUrl(url);
           } else {
             setImageUrl(null);
           }
         } catch (err) {
-          console.error('Failed to load image for node:', node.id, err);
+          console.error('Failed to load media for node:', node.id, err);
           if (!isCancelled) setImageUrl(null);
         } finally {
           if (!isCancelled) setIsLoadingImage(false);
@@ -121,7 +120,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         isCancelled = true;
       };
     }
-  }, [node.id, (node as ImageNode).driveFileId, (node as ImageNode).content, node.type, node.status]);
+  }, [node.id, mediaNode?.driveFileId, mediaNode?.content, node.type, node.status, targetFileId, isMedia]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (isSpacePressed) return;
@@ -426,16 +425,16 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           ) : imageUrl ? (
             <img
               src={imageUrl}
-              alt={imageNode?.originalFileName || 'Asset'}
+              alt={mediaNode?.originalFileName || 'Asset'}
               className="w-full h-full object-contain rounded-xl"
               draggable={false}
             />
           ) : (
             <div className="text-gray-500 text-xs text-center p-3 flex flex-col items-center justify-center gap-2">
               <span className="font-medium text-gray-400">無法載入圖像資源</span>
-              {imageNode?.originalFileName && (
-                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[180px]" title={imageNode.originalFileName}>
-                  {imageNode.originalFileName}
+              {mediaNode?.originalFileName && (
+                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[180px]" title={mediaNode.originalFileName}>
+                  {mediaNode.originalFileName}
                 </span>
               )}
               <button
@@ -444,8 +443,8 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
                   if (targetFileId) nodeObjectUrlCache.delete(targetFileId);
                   setIsLoadingImage(true);
                   const token = getAccessToken();
-                  if (token && imageNode?.driveFileId) {
-                    getAssetBlobFromDrive(token, imageNode.driveFileId)
+                  if (token && mediaNode?.driveFileId) {
+                    getAssetBlobFromDrive(token, mediaNode.driveFileId)
                       .then((b) => {
                         if (b) {
                           const url = URL.createObjectURL(b);
@@ -481,6 +480,85 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         </div>
       )}
 
+      {/* 5. Normal Video Node Content */}
+      {(!node.status || node.status === 'idle') && node.type === 'video' && (
+        <div className="w-full h-full relative flex items-center justify-center overflow-hidden rounded-xl bg-black">
+          {isLoadingImage ? (
+            <div className="flex flex-col items-center gap-2 text-gray-400">
+              <Loader2 className="w-6 h-6 animate-spin text-rose-400" />
+              <span className="text-[11px]">載入影片資源...</span>
+            </div>
+          ) : imageUrl ? (
+            <video
+              src={imageUrl}
+              controls
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full h-full object-contain rounded-xl"
+              onPointerDown={e => {
+                // Allow user to click native video controls without dragging node
+                e.stopPropagation();
+              }}
+            />
+          ) : (
+            <div className="text-gray-500 text-xs text-center p-3 flex flex-col items-center justify-center gap-2">
+              <span className="font-medium text-gray-400">無法載入影片資源</span>
+              {mediaNode?.originalFileName && (
+                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[180px]" title={mediaNode.originalFileName}>
+                  {mediaNode.originalFileName}
+                </span>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (targetFileId) nodeObjectUrlCache.delete(targetFileId);
+                  setIsLoadingImage(true);
+                  const token = getAccessToken();
+                  if (token && mediaNode?.driveFileId) {
+                    getAssetBlobFromDrive(token, mediaNode.driveFileId)
+                      .then((b) => {
+                        if (b) {
+                          const url = URL.createObjectURL(b);
+                          nodeObjectUrlCache.set(targetFileId, url);
+                          setImageUrl(url);
+                        }
+                      })
+                      .finally(() => setIsLoadingImage(false));
+                  } else {
+                    setIsLoadingImage(false);
+                  }
+                }}
+                className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-[11px] text-gray-300 transition-colors border border-gray-700"
+              >
+                重試載入
+              </button>
+            </div>
+          )}
+
+          {/* Video Indicator Badge */}
+          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[10px] text-rose-300 font-medium flex items-center gap-1 pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity">
+            <Film className="w-3 h-3" />
+            <span>MP4</span>
+          </div>
+
+          {/* Quick Download Hover Button for Video */}
+          {onDownloadNode && (
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                onDownloadNode(node);
+              }}
+              className="absolute bottom-1.5 right-1.5 p-1 rounded bg-gray-900/85 hover:bg-gray-800 backdrop-blur-sm border border-gray-700 text-rose-400 hover:text-rose-300 transition-all opacity-0 group-hover:opacity-100 shadow-md z-20"
+              title="快速下載此影片檔案 (.mp4)"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Floating Action Menu when Single Node Selected - Inverse scaled so it stays 100% constant size */}
       {isSelected && !isMultiSelecting && node.status !== 'generating' && node.status !== 'error' && (
         <div
@@ -505,7 +583,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             <button
               onClick={() => onDownloadNode(node)}
               className="p-1.5 text-gray-300 hover:text-emerald-300 hover:bg-gray-800 rounded-lg transition-colors"
-              title={node.type === 'image' ? '下載原始圖片' : '下載文字內容 (.txt)'}
+              title={node.type === 'video' ? '下載影片檔案 (.mp4)' : node.type === 'image' ? '下載原始圖片' : '下載文字內容 (.txt)'}
             >
               <Download className="w-3.5 h-3.5 text-emerald-400" />
             </button>
@@ -521,9 +599,9 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             </button>
           )}
 
-          {imageNode?.driveViewLink && (
+          {mediaNode?.driveViewLink && (
             <a
-              href={imageNode.driveViewLink}
+              href={mediaNode.driveViewLink}
               target="_blank"
               rel="noopener noreferrer"
               className="p-1.5 text-gray-300 hover:text-emerald-400 hover:bg-gray-800 rounded-lg transition-colors"
@@ -594,6 +672,7 @@ export default React.memo(NodeRenderer, (prevProps, nextProps) => {
   // (Ignoring x/y changes here lets us use direct DOM manipulation for drag without re-rendering)
   const isNodeEqual =
     prevProps.node.id === nextProps.node.id &&
+    prevProps.node.type === nextProps.node.type &&
     prevProps.node.width === nextProps.node.width &&
     prevProps.node.height === nextProps.node.height &&
     prevProps.node.content === nextProps.node.content &&

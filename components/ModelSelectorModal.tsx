@@ -12,6 +12,7 @@ import {
   Cpu,
   Layers,
   Cloud,
+  Video,
 } from 'lucide-react';
 import {
   MODEL_CATEGORIES,
@@ -36,6 +37,8 @@ const CategoryIcon: React.FC<{ categoryId: string; className?: string }> = ({
   switch (categoryId) {
     case 'recommended':
       return <Sparkles className={`${className} text-amber-400`} />;
+    case 'video':
+      return <Video className={`${className} text-rose-400`} />;
     case 'image':
       return <ImageIcon className={`${className} text-purple-400`} />;
     case 'fast':
@@ -114,6 +117,10 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
       // Tab filter
       if (activeTab === 'atlascloud') {
         if (model.provider !== 'atlascloud' && model.category !== 'atlascloud') {
+          return false;
+        }
+      } else if (activeTab === 'video') {
+        if (!model.capabilities.supportsVideoOutput && model.category !== 'video') {
           return false;
         }
       } else if (activeTab === 'image') {
@@ -249,6 +256,9 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                 if (cat.id === 'atlascloud') {
                   return m.provider === 'atlascloud' || m.category === 'atlascloud';
                 }
+                if (cat.id === 'video') {
+                  return m.capabilities.supportsVideoOutput || m.category === 'video';
+                }
                 if (cat.id === 'image') {
                   return m.capabilities.supportsImageOutput || m.category === 'image';
                 }
@@ -327,6 +337,8 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                                   ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
                                   : model.category === 'recommended'
                                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  : model.category === 'video' || model.capabilities.supportsVideoOutput
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
                                   : model.category === 'image'
                                   ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
                                   : model.category === 'fast'
@@ -376,6 +388,11 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                         {model.provider === 'atlascloud' && (
                           <span className="px-1.5 py-0.5 rounded bg-sky-950/60 text-sky-300 border border-sky-800/50">
                             ☁️ Atlas Cloud
+                          </span>
+                        )}
+                        {model.capabilities.supportsVideoOutput && (
+                          <span className="px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-800/50">
+                            🎬 支援影片輸出
                           </span>
                         )}
                         {model.capabilities.supportsImageOutput && (
