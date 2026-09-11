@@ -5,6 +5,7 @@ import { blobToBase64 } from '../utils/canvasUtils';
 import { getModelById, DEFAULT_MODEL_ID, fetchModelsFromApi } from './modelsConfig';
 import { getAssetBlobFromDrive } from './googleDriveService';
 import { getAccessToken } from './googleAuthService';
+import { generateWithAtlasCloud, isAtlasCloudModel } from './atlasCloudService';
 
 function getApiKey(): string {
   return (
@@ -64,8 +65,14 @@ export const generateFromNodes = async (
   nodes: CanvasNode[],
   modelId: string = DEFAULT_MODEL_ID
 ): Promise<GenerationResult> => {
-  const ai = getAiClient();
   const modelConfig = getModelById(modelId);
+
+  // Route Atlas Cloud models directly without requiring Google Gemini API client
+  if (modelConfig.provider === 'atlascloud' || isAtlasCloudModel(modelId, modelConfig)) {
+    return generateWithAtlasCloud(nodes, modelId, modelConfig);
+  }
+
+  const ai = getAiClient();
 
   const textParts = nodes
     .filter(node => node.type === 'text')

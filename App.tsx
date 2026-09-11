@@ -2264,9 +2264,11 @@ const App: React.FC = () => {
       // 1. Identify model to use
       let targetModelId = targetNode.generationModelId || selectedModelId;
       let modelInfo = getModelById(targetModelId);
+      targetModelId = modelInfo?.id || targetModelId;
       if (targetNode.type === 'image' && !modelInfo.capabilities.supportsImageOutput) {
         targetModelId = DEFAULT_MODEL_ID;
         modelInfo = getModelById(targetModelId);
+        targetModelId = modelInfo?.id || DEFAULT_MODEL_ID;
       }
 
       // 2. Identify source nodes

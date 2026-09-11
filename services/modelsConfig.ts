@@ -1,8 +1,15 @@
 import { ModelInfo, RawApiModelInfo } from '../types';
+import {
+  fetchAtlasCloudModels,
+  DEFAULT_ATLAS_MODELS,
+  isAtlasCloudModel,
+  getEffectiveAtlasCloudApiKey,
+} from './atlasCloudService';
 
 export interface ModelCategoryConfig {
-  id: 'recommended' | 'image' | 'fast' | 'reasoning';
+  id: 'recommended' | 'image' | 'fast' | 'reasoning' | 'atlascloud';
   title: string;
+  shortTitle?: string;
   subtitle: string;
   icon: string;
 }
@@ -11,26 +18,37 @@ export const MODEL_CATEGORIES: ModelCategoryConfig[] = [
   {
     id: 'recommended',
     title: '🌟 推薦首選 (Recommended)',
-    subtitle: 'Google 最新 3.x 旗艦推論與次世代生圖模型',
+    shortTitle: '推薦首選',
+    subtitle: 'Google 3.x 與 Atlas Cloud 頂級旗艦推論與生圖模型',
     icon: 'Sparkles',
   },
   {
     id: 'image',
-    title: '🎨 圖像創作與編輯 (Image Generation)',
-    subtitle: '多模態混音生圖 (Nano Banana 2 / Pro) 與高畫質合成',
+    title: '🎨 圖像創作與編輯 (Image Generation & Edit)',
+    shortTitle: '圖像創作與編輯',
+    subtitle: '多模態生圖與修圖 (Qwen Image Edit / FLUX / Seedream / Nano Banana 2)',
     icon: 'Image',
   },
   {
     id: 'fast',
     title: '⚡ 高速與輕量推論 (Fast & Lightweight)',
-    subtitle: 'Gemini 3.8 / 3.7 Flash 極速低延遲運算',
+    shortTitle: '高速輕量',
+    subtitle: 'Gemini 3.8 Flash / DeepSeek V4 Flash 極速低延遲',
     icon: 'Zap',
   },
   {
     id: 'reasoning',
     title: '🧠 深度推理與複雜理解 (Advanced Reasoning)',
-    subtitle: 'Gemini 3.1 Pro 深度思考與百萬 Token 上下文規劃',
+    shortTitle: '深度推理',
+    subtitle: 'Gemini 3.1 Pro / DeepSeek R1 / Qwen3 VL 深度思考',
     icon: 'Brain',
+  },
+  {
+    id: 'atlascloud',
+    title: '☁️ Atlas Cloud (400+ 模型)',
+    shortTitle: 'Atlas Cloud',
+    subtitle: 'DeepSeek, Qwen, FLUX, Claude, GLM 等全方位端點',
+    icon: 'Cloud',
   },
 ];
 
@@ -204,6 +222,7 @@ const DEFAULT_MODELS: ModelInfo[] = [
       isRecommended: false,
     },
   },
+  ...DEFAULT_ATLAS_MODELS,
 ];
 
 type ModelsListener = (models: ModelInfo[]) => void;
@@ -430,71 +449,77 @@ function getModelSortScore(m: ModelInfo): number {
 }
 
 /**
- * Fetch full dynamic model catalog from Google Gemini API
+ * Fetch full dynamic model catalog from Google Gemini API & Atlas Cloud API
  */
 export async function fetchModelsFromApi(customApiKey?: string): Promise<ModelInfo[]> {
-  const apiKey = customApiKey || getStoredApiKey();
-  if (!apiKey) {
-    return currentModels;
+  const geminiApiKey = customApiKey || getStoredApiKey();
+
+  const [geminiResult, atlasResult] = await Promise.allSettled([
+    // 1. Google Gemini models
+    (async (): Promise<ModelInfo[]> => {
+      if (!geminiApiKey) return [];
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`);
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.warn(`Failed to fetch models from Gemini API (${res.status}):`, errorText);
+        return [];
+      }
+      const data = await res.json();
+      if (!data.models || !Array.isArray(data.models)) return [];
+
+      const validGenerative = (data.models as RawApiModelInfo[]).filter(m => {
+        const methods = m.supportedGenerationMethods || [];
+        return (
+          methods.includes('generateContent') ||
+          methods.includes('generateImages') ||
+          methods.includes('predictLongRunning') ||
+          methods.includes('bidiGenerateContent')
+        );
+      });
+
+      const parsedModels = validGenerative.map(parseApiModel);
+      return parsedModels.sort((a, b) => {
+        const scoreA = getModelSortScore(a);
+        const scoreB = getModelSortScore(b);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        return a.name.localeCompare(b.name);
+      });
+    })(),
+
+    // 2. Atlas Cloud models
+    fetchAtlasCloudModels(),
+  ]);
+
+  const geminiModels = geminiResult.status === 'fulfilled' ? geminiResult.value : [];
+  const atlasModels = atlasResult.status === 'fulfilled' ? atlasResult.value : [];
+
+  // Base list starts with fetched Gemini models or default Gemini models
+  const baseGemini = geminiModels.length > 0 ? geminiModels : DEFAULT_MODELS.filter(m => m.provider !== 'atlascloud');
+  const baseAtlas = atlasModels.length > 0 ? atlasModels : DEFAULT_ATLAS_MODELS;
+
+  // Merge uniquely by model id
+  const seenIds = new Set<string>();
+  const merged: ModelInfo[] = [];
+
+  for (const m of [...baseGemini, ...baseAtlas]) {
+    if (!seenIds.has(m.id)) {
+      seenIds.add(m.id);
+      merged.push(m);
+    }
   }
 
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.warn(`Failed to fetch models from API (${res.status}):`, errorText);
-      return currentModels;
+  currentModels = merged;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY_CACHED_MODELS, JSON.stringify(merged));
+      localStorage.setItem(STORAGE_KEY_MODELS_TIME, Date.now().toString());
+    } catch (e) {
+      console.warn('Failed to cache models in localStorage:', e);
     }
-
-    const data = await res.json();
-    if (!data.models || !Array.isArray(data.models)) {
-      return currentModels;
-    }
-
-    // Filter models that support generative tasks
-    const validGenerative = (data.models as RawApiModelInfo[]).filter(m => {
-      const methods = m.supportedGenerationMethods || [];
-      return (
-        methods.includes('generateContent') ||
-        methods.includes('generateImages') ||
-        methods.includes('predictLongRunning') ||
-        methods.includes('bidiGenerateContent')
-      );
-    });
-
-    if (validGenerative.length === 0) {
-      return currentModels;
-    }
-
-    // Parse into ModelInfo
-    const parsedModels = validGenerative.map(parseApiModel);
-
-    // Sort models by version descending (newest 3.x & 4.x models at top)
-    const sorted = parsedModels.sort((a, b) => {
-      const scoreA = getModelSortScore(a);
-      const scoreB = getModelSortScore(b);
-      if (scoreA !== scoreB) {
-        return scoreB - scoreA;
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-    currentModels = sorted;
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_CACHED_MODELS, JSON.stringify(sorted));
-        localStorage.setItem(STORAGE_KEY_MODELS_TIME, Date.now().toString());
-      } catch (e) {
-        console.warn('Failed to cache models in localStorage:', e);
-      }
-    }
-
-    notifyListeners();
-    return sorted;
-  } catch (err) {
-    console.error('Failed to fetch models from Gemini API:', err);
-    return currentModels;
   }
+
+  notifyListeners();
+  return merged;
 }
 
 /**
@@ -507,10 +532,43 @@ export function getModelById(modelId: string): ModelInfo {
   );
   if (found) return found;
 
+  // Check if it's an Atlas Cloud model
+  if (isAtlasCloudModel(cleanId)) {
+    const isEdit = cleanId.includes('edit');
+    const supportsImageOutput =
+      isEdit ||
+      cleanId.includes('image') ||
+      cleanId.includes('flux') ||
+      cleanId.includes('seedream') ||
+      cleanId.includes('kling') ||
+      cleanId.includes('ideogram');
+    const isFast = cleanId.includes('flash') || cleanId.includes('mini') || cleanId.includes('lite');
+    const isPro = cleanId.includes('pro') || cleanId.includes('opus') || cleanId.includes('r1');
+
+    return {
+      id: cleanId,
+      name: cleanId,
+      category: supportsImageOutput ? 'image' : isPro ? 'reasoning' : isFast ? 'fast' : 'atlascloud',
+      provider: 'atlascloud',
+      description: `Atlas Cloud 端點: ${cleanId}`,
+      badge: isEdit ? 'Atlas 圖像編輯' : supportsImageOutput ? 'Atlas 影像生成' : 'Atlas Cloud 模型',
+      tag: isEdit ? '圖生圖編輯' : supportsImageOutput ? '影像生成' : 'Atlas API',
+      capabilities: {
+        supportsImageOutput,
+        supportsImageInput: true,
+        supportsText: true,
+        isFast,
+        isPro,
+        isRecommended: false,
+      },
+    };
+  }
+
   return {
     id: cleanId,
     name: cleanId,
     category: cleanId.includes('image') ? 'image' : cleanId.includes('pro') ? 'reasoning' : 'fast',
+    provider: 'gemini',
     description: `API 模型: ${cleanId}`,
     badge: '自訂 API 模型',
     tag: '動態模型',

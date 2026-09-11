@@ -126,12 +126,13 @@ export interface ModelCapability {
 export interface ModelInfo {
   id: string;
   name: string;
-  category: 'recommended' | 'image' | 'fast' | 'reasoning';
+  category: 'recommended' | 'image' | 'fast' | 'reasoning' | 'atlascloud';
+  provider?: 'gemini' | 'atlascloud';
   description: string;
   capabilities: ModelCapability;
   badge: string;
   tag: string;
-  apiData?: RawApiModelInfo;
+  apiData?: any;
   inputTokenLimit?: number;
   outputTokenLimit?: number;
   supportedGenerationMethods?: string[];

@@ -17,6 +17,7 @@ import {
   Sparkles,
   Database,
   Trash2,
+  Cloud,
 } from 'lucide-react';
 import { getLocalCacheStats, clearAllLocalImages, LocalCacheStats } from '../services/dbService';
 import {
@@ -33,6 +34,11 @@ import {
   isLocalEnvironment,
 } from '../services/googleAuthService';
 import { getEffectiveApiKey, setCustomApiKey } from '../services/geminiService';
+import {
+  getEffectiveAtlasCloudApiKey,
+  setCustomAtlasCloudApiKey,
+  testAtlasCloudConnection,
+} from '../services/atlasCloudService';
 import { GoogleUserProfile } from '../types';
 
 interface AuthSettingsModalProps {
@@ -49,6 +55,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   onAuthChange,
 }) => {
   const [apiKey, setApiKey] = useState('');
+  const [atlasApiKey, setAtlasApiKey] = useState('');
   const [clientId, setClientId] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -56,6 +63,8 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [gcloudLoading, setGcloudLoading] = useState(false);
+  const [testingAtlas, setTestingAtlas] = useState(false);
+  const [atlasTestResult, setAtlasTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [copiedOrigin, setCopiedOrigin] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
@@ -75,8 +84,10 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setApiKey(getEffectiveApiKey());
+      setAtlasApiKey(getEffectiveAtlasCloudApiKey());
       setClientId(getCustomClientId());
       setError(null);
+      setAtlasTestResult(null);
       loadCacheStats();
     }
 
@@ -94,10 +105,37 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   const handleSaveKeys = (e: React.FormEvent) => {
     e.preventDefault();
     setCustomApiKey(apiKey);
+    setCustomAtlasCloudApiKey(atlasApiKey);
     setCustomClientId(clientId);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2000);
     onAuthChange();
+  };
+
+  const handleTestAtlas = async () => {
+    setTestingAtlas(true);
+    setAtlasTestResult(null);
+    try {
+      const res = await testAtlasCloudConnection(atlasApiKey);
+      if (res.success) {
+        setAtlasTestResult({
+          success: true,
+          message: `連線成功！已檢測到 ${res.modelCount || 0} 個可用模型。`,
+        });
+      } else {
+        setAtlasTestResult({
+          success: false,
+          message: res.error || '連線失敗，請檢查 API Key。',
+        });
+      }
+    } catch (err: any) {
+      setAtlasTestResult({
+        success: false,
+        message: err.message || '連線失敗',
+      });
+    } finally {
+      setTestingAtlas(false);
+    }
   };
 
   const handleClearCache = async () => {
@@ -254,7 +292,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
             <div>
               <h2 className="text-lg font-bold text-white">Google 帳號與 API 金鑰設定</h2>
               <p className="text-xs text-gray-400">
-                連接 Google Drive / Sheets 雲端存取與 Gemini AI 核心金鑰
+                連接 Google Drive / Sheets 雲端存取與 Gemini / Atlas Cloud AI 核心金鑰
               </p>
             </div>
           </div>
@@ -515,51 +553,127 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
             )}
           </div>
 
-          {/* Section 2: Gemini API Key */}
-          <form onSubmit={handleSaveKeys} className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-3">
+          {/* Section 2: Gemini & Atlas Cloud AI API Keys */}
+          <form onSubmit={handleSaveKeys} className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-4">
             <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Key className="w-5 h-5 text-amber-400" />
-                <h3 className="text-sm font-semibold text-white">Gemini API Key 設定</h3>
+            
+            {/* Gemini API Key */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-sm font-semibold text-white">Gemini API Key 設定</h3>
+                </div>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+                >
+                  <span>取得免費 API Key</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
-              <a
-                href="https://aistudio.google.com/app/apikey"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
-              >
-                <span>取得免費 API Key</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+
+              <div>
+                <label htmlFor="geminiApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
+                  GEMINI_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 檔案填寫或在此貼上)
+                </label>
+                <input
+                  id="geminiApiKeyInput"
+                  name="geminiApiKey"
+                  type="password"
+                  value={apiKey}
+                  onChange={e => setApiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  autoComplete="current-password"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+              </div>
             </div>
 
-            <div>
-              <label htmlFor="geminiApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
-                GEMINI_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 檔案填寫或在此貼上)
-              </label>
-              <input
-                id="geminiApiKeyInput"
-                name="geminiApiKey"
-                type="password"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                placeholder="AIzaSy..."
-                autoComplete="current-password"
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500"
-              />
+            {/* Atlas Cloud API Key */}
+            <div className="border-t border-gray-700/60 pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Cloud className="w-5 h-5 text-sky-400" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                      Atlas Cloud API Key 設定
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                        400+ 開源與旗艦端點
+                      </span>
+                    </h3>
+                  </div>
+                </div>
+                <a
+                  href="https://www.atlascloud.ai/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+                >
+                  <span>前往 Atlas Cloud 官網</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div>
+                <label htmlFor="atlasApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
+                  ATLAS_CLOUD_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 填寫或在此貼上，解鎖 DeepSeek V3/R1、FLUX、Seedream、Qwen 等模型)
+                </label>
+                <input
+                  id="atlasApiKeyInput"
+                  name="atlasApiKey"
+                  type="password"
+                  value={atlasApiKey}
+                  onChange={e => {
+                    setAtlasApiKey(e.target.value);
+                    setAtlasTestResult(null);
+                  }}
+                  placeholder="例如: apikey-xxxxxxxxxxxx"
+                  autoComplete="current-password"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              {/* Atlas test status & actions */}
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestAtlas}
+                    disabled={testingAtlas || !atlasApiKey.trim()}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 hover:bg-gray-700 disabled:opacity-50 text-sky-300 border border-sky-800/50 rounded-lg text-xs transition-colors"
+                  >
+                    <Cloud className={`w-3.5 h-3.5 ${testingAtlas ? 'animate-pulse' : ''}`} />
+                    <span>{testingAtlas ? '測試連線中...' : '測試 Atlas 連線'}</span>
+                  </button>
+
+                  {atlasTestResult && (
+                    <span
+                      className={`text-xs ${
+                        atlasTestResult.success ? 'text-emerald-400' : 'text-red-400'
+                      }`}
+                    >
+                      {atlasTestResult.success ? '✓ ' : '✕ '}
+                      {atlasTestResult.message}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between pt-1">
+            {/* Submit Bar */}
+            <div className="flex items-center justify-between pt-2 border-t border-gray-700/60">
               <span className="text-xs text-emerald-400">
-                {saveSuccess && '✓ 金鑰設定已成功儲存！'}
+                {saveSuccess && '✓ AI 金鑰設定已成功儲存並生效！'}
               </span>
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5 ml-auto"
               >
                 <Check className="w-4 h-4" />
-                <span>儲存設定</span>
+                <span>儲存金鑰設定</span>
               </button>
             </div>
           </form>

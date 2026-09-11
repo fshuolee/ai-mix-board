@@ -66,12 +66,46 @@ export default defineConfig(({ mode }) => {
               res.end(JSON.stringify({ error: 'GCLOUD_ERROR', message: err.message || 'Failed to get gcloud token' }));
             }
           });
+
+          // Proxy endpoint to bypass CORS when downloading generated images (e.g. Aliyun OSS, Atlas Cloud)
+          server.middlewares.use('/api/proxy-image', async (req, res) => {
+            try {
+              const urlObj = new URL(req.url || '', 'http://localhost:3000');
+              const targetUrl = urlObj.searchParams.get('url');
+              if (!targetUrl) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ error: 'Missing url parameter' }));
+              }
+
+              const remoteRes = await fetch(targetUrl);
+              if (!remoteRes.ok) {
+                res.statusCode = remoteRes.status;
+                return res.end(`Failed to fetch image: ${remoteRes.statusText}`);
+              }
+
+              const contentType = remoteRes.headers.get('content-type') || 'image/png';
+              res.statusCode = 200;
+              res.setHeader('Content-Type', contentType);
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+              res.setHeader('Cache-Control', 'public, max-age=86400');
+
+              const arrayBuffer = await remoteRes.arrayBuffer();
+              res.end(Buffer.from(arrayBuffer));
+            } catch (proxyErr: any) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: proxyErr.message || 'Image proxy failed' }));
+            }
+          });
         },
       },
     ],
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
+      'process.env.ATLAS_CLOUD_API_KEY': JSON.stringify(env.ATLAS_CLOUD_API_KEY || ''),
       'process.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com'),
       'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com'),
     },

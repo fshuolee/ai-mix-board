@@ -11,6 +11,7 @@ import {
   Search,
   Cpu,
   Layers,
+  Cloud,
 } from 'lucide-react';
 import {
   MODEL_CATEGORIES,
@@ -41,6 +42,8 @@ const CategoryIcon: React.FC<{ categoryId: string; className?: string }> = ({
       return <Zap className={`${className} text-emerald-400`} />;
     case 'reasoning':
       return <Brain className={`${className} text-blue-400`} />;
+    case 'atlascloud':
+      return <Cloud className={`${className} text-sky-400`} />;
     default:
       return <Sparkles className={`${className} text-gray-400`} />;
   }
@@ -109,10 +112,27 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
   const filteredModels = useMemo(() => {
     return models.filter(model => {
       // Tab filter
-      if (activeTab === 'recommended' && !model.capabilities.isRecommended && model.category !== 'recommended') {
-        return false;
-      }
-      if (activeTab !== 'all' && activeTab !== 'recommended' && model.category !== activeTab) {
+      if (activeTab === 'atlascloud') {
+        if (model.provider !== 'atlascloud' && model.category !== 'atlascloud') {
+          return false;
+        }
+      } else if (activeTab === 'image') {
+        if (!model.capabilities.supportsImageOutput && model.category !== 'image') {
+          return false;
+        }
+      } else if (activeTab === 'recommended') {
+        if (!model.capabilities.isRecommended && model.category !== 'recommended') {
+          return false;
+        }
+      } else if (activeTab === 'fast') {
+        if (!model.capabilities.isFast && model.category !== 'fast') {
+          return false;
+        }
+      } else if (activeTab === 'reasoning') {
+        if (!model.thinking && !model.capabilities.isPro && model.category !== 'reasoning') {
+          return false;
+        }
+      } else if (activeTab !== 'all' && model.category !== activeTab) {
         return false;
       }
 
@@ -123,7 +143,9 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
         const matchesId = model.id.toLowerCase().includes(q);
         const matchesDesc = model.description.toLowerCase().includes(q);
         const matchesBadge = (model.badge || '').toLowerCase().includes(q);
-        return matchesName || matchesId || matchesDesc || matchesBadge;
+        const matchesTag = (model.tag || '').toLowerCase().includes(q);
+        const matchesProvider = (model.provider || '').toLowerCase().includes(q);
+        return matchesName || matchesId || matchesDesc || matchesBadge || matchesTag || matchesProvider;
       }
 
       return true;
@@ -157,7 +179,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-gray-400">
-                以 Google Gemini API 最新完整資訊為準，即時支援多模態生圖、思考推理與高速運算
+                以 Google Gemini 與 Atlas Cloud API 最新完整資訊為準，即時支援多模態生圖、思考推理與高速運算
               </p>
             </div>
           </div>
@@ -223,11 +245,24 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
               <span>全部模型 ({models.length})</span>
             </button>
             {MODEL_CATEGORIES.map(cat => {
-              const count = models.filter(m =>
-                cat.id === 'recommended'
-                  ? m.capabilities.isRecommended || m.category === 'recommended'
-                  : m.category === cat.id
-              ).length;
+              const count = models.filter(m => {
+                if (cat.id === 'atlascloud') {
+                  return m.provider === 'atlascloud' || m.category === 'atlascloud';
+                }
+                if (cat.id === 'image') {
+                  return m.capabilities.supportsImageOutput || m.category === 'image';
+                }
+                if (cat.id === 'recommended') {
+                  return m.capabilities.isRecommended || m.category === 'recommended';
+                }
+                if (cat.id === 'fast') {
+                  return m.capabilities.isFast || m.category === 'fast';
+                }
+                if (cat.id === 'reasoning') {
+                  return m.thinking || m.capabilities.isPro || m.category === 'reasoning';
+                }
+                return m.category === cat.id;
+              }).length;
 
               return (
                 <button
@@ -240,7 +275,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                   }`}
                 >
                   <CategoryIcon categoryId={cat.id} className="w-3.5 h-3.5" />
-                  <span>{cat.title.split(' ')[1] || cat.title} ({count})</span>
+                  <span>{cat.shortTitle || cat.title.split(' ')[1] || cat.title} ({count})</span>
                 </button>
               );
             })}
@@ -288,7 +323,9 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                           {model.badge && (
                             <span
                               className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
-                                model.category === 'recommended'
+                                model.provider === 'atlascloud'
+                                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                                  : model.category === 'recommended'
                                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                                   : model.category === 'image'
                                   ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
@@ -336,6 +373,11 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
 
                       {/* Detailed capabilities chips */}
                       <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                        {model.provider === 'atlascloud' && (
+                          <span className="px-1.5 py-0.5 rounded bg-sky-950/60 text-sky-300 border border-sky-800/50">
+                            ☁️ Atlas Cloud
+                          </span>
+                        )}
                         {model.capabilities.supportsImageOutput && (
                           <span className="px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50">
                             支援圖像輸出
