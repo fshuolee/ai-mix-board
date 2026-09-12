@@ -7,6 +7,8 @@ import { getAssetBlobFromDrive } from './googleDriveService';
 const STORAGE_KEY_ATLAS_API_KEY = 'ai_mix_board_atlascloud_api_key';
 const STORAGE_KEY_CACHED_ATLAS_MODELS = 'ai_mix_board_cached_atlas_models';
 
+const STORAGE_KEY_CORS_PROXY = 'ai_mix_board_cors_proxy';
+
 export function getAtlasCloudApiKey(): string {
   if (typeof localStorage !== 'undefined') {
     const stored = localStorage.getItem(STORAGE_KEY_ATLAS_API_KEY);
@@ -25,6 +27,24 @@ export function setCustomAtlasCloudApiKey(key: string): void {
       localStorage.setItem(STORAGE_KEY_ATLAS_API_KEY, key.trim());
     } else {
       localStorage.removeItem(STORAGE_KEY_ATLAS_API_KEY);
+    }
+  }
+}
+
+export function getCorsProxy(): string {
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem(STORAGE_KEY_CORS_PROXY);
+    if (stored && stored.trim()) return stored.trim();
+  }
+  return '';
+}
+
+export function setCustomCorsProxy(proxyUrl: string): void {
+  if (typeof localStorage !== 'undefined') {
+    if (proxyUrl && proxyUrl.trim()) {
+      localStorage.setItem(STORAGE_KEY_CORS_PROXY, proxyUrl.trim());
+    } else {
+      localStorage.removeItem(STORAGE_KEY_CORS_PROXY);
     }
   }
 }
@@ -799,7 +819,24 @@ export async function fetchImageBlob(targetUrl: string): Promise<Blob | null> {
       return await proxyRes.blob();
     }
   } catch (proxyErr) {
-    console.warn('Dev proxy fetch failed:', proxyErr);
+    // Dev proxy failed or on production GitHub Pages (404)
+  }
+
+  // 3. Try custom CORS proxy configured by user
+  const customProxy = getCorsProxy();
+  if (customProxy) {
+    try {
+      const p = customProxy.trim();
+      const pUrl = p.includes('?')
+        ? `${p}&url=${encodeURIComponent(targetUrl)}`
+        : `${p}${p.endsWith('/') ? '' : '/'}?url=${encodeURIComponent(targetUrl)}`;
+      const res = await fetch(pUrl);
+      if (res.ok) {
+        return await res.blob();
+      }
+    } catch (customErr) {
+      console.warn('Custom CORS proxy fetch failed:', customErr);
+    }
   }
 
   return null;

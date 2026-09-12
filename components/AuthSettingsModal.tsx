@@ -38,6 +38,8 @@ import {
   getEffectiveAtlasCloudApiKey,
   setCustomAtlasCloudApiKey,
   testAtlasCloudConnection,
+  getCorsProxy,
+  setCustomCorsProxy,
 } from '../services/atlasCloudService';
 import { GoogleUserProfile } from '../types';
 
@@ -56,6 +58,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
 }) => {
   const [apiKey, setApiKey] = useState('');
   const [atlasApiKey, setAtlasApiKey] = useState('');
+  const [corsProxy, setCorsProxy] = useState('');
   const [clientId, setClientId] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -85,6 +88,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
     if (isOpen) {
       setApiKey(getEffectiveApiKey());
       setAtlasApiKey(getEffectiveAtlasCloudApiKey());
+      setCorsProxy(getCorsProxy());
       setClientId(getCustomClientId());
       setError(null);
       setAtlasTestResult(null);
@@ -106,6 +110,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
     e.preventDefault();
     setCustomApiKey(apiKey);
     setCustomAtlasCloudApiKey(atlasApiKey);
+    setCustomCorsProxy(corsProxy);
     setCustomClientId(clientId);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2000);
@@ -660,6 +665,25 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
                     </span>
                   )}
                 </div>
+              </div>
+
+              {/* CORS Proxy Input for GitHub Pages */}
+              <div className="pt-2.5 border-t border-gray-800/80">
+                <label htmlFor="corsProxyInput" className="block text-xs text-gray-400 mb-1">
+                  自訂 CORS 代理 URL（選填，供 GitHub Pages 靜態站自動同步 Atlas Cloud 影像至 Google Drive）
+                </label>
+                <input
+                  id="corsProxyInput"
+                  name="corsProxy"
+                  type="text"
+                  value={corsProxy}
+                  onChange={e => setCorsProxy(e.target.value)}
+                  placeholder="例如: https://my-cors-worker.workers.dev/?url="
+                  className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-sky-500"
+                />
+                <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                  本機環境 (<code className="text-gray-400">localhost:3000</code>) 已自動內建代理；若在 GitHub Pages 上運作，可部署免費 Cloudflare Worker 代理，確保影像即時上傳到 Google Drive。
+                </p>
               </div>
             </div>
 
