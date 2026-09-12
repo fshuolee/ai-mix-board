@@ -402,7 +402,15 @@ export async function syncUnuploadedImageNodes(
 ): Promise<{ updatedNodes: CanvasNode[]; syncedCount: number; resolvedAssetsFolderId: string }> {
   // 1. Identify media nodes (image or video) that need Drive upload
   const pendingNodes = nodes.filter(
-    n => (n.type === 'image' || n.type === 'video') && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+    n =>
+      (n.type === 'image' || n.type === 'video') &&
+      n.status !== 'generating' &&
+      n.status !== 'error' &&
+      (!n.driveFileId || !isDriveFileId(n.driveFileId)) &&
+      !(
+        (n.content && (n.content.startsWith('http://') || n.content.startsWith('https://'))) ||
+        (n.driveViewLink && (n.driveViewLink.startsWith('http://') || n.driveViewLink.startsWith('https://')))
+      )
   ) as (ImageNode | VideoNode)[];
 
   const resolvedAssetsFolderId = assetsFolderId || (await ensureAssetsFolder(token, projectFolderId));
@@ -417,8 +425,23 @@ export async function syncUnuploadedImageNodes(
   for (const mediaNode of pendingNodes) {
     try {
       const localKey = mediaNode.driveFileId || mediaNode.content || mediaNode.id;
-      const blob = await getImage(localKey);
+      let blob = await getImage(localKey);
+      if (!blob && mediaNode.content && !mediaNode.content.startsWith('http')) {
+        blob = await getImage(mediaNode.content);
+      }
+      if (!blob && mediaNode.id) {
+        blob = await getImage(mediaNode.id);
+      }
+
       if (!blob) {
+        const isExternalUrl =
+          (mediaNode.content && (mediaNode.content.startsWith('http://') || mediaNode.content.startsWith('https://'))) ||
+          (mediaNode.driveViewLink && (mediaNode.driveViewLink.startsWith('http://') || mediaNode.driveViewLink.startsWith('https://')));
+
+        if (isExternalUrl) {
+          continue;
+        }
+
         console.warn(`[Drive Sync] Blob not found locally for node ${mediaNode.id}. Marking as error to prevent infinite sync loop.`);
         replacements.set(mediaNode.id, { status: 'error' });
         continue;

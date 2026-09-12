@@ -301,7 +301,15 @@ const App: React.FC = () => {
   const unuploadedAssetCount = useMemo(() => {
     if (isLoadingProjectData) return 0;
     return allNodes.filter(
-      n => (n.type === 'image' || n.type === 'video') && n.status !== 'generating' && n.status !== 'error' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+      n =>
+        (n.type === 'image' || n.type === 'video') &&
+        n.status !== 'generating' &&
+        n.status !== 'error' &&
+        (!n.driveFileId || !isDriveFileId(n.driveFileId)) &&
+        !(
+          (n.content && (n.content.startsWith('http://') || n.content.startsWith('https://'))) ||
+          (n.driveViewLink && (n.driveViewLink.startsWith('http://') || n.driveViewLink.startsWith('https://')))
+        )
     ).length;
   }, [allNodes, isLoadingProjectData]);
 
@@ -896,7 +904,15 @@ const App: React.FC = () => {
     }
     const nodes = allNodesRef.current;
     const pendingCount = nodes.filter(
-      n => (n.type === 'image' || n.type === 'video') && n.status !== 'generating' && (!n.driveFileId || !isDriveFileId(n.driveFileId))
+      n =>
+        (n.type === 'image' || n.type === 'video') &&
+        n.status !== 'generating' &&
+        n.status !== 'error' &&
+        (!n.driveFileId || !isDriveFileId(n.driveFileId)) &&
+        !(
+          (n.content && (n.content.startsWith('http://') || n.content.startsWith('https://'))) ||
+          (n.driveViewLink && (n.driveViewLink.startsWith('http://') || n.driveViewLink.startsWith('https://')))
+        )
     ).length;
 
     if (pendingCount === 0) {
