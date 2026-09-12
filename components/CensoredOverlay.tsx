@@ -1,7 +1,53 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lock, Unlock, Eye, EyeOff, KeyRound, AlertCircle } from 'lucide-react';
+import { Lock, Unlock, Eye, EyeOff, KeyRound, AlertCircle, X } from 'lucide-react';
 
-interface CensoredOverlayProps {
+export interface CensoredLockedIndicatorProps {
+  onOpenUnlockModal: () => void;
+  boardName?: string;
+}
+
+/**
+ * Non-blocking indicator displayed on top of the blurred canvas.
+ * Allows user to see that the canvas is censored and click to unlock without popping up a blocking modal automatically.
+ */
+export const CensoredLockedIndicator: React.FC<CensoredLockedIndicatorProps> = ({
+  onOpenUnlockModal,
+  boardName,
+}) => {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none select-none">
+      <button
+        type="button"
+        onClick={onOpenUnlockModal}
+        className="pointer-events-auto flex items-center gap-3 px-5 py-2.5 rounded-2xl bg-gray-900/85 hover:bg-gray-900/95 border border-amber-500/40 hover:border-amber-400 text-amber-200 hover:text-white shadow-2xl backdrop-blur-lg transition-all transform hover:scale-105 cursor-pointer ring-1 ring-amber-500/20 group"
+        title="點擊輸入密碼解鎖 (Alt+L)"
+      >
+        <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 group-hover:bg-amber-500/30 transition-colors">
+          <Lock className="w-4 h-4" />
+        </div>
+        <div className="text-left">
+          <div className="text-xs font-semibold tracking-wide flex items-center gap-1.5">
+            <span>{boardName ? `畫布「${boardName}」已鎖定` : '機敏保護畫布已鎖定'}</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              已保護
+            </span>
+          </div>
+          <div className="text-[11px] text-gray-400 flex items-center gap-1.5 mt-0.5">
+            <span>點擊或按</span>
+            <kbd className="px-1.5 py-0.2 rounded bg-gray-800 text-gray-300 font-mono text-[10px] border border-gray-700">
+              Alt+L
+            </kbd>
+            <span>輸入密碼解鎖</span>
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+};
+
+export interface CensoredUnlockModalProps {
+  isOpen: boolean;
+  onClose: () => void;
   boardName: string;
   projectPassword?: string;
   onUnlock: (password: string) => boolean; // returns true if success
@@ -9,7 +55,13 @@ interface CensoredOverlayProps {
   onSwitchToSafeBoard?: () => void;
 }
 
-export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
+/**
+ * Password unlock modal dialog.
+ * Only shown when the user explicitly attempts to unlock (clicking indicator, pressing Alt+L, or clicking lock button).
+ */
+export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
+  isOpen,
+  onClose,
   boardName,
   projectPassword,
   onUnlock,
@@ -27,17 +79,31 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setIsSettingPassword(!projectPassword);
-    setErrorMessage('');
-    setInputPassword('');
-  }, [projectPassword]);
+    if (isOpen) {
+      setIsSettingPassword(!projectPassword);
+      setErrorMessage('');
+      setInputPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, projectPassword]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      inputRef.current?.focus();
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [isSettingPassword]);
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
 
   const handleUnlockSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -52,6 +118,7 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
       inputRef.current?.focus();
     } else {
       setErrorMessage('');
+      onClose();
     }
   };
 
@@ -70,6 +137,7 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
       setErrorMessage('');
       await onSetProjectPassword(newPassword.trim());
       onUnlock(newPassword.trim());
+      onClose();
     } catch (err: any) {
       setErrorMessage(err.message || '密碼設定失敗');
     } finally {
@@ -79,14 +147,25 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
 
   return (
     <div
-      className="absolute inset-0 z-40 flex items-center justify-center p-4 select-none pointer-events-auto"
-      onPointerDown={e => e.stopPropagation()}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none bg-black/60 backdrop-blur-sm animate-fadeIn"
+      onPointerDown={onClose}
     >
-      {/* Background Dimmed Overlay */}
-      <div className="absolute inset-0 bg-gray-950/60 backdrop-blur-md" />
-
       {/* Floating Modal Card */}
-      <div className="relative w-full max-w-md bg-gray-900/95 border border-gray-700/90 rounded-2xl shadow-2xl p-6 flex flex-col items-center text-center animate-fadeIn border-t-amber-500/50">
+      <div
+        className="relative w-full max-w-md bg-gray-900/98 border border-gray-700/90 rounded-2xl shadow-2xl p-6 flex flex-col items-center text-center animate-scaleIn border-t-amber-500/50"
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Close Button */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1.5 rounded-xl text-gray-400 hover:text-white hover:bg-gray-800/80 transition-colors cursor-pointer"
+          title="關閉 (Esc)"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
         <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 shadow-inner">
           <Lock className="w-7 h-7" />
         </div>
@@ -138,7 +217,7 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
               <button
                 type="button"
                 onClick={() => setShowPassword(prev => !prev)}
-                className="flex items-center gap-1.5 hover:text-gray-200 transition-colors"
+                className="flex items-center gap-1.5 hover:text-gray-200 transition-colors cursor-pointer"
               >
                 {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 <span className="text-[11px]">{showPassword ? '隱藏密碼' : '顯示明文'}</span>
@@ -180,7 +259,7 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
               <button
                 type="button"
                 onClick={() => setShowPassword(prev => !prev)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200 transition-colors p-1"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200 transition-colors p-1 cursor-pointer"
                 title={showPassword ? '隱藏' : '顯示'}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -198,7 +277,10 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
               {onSwitchToSafeBoard && (
                 <button
                   type="button"
-                  onClick={onSwitchToSafeBoard}
+                  onClick={() => {
+                    onClose();
+                    onSwitchToSafeBoard();
+                  }}
                   className="w-1/3 py-2 px-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium transition-colors cursor-pointer"
                 >
                   返回主畫布
@@ -229,6 +311,9 @@ export const CensoredOverlay: React.FC<CensoredOverlayProps> = ({
     </div>
   );
 };
+
+// Backwards compatibility alias
+export const CensoredOverlay = CensoredUnlockModal;
 
 interface PasswordManageModalProps {
   isOpen: boolean;

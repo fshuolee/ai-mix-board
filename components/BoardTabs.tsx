@@ -136,8 +136,8 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
         setIsOverviewOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('pointerdown', handleClickOutside, true);
+    return () => document.removeEventListener('pointerdown', handleClickOutside, true);
   }, []);
 
   // Close floating menu on window resize or scroll

@@ -54,7 +54,7 @@ import { DEFAULT_MODEL_ID, getModelById, migrateOldModelId } from './services/mo
 import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
 import TopNavigation from './components/TopNavigation';
 import BoardTabs from './components/BoardTabs';
-import { CensoredOverlay, PasswordManageModal } from './components/CensoredOverlay';
+import { CensoredUnlockModal, CensoredLockedIndicator, PasswordManageModal } from './components/CensoredOverlay';
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
@@ -351,6 +351,7 @@ const App: React.FC = () => {
   const projectPasswordRef = useRef<string>('');
   projectPasswordRef.current = projectPassword;
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
   const [isCensoredUnlocked, setIsCensoredUnlocked] = useState<boolean>(false);
   const isCurrentBoardLocked = isCurrentBoardCensored && !isCensoredUnlocked;
 
@@ -1054,6 +1055,12 @@ const App: React.FC = () => {
     const targetBoard = boards.find(b => b.id === boardId);
     if (!targetBoard) return;
 
+    if (targetBoard.isCensored && !isCensoredUnlocked) {
+      setIsUnlockModalOpen(true);
+      showToast('請先輸入密碼解鎖後方可解除機敏保護', 'info');
+      return;
+    }
+
     const willBeCensored = !targetBoard.isCensored;
     const updatedBoards = boards.map(b =>
       b.id === boardId
@@ -1066,7 +1073,7 @@ const App: React.FC = () => {
 
     if (willBeCensored) {
       showToast(`畫布「${targetBoard.name}」已設為機敏保護`, 'info');
-      if (!projectPassword && targetBoard.id !== currentBoardId) {
+      if (!projectPassword) {
         setIsPasswordModalOpen(true);
       }
     } else {
@@ -1121,23 +1128,8 @@ const App: React.FC = () => {
         showToast('機敏畫布已鎖定', 'info');
         return false;
       } else {
-        // Currently locked -> Open password prompt or focus
-        if (!projectPasswordRef.current) {
-          setIsPasswordModalOpen(true);
-        } else {
-          // If on a censored board, focus input in CensoredOverlay; or open modal
-          const curBoard = boardsRef.current.find(b => b.id === currentBoardIdRef.current);
-          if (curBoard?.isCensored) {
-            const input = document.querySelector('input[type="password"], input[type="text"][autocomplete*="password"]') as HTMLInputElement;
-            if (input) {
-              input.focus();
-            } else {
-              setIsPasswordModalOpen(true);
-            }
-          } else {
-            setIsPasswordModalOpen(true);
-          }
-        }
+        // Currently locked -> Open password prompt modal
+        setIsUnlockModalOpen(true);
         return prev;
       }
     });
@@ -1669,6 +1661,10 @@ const App: React.FC = () => {
 
   const handleCanvasDoubleClick = (e: React.MouseEvent) => {
     if (isProjectBusy || isSpacePressedRef.current || isSpacePressed) return;
+    if (isCurrentBoardLocked) {
+      setIsUnlockModalOpen(true);
+      return;
+    }
     if ((e.target as HTMLElement).closest('[data-node-id]')) return;
 
     const { x, y } = getCanvasCoords(e.clientX, e.clientY);
@@ -1692,6 +1688,11 @@ const App: React.FC = () => {
   const handleUploadImageFile = useCallback(
     async (file: File, targetCoords?: { x: number; y: number }) => {
       if (isProjectBusy) return;
+      if (isCurrentBoardLocked) {
+        setIsUnlockModalOpen(true);
+        showToast('請先解鎖機敏畫布以放置圖片', 'info');
+        return;
+      }
       const token = getAccessToken();
       const initialCoords = targetCoords || getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
       const id = Date.now().toString();
@@ -1791,6 +1792,11 @@ const App: React.FC = () => {
     e.stopPropagation();
     setIsDraggingFileOver(false);
     if (isProjectBusy) return;
+    if (isCurrentBoardLocked) {
+      setIsUnlockModalOpen(true);
+      showToast('請先解鎖機敏畫布以放置圖片', 'info');
+      return;
+    }
 
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     if (files.length === 0) return;
@@ -3436,6 +3442,11 @@ const App: React.FC = () => {
         onOpenPasswordModal={() => setIsPasswordModalOpen(true)}
         onAddTextNode={() => {
           if (isProjectBusy) return;
+          if (isCurrentBoardLocked) {
+            setIsUnlockModalOpen(true);
+            showToast('請先解鎖機敏畫布以新增節點', 'info');
+            return;
+          }
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
           addNode({
             id: Date.now().toString(),
@@ -3466,6 +3477,11 @@ const App: React.FC = () => {
         }}
         onClearCanvas={() => {
           if (isProjectBusy) return;
+          if (isCurrentBoardLocked) {
+            setIsUnlockModalOpen(true);
+            showToast('請先解鎖機敏畫布以清空節點', 'info');
+            return;
+          }
           if (currentBoardNodes.length === 0) {
             showToast('目前畫布已無任何節點');
             return;
@@ -3474,7 +3490,14 @@ const App: React.FC = () => {
             handleDeleteNodes(currentBoardNodes.map(n => n.id));
           }
         }}
-        onExportBoardImage={handleExportBoardImage}
+        onExportBoardImage={() => {
+          if (isCurrentBoardLocked) {
+            setIsUnlockModalOpen(true);
+            showToast('請先解鎖機敏畫布後方可匯出', 'info');
+            return;
+          }
+          handleExportBoardImage();
+        }}
         onDownloadAllImages={handleDownloadAllBoardImages}
       />
 
@@ -3682,19 +3705,11 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* Censored Overlay for Locked Canvas */}
+        {/* Censored Locked Canvas Indicator (Click to Unlock) */}
         {isCurrentBoardLocked && (
-          <CensoredOverlay
-            boardName={currentBoard?.name || '目前畫布'}
-            projectPassword={projectPassword}
-            onUnlock={handleUnlockCensored}
-            onSetProjectPassword={handleSetProjectPassword}
-            onSwitchToSafeBoard={() => {
-              const safeBoard = boards.find(b => !b.isCensored);
-              if (safeBoard) {
-                handleSelectBoard(safeBoard.id);
-              }
-            }}
+          <CensoredLockedIndicator
+            boardName={currentBoard?.name}
+            onOpenUnlockModal={() => setIsUnlockModalOpen(true)}
           />
         )}
       </div>
@@ -4091,6 +4106,22 @@ const App: React.FC = () => {
         onClose={() => setIsPasswordModalOpen(false)}
         currentPassword={projectPassword}
         onSavePassword={handleSetProjectPassword}
+      />
+
+      {/* Censored Canvas Password Unlock Modal */}
+      <CensoredUnlockModal
+        isOpen={isUnlockModalOpen}
+        onClose={() => setIsUnlockModalOpen(false)}
+        boardName={currentBoard?.name || '目前畫布'}
+        projectPassword={projectPassword}
+        onUnlock={handleUnlockCensored}
+        onSetProjectPassword={handleSetProjectPassword}
+        onSwitchToSafeBoard={() => {
+          const safeBoard = boards.find(b => !b.isCensored);
+          if (safeBoard) {
+            handleSelectBoard(safeBoard.id);
+          }
+        }}
       />
 
       {/* Node Info & Metadata Inspection Modal */}
