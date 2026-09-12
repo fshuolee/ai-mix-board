@@ -353,7 +353,18 @@ const App: React.FC = () => {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
   const [isCensoredUnlocked, setIsCensoredUnlocked] = useState<boolean>(false);
+  const isCensoredUnlockedRef = useRef<boolean>(isCensoredUnlocked);
+  isCensoredUnlockedRef.current = isCensoredUnlocked;
   const isCurrentBoardLocked = isCurrentBoardCensored && !isCensoredUnlocked;
+  const isCurrentBoardLockedRef = useRef(isCurrentBoardLocked);
+  isCurrentBoardLockedRef.current = isCurrentBoardLocked;
+
+  // Ensure no nodes remain selected when the canvas enters locked read-only state
+  useEffect(() => {
+    if (isCurrentBoardLocked) {
+      setSelectedNodeIds(new Set());
+    }
+  }, [isCurrentBoardLocked]);
 
   const currentBoardNodes = useMemo(() => {
     const filtered = allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId);
@@ -935,16 +946,22 @@ const App: React.FC = () => {
 
   const addNode = useCallback(
     <T extends CanvasNode>(newNode: T, autoSelect: boolean = true) => {
+      const targetBoardId = newNode.boardId || currentBoardIdRef.current;
+      const targetBoard = boardsRef.current.find(b => b.id === targetBoardId);
+      if (targetBoard?.isCensored && !isCensoredUnlockedRef.current) {
+        showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
+        return;
+      }
       const nodeWithBoard: CanvasNode = {
         ...newNode,
-        boardId: newNode.boardId || currentBoardIdRef.current,
+        boardId: targetBoardId,
       };
       updateNodesAndSave(prev => [...prev, nodeWithBoard]);
       if (autoSelect) {
         setSelectedNodeIds(new Set([newNode.id]));
       }
     },
-    [updateNodesAndSave]
+    [updateNodesAndSave, showToast]
   );
 
   // Multi-Board Handlers
@@ -1006,6 +1023,11 @@ const App: React.FC = () => {
 
   const handleRenameBoard = (boardId: string, newName: string) => {
     if (isProjectBusy) return;
+    const targetBoard = boards.find(b => b.id === boardId);
+    if (targetBoard?.isCensored && !isCensoredUnlocked) {
+      showToast('機敏畫布鎖定中，無法重新命名', 'warning');
+      return;
+    }
     const updatedBoards = boards.map(b => (b.id === boardId ? { ...b, name: newName, updatedAt: new Date().toISOString() } : b));
     setBoards(updatedBoards);
     triggerAutoSave(allNodes, updatedBoards, viewports, selectedModels);
@@ -1013,12 +1035,16 @@ const App: React.FC = () => {
 
   const handleDeleteBoard = (boardId: string) => {
     if (isProjectBusy) return;
+    const targetBoard = boards.find(b => b.id === boardId);
+    if (targetBoard?.isCensored && !isCensoredUnlocked) {
+      showToast('機敏畫布鎖定中，無法刪除', 'warning');
+      return;
+    }
     if (boards.length <= 1) {
       showToast('畫布至少需保留一個分頁，無法刪除！');
       return;
     }
 
-    const targetBoard = boards.find(b => b.id === boardId);
     const boardName = targetBoard?.name || '畫布分頁';
 
     const updatedBoards = boards.filter(b => b.id !== boardId);
@@ -1138,6 +1164,10 @@ const App: React.FC = () => {
   // Duplicate node: creates a new node pointing to the EXACT same asset without cloning file
   const handleDuplicateNode = useCallback(
     (nodeToDuplicate: CanvasNode) => {
+      if (isCurrentBoardLockedRef.current) {
+        showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
+        return;
+      }
       const newId = Date.now().toString();
       const shift = 30;
       const boardId = currentBoardIdRef.current;
@@ -1170,12 +1200,16 @@ const App: React.FC = () => {
         addNode(duplicatedTextNode);
       }
     },
-    [addNode]
+    [addNode, showToast]
   );
 
   const handleDeleteNodes = useCallback(
     (nodeIdsToDelete: string[]) => {
       if (nodeIdsToDelete.length === 0) return;
+      if (isCurrentBoardLockedRef.current) {
+        showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
+        return;
+      }
       const deleteSet = new Set(nodeIdsToDelete);
       const curAllNodes = allNodesRef.current;
 
@@ -1289,6 +1323,20 @@ const App: React.FC = () => {
     if ((e.target as HTMLElement).closest('.node-renderer')) return;
 
     if (e.button === 0) {
+      if (isCurrentBoardLockedRef.current) {
+        // In locked read-only mode, left click drag pans canvas instead of selecting nodes
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+        } catch {}
+        dragInfoRef.current = {
+          type: 'pan',
+          startX: e.clientX,
+          startY: e.clientY,
+        };
+        setIsPanning(true);
+        return;
+      }
+
       // Capture pointer so marquee selection continues smoothly even when
       // moving over bottom toolbars, tabs, or outside canvas area
       try {
@@ -1318,7 +1366,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleNodeDragStart = useCallback((e: React.PointerEvent, nodeId: string) => {
-    if (isSpacePressedRef.current) return;
+    if (isSpacePressedRef.current || isCurrentBoardLockedRef.current) return;
     const currentSelected = selectedNodeIdsRef.current;
     let targetSelection: Set<string>;
     if (e.shiftKey) {
@@ -1636,7 +1684,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleSelectNode = useCallback((id: string, shiftKey: boolean) => {
-    if (isSpacePressedRef.current) return;
+    if (isSpacePressedRef.current || isCurrentBoardLockedRef.current) return;
     setSelectedNodeIds(prev => {
       const newSelection = new Set(prev);
       if (shiftKey) {
@@ -1660,11 +1708,7 @@ const App: React.FC = () => {
   };
 
   const handleCanvasDoubleClick = (e: React.MouseEvent) => {
-    if (isProjectBusy || isSpacePressedRef.current || isSpacePressed) return;
-    if (isCurrentBoardLocked) {
-      setIsUnlockModalOpen(true);
-      return;
-    }
+    if (isProjectBusy || isSpacePressedRef.current || isSpacePressed || isCurrentBoardLockedRef.current) return;
     if ((e.target as HTMLElement).closest('[data-node-id]')) return;
 
     const { x, y } = getCanvasCoords(e.clientX, e.clientY);
@@ -1688,9 +1732,8 @@ const App: React.FC = () => {
   const handleUploadImageFile = useCallback(
     async (file: File, targetCoords?: { x: number; y: number }) => {
       if (isProjectBusy) return;
-      if (isCurrentBoardLocked) {
-        setIsUnlockModalOpen(true);
-        showToast('請先解鎖機敏畫布以放置圖片', 'info');
+      if (isCurrentBoardLockedRef.current) {
+        showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
         return;
       }
       const token = getAccessToken();
@@ -1773,7 +1816,7 @@ const App: React.FC = () => {
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (isProjectBusy) return;
+    if (isProjectBusy || isCurrentBoardLockedRef.current) return;
     if (e.dataTransfer.types.includes('Files')) {
       setIsDraggingFileOver(true);
       e.dataTransfer.dropEffect = 'copy';
@@ -1792,9 +1835,8 @@ const App: React.FC = () => {
     e.stopPropagation();
     setIsDraggingFileOver(false);
     if (isProjectBusy) return;
-    if (isCurrentBoardLocked) {
-      setIsUnlockModalOpen(true);
-      showToast('請先解鎖機敏畫布以放置圖片', 'info');
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
       return;
     }
 
@@ -1812,6 +1854,10 @@ const App: React.FC = () => {
   };
 
   const handleCut = useCallback(async (targetNodeIds?: string[]) => {
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
+      return;
+    }
     const idsToCut = targetNodeIds && targetNodeIds.length > 0 ? new Set(targetNodeIds) : selectedNodeIds;
     if (idsToCut.size === 0) return;
     const selectedNodes = currentBoardNodes.filter(n => idsToCut.has(n.id));
@@ -1841,6 +1887,10 @@ const App: React.FC = () => {
   }, [selectedNodeIds, currentBoardNodes, currentProject?.id, currentProject?.spreadsheetId, showToast]);
 
   const handleCopy = useCallback(async (targetNodeIds?: string[]) => {
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，無法複製內容', 'warning');
+      return;
+    }
     const idsToCopy = targetNodeIds && targetNodeIds.length > 0 ? new Set(targetNodeIds) : selectedNodeIds;
     if (idsToCopy.size === 0) return;
     const selectedNodes = currentBoardNodes.filter(n => idsToCopy.has(n.id));
@@ -1874,6 +1924,10 @@ const App: React.FC = () => {
   }, [selectedNodeIds, currentBoardNodes, currentProject?.id, currentProject?.spreadsheetId, showToast]);
 
   const handlePasteNodes = useCallback((targetCoords?: { x: number; y: number }) => {
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
+      return false;
+    }
     const payload = getInternalClipboardPayload() || clipboardMeta;
     let nodesToPaste = payload?.nodes || copiedNodesClipboard;
 
@@ -1977,6 +2031,7 @@ const App: React.FC = () => {
   ]);
 
   const handlePasteFromContextMenu = useCallback(async () => {
+    if (isCurrentBoardLockedRef.current) return;
     const coords = getCanvasCoords(contextMenu.position.x, contextMenu.position.y);
     const payload = getInternalClipboardPayload();
 
@@ -2056,6 +2111,10 @@ const App: React.FC = () => {
   const handlePaste = useCallback(
     async (e: ClipboardEvent) => {
       if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') {
+        return;
+      }
+      if (isCurrentBoardLockedRef.current) {
+        showToast('機敏畫布鎖定中，處於唯讀狀態', 'warning');
         return;
       }
       e.preventDefault();
@@ -2147,7 +2206,7 @@ const App: React.FC = () => {
 
   // Execute Generation (Concurrent & Non-blocking)
   const handleExecute = useCallback(() => {
-    if (selectedNodeIds.size === 0) return;
+    if (selectedNodeIds.size === 0 || isCurrentBoardLockedRef.current) return;
     setError(null);
 
     // 1. Snapshot selection and environment for this generation job
@@ -2798,7 +2857,7 @@ const App: React.FC = () => {
 
   // History Action Handlers (Undo / Redo)
   const handleUndo = useCallback(() => {
-    if (undoStackRef.current.length === 0) return;
+    if (undoStackRef.current.length === 0 || isCurrentBoardLockedRef.current) return;
     const previousState = undoStackRef.current.pop();
     if (!previousState) return;
 
@@ -2832,7 +2891,7 @@ const App: React.FC = () => {
   }, [triggerAutoSave, showToast]);
 
   const handleRedo = useCallback(() => {
-    if (redoStackRef.current.length === 0) return;
+    if (redoStackRef.current.length === 0 || isCurrentBoardLockedRef.current) return;
     const nextState = redoStackRef.current.pop();
     if (!nextState) return;
 
@@ -2932,6 +2991,27 @@ const App: React.FC = () => {
         e.preventDefault();
         handleToggleLockSession();
         return;
+      }
+
+      // When current board is locked, prevent all modification shortcuts (Undo, Redo, Cut, Copy, Paste, Delete, Duplicate, Execute, Auto-Arrange, Select-All)
+      if (isCurrentBoardLockedRef.current) {
+        if (
+          ((e.metaKey || e.ctrlKey) &&
+            (e.key.toLowerCase() === 'z' ||
+              e.key.toLowerCase() === 'y' ||
+              e.key.toLowerCase() === 'd' ||
+              e.key.toLowerCase() === 'x' ||
+              e.key.toLowerCase() === 'c' ||
+              e.key.toLowerCase() === 'v' ||
+              e.key.toLowerCase() === 'a')) ||
+          e.key === 'Delete' ||
+          e.key === 'Backspace' ||
+          (e.key === 'Enter' && e.shiftKey) ||
+          (e.altKey && e.key.toLowerCase() === 'g')
+        ) {
+          e.preventDefault();
+          return;
+        }
       }
 
       // Space key for panning cursor - completely enter pan mode
@@ -3203,6 +3283,7 @@ const App: React.FC = () => {
   }, [currentBoardNodes, selectedNodeIds]);
 
   const handleBringToFront = useCallback(() => {
+    if (isCurrentBoardLockedRef.current) return;
     const idSet = new Set(selectedNodeIds);
     updateNodesAndSave(prevNodes => {
       const remaining = prevNodes.filter(n => !idSet.has(n.id));
@@ -3212,6 +3293,7 @@ const App: React.FC = () => {
   }, [selectedNodeIds, updateNodesAndSave]);
 
   const handleSendToBack = useCallback(() => {
+    if (isCurrentBoardLockedRef.current) return;
     const idSet = new Set(selectedNodeIds);
     updateNodesAndSave(prevNodes => {
       const moving = prevNodes.filter(n => idSet.has(n.id));
@@ -3221,7 +3303,7 @@ const App: React.FC = () => {
   }, [selectedNodeIds, updateNodesAndSave]);
 
   const handleDuplicateSelected = useCallback(() => {
-    if (selectedNodeIds.size === 0) return;
+    if (selectedNodeIds.size === 0 || isCurrentBoardLockedRef.current) return;
     const toDuplicate = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     const newNodes: CanvasNode[] = toDuplicate.map(node => {
       const newId = `${node.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -3239,12 +3321,17 @@ const App: React.FC = () => {
   }, [selectedNodeIds, currentBoardNodes, updateNodesAndSave]);
 
   const handleSelectAll = useCallback(() => {
+    if (isCurrentBoardLockedRef.current) return;
     setSelectedNodeIds(new Set(currentBoardNodes.map(n => n.id)));
   }, [currentBoardNodes]);
 
   // Download & Export Handlers
   const handleDownloadSingleNode = useCallback(
     async (node: CanvasNode) => {
+      if (isCurrentBoardLockedRef.current) {
+        showToast('機敏畫布鎖定中，無法下載', 'warning');
+        return;
+      }
       showToast(`正在準備下載 ${node.type === 'video' ? '影片' : node.type === 'image' ? '圖片' : '文字'}...`);
       try {
         const ok = await downloadSingleNode(node);
@@ -3262,6 +3349,10 @@ const App: React.FC = () => {
   );
 
   const handleDownloadSelectedNodes = useCallback(async () => {
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，無法下載', 'warning');
+      return;
+    }
     const selected = currentBoardNodes.filter(n => selectedNodeIds.has(n.id));
     if (selected.length === 0) return;
     showToast(`正在準備批次下載 ${selected.length} 個物件...`);
@@ -3279,6 +3370,10 @@ const App: React.FC = () => {
   }, [currentBoardNodes, selectedNodeIds, showToast]);
 
   const handleExportBoardImage = useCallback(async () => {
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，無法匯出', 'warning');
+      return;
+    }
     if (currentBoardNodes.length === 0) {
       showToast('目前畫布沒有物件，無法匯出');
       return;
@@ -3302,6 +3397,10 @@ const App: React.FC = () => {
   }, [currentBoardNodes, boards, currentBoardId, currentProject?.name, showToast]);
 
   const handleDownloadAllBoardImages = useCallback(async () => {
+    if (isCurrentBoardLockedRef.current) {
+      showToast('機敏畫布鎖定中，無法下載', 'warning');
+      return;
+    }
     const media = currentBoardNodes.filter(n => n.type === 'image' || n.type === 'video');
     if (media.length === 0) {
       showToast('目前畫布沒有媒體檔案可供下載');
@@ -3429,8 +3528,8 @@ const App: React.FC = () => {
         syncStatus={syncStatus}
         lastSavedAt={lastSavedAt}
         isProjectLoading={isProjectBusy}
-        canUndo={historyCounts.undo > 0}
-        canRedo={historyCounts.redo > 0}
+        canUndo={!isCurrentBoardLocked && historyCounts.undo > 0}
+        canRedo={!isCurrentBoardLocked && historyCounts.redo > 0}
         onUndo={handleUndo}
         onRedo={handleRedo}
         isSyncingAssets={isSyncingAssets}
@@ -3440,13 +3539,9 @@ const App: React.FC = () => {
         rescuableAssetCount={rescuableAssets.length}
         projectPassword={projectPassword}
         onOpenPasswordModal={() => setIsPasswordModalOpen(true)}
+        isCurrentBoardLocked={isCurrentBoardLocked}
         onAddTextNode={() => {
-          if (isProjectBusy) return;
-          if (isCurrentBoardLocked) {
-            setIsUnlockModalOpen(true);
-            showToast('請先解鎖機敏畫布以新增節點', 'info');
-            return;
-          }
+          if (isProjectBusy || isCurrentBoardLocked) return;
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
           addNode({
             id: Date.now().toString(),
@@ -3461,7 +3556,10 @@ const App: React.FC = () => {
             createdAt: Date.now(),
           });
         }}
-        onUploadImage={file => handleUploadImageFile(file)}
+        onUploadImage={file => {
+          if (isCurrentBoardLocked) return;
+          handleUploadImageFile(file);
+        }}
         onResetZoom={fitToView}
         onZoomIn={() => {
           if (isProjectBusy) return;
@@ -3476,12 +3574,7 @@ const App: React.FC = () => {
           setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
         onClearCanvas={() => {
-          if (isProjectBusy) return;
-          if (isCurrentBoardLocked) {
-            setIsUnlockModalOpen(true);
-            showToast('請先解鎖機敏畫布以清空節點', 'info');
-            return;
-          }
+          if (isProjectBusy || isCurrentBoardLocked) return;
           if (currentBoardNodes.length === 0) {
             showToast('目前畫布已無任何節點');
             return;
@@ -3490,15 +3583,8 @@ const App: React.FC = () => {
             handleDeleteNodes(currentBoardNodes.map(n => n.id));
           }
         }}
-        onExportBoardImage={() => {
-          if (isCurrentBoardLocked) {
-            setIsUnlockModalOpen(true);
-            showToast('請先解鎖機敏畫布後方可匯出', 'info');
-            return;
-          }
-          handleExportBoardImage();
-        }}
-        onDownloadAllImages={handleDownloadAllBoardImages}
+        onExportBoardImage={isCurrentBoardLocked ? undefined : handleExportBoardImage}
+        onDownloadAllImages={isCurrentBoardLocked ? undefined : handleDownloadAllBoardImages}
       />
 
       {/* Infinite Canvas with Drag-and-Drop Image File Support */}

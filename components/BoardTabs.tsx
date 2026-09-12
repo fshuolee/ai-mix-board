@@ -172,6 +172,9 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   };
 
   const handleStartRename = (board: BoardMetadata) => {
+    if (board.isCensored && !isCensoredUnlocked) {
+      return;
+    }
     setEditingBoardId(board.id);
     setEditingName(board.name);
     setMenuState(null);
@@ -517,66 +520,80 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
               </span>
             </div>
 
-            {/* 重新命名 */}
-            <button
-              type="button"
-              onClick={() => {
-                const target = menuState.board;
-                setMenuState(null);
-                handleStartRename(target);
-              }}
-              className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-gray-300 hover:text-white hover:bg-gray-800/80 rounded-xl text-left transition-colors cursor-pointer"
-            >
-              <Edit2 className="w-3.5 h-3.5 text-blue-400" />
-              <span>重新命名</span>
-            </button>
+            {menuState.board.isCensored && !isCensoredUnlocked ? (
+              <div className="px-2.5 py-2.5 text-center text-xs text-amber-300 bg-amber-500/10 rounded-xl border border-amber-500/20 my-1">
+                <div className="flex items-center justify-center gap-1.5 font-semibold">
+                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>畫布鎖定中（唯讀）</span>
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1 leading-relaxed">
+                  請先按 Alt+L 或點擊畫面中央輸入密碼解鎖後方可重新命名或刪除
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 重新命名 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = menuState.board;
+                    setMenuState(null);
+                    handleStartRename(target);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-gray-300 hover:text-white hover:bg-gray-800/80 rounded-xl text-left transition-colors cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>重新命名</span>
+                </button>
 
-            {/* 設為機敏保護 (需密碼) / 解除機敏保護 */}
-            {onToggleCensoredBoard && (
-              <button
-                type="button"
-                onClick={() => {
-                  const targetBoardId = menuState.board.id;
-                  setMenuState(null);
-                  onToggleCensoredBoard(targetBoardId);
-                }}
-                className={`w-full flex items-center gap-2 px-2.5 py-2 text-xs rounded-xl text-left transition-colors cursor-pointer ${
-                  menuState.board.isCensored
-                    ? 'text-amber-300 hover:text-white hover:bg-amber-950/40'
-                    : 'text-gray-300 hover:text-white hover:bg-gray-800/80'
-                }`}
-              >
-                {menuState.board.isCensored ? (
-                  <>
-                    <Unlock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>解除機敏保護</span>
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-3.5 h-3.5 text-blue-400" />
-                    <span>設為機敏保護 (需密碼)</span>
-                  </>
+                {/* 設為機敏保護 (需密碼) / 解除機敏保護 */}
+                {onToggleCensoredBoard && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetBoardId = menuState.board.id;
+                      setMenuState(null);
+                      onToggleCensoredBoard(targetBoardId);
+                    }}
+                    className={`w-full flex items-center gap-2 px-2.5 py-2 text-xs rounded-xl text-left transition-colors cursor-pointer ${
+                      menuState.board.isCensored
+                        ? 'text-amber-300 hover:text-white hover:bg-amber-950/40'
+                        : 'text-gray-300 hover:text-white hover:bg-gray-800/80'
+                    }`}
+                  >
+                    {menuState.board.isCensored ? (
+                      <>
+                        <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                        <span>解除機敏保護</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-3.5 h-3.5 text-blue-400" />
+                        <span>設為機敏保護 (需密碼)</span>
+                      </>
+                    )}
+                  </button>
                 )}
-              </button>
-            )}
 
-            {/* 刪除畫布 */}
-            {boards.length > 1 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const targetBoardId = menuState.board.id;
-                  const targetBoardName = menuState.board.name;
-                  setMenuState(null);
-                  if (window.confirm(`確定要刪除畫布 "${targetBoardName}" 嗎？畫布上的節點將會一併移除。`)) {
-                    onDeleteBoard(targetBoardId);
-                  }
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-xl text-left transition-colors cursor-pointer border-t border-gray-800/80 mt-1 pt-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>刪除畫布</span>
-              </button>
+                {/* 刪除畫布 */}
+                {boards.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetBoardId = menuState.board.id;
+                      const targetBoardName = menuState.board.name;
+                      setMenuState(null);
+                      if (window.confirm(`確定要刪除畫布 "${targetBoardName}" 嗎？畫布上的節點將會一併移除。`)) {
+                        onDeleteBoard(targetBoardId);
+                      }
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-xl text-left transition-colors cursor-pointer border-t border-gray-800/80 mt-1 pt-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>刪除畫布</span>
+                  </button>
+                )}
+              </>
             )}
           </div>,
           document.body

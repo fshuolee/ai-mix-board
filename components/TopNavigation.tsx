@@ -59,6 +59,7 @@ interface TopNavigationProps {
   rescuableAssetCount?: number;
   projectPassword?: string;
   onOpenPasswordModal?: () => void;
+  isCurrentBoardLocked?: boolean;
 }
 
 const TopNavigation: React.FC<TopNavigationProps> = ({
@@ -92,6 +93,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   onDownloadAllImages,
   projectPassword,
   onOpenPasswordModal,
+  isCurrentBoardLocked = false,
 }) => {
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
   const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
@@ -426,28 +428,39 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
       <div className="flex items-center gap-2">
         {/* Canvas Toolbar Capsule */}
         <div className="flex items-center gap-0.5 bg-gray-900/90 border border-gray-800 rounded-xl p-1 shadow-sm">
+          {/* Read-Only State Indicator Pill */}
+          {isCurrentBoardLocked && (
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold select-none mr-0.5 animate-fadeIn"
+              title="此畫布已設為機敏保護並處於唯讀狀態，請先解鎖以進行編輯"
+            >
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>唯讀狀態</span>
+            </div>
+          )}
+
           <button
-            onClick={onAddTextNode}
-            disabled={isProjectLoading}
+            onClick={isCurrentBoardLocked ? undefined : onAddTextNode}
+            disabled={isProjectLoading || isCurrentBoardLocked}
             className={`p-1.5 rounded-lg transition-colors ${
-              isProjectLoading
-                ? 'opacity-40 cursor-not-allowed text-gray-500'
+              isProjectLoading || isCurrentBoardLocked
+                ? 'opacity-30 cursor-not-allowed text-gray-500'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
-            title="新增文字節點 (雙擊畫布亦可)"
+            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '新增文字節點 (雙擊畫布亦可)'}
           >
             <Type className="w-4 h-4 text-blue-400" />
           </button>
 
           <button
-            onClick={() => !isProjectLoading && fileInputRef.current?.click()}
-            disabled={isProjectLoading}
+            onClick={() => !isProjectLoading && !isCurrentBoardLocked && fileInputRef.current?.click()}
+            disabled={isProjectLoading || isCurrentBoardLocked}
             className={`p-1.5 rounded-lg transition-colors ${
-              isProjectLoading
-                ? 'opacity-40 cursor-not-allowed text-gray-500'
+              isProjectLoading || isCurrentBoardLocked
+                ? 'opacity-30 cursor-not-allowed text-gray-500'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
-            title="上傳圖片 (Ctrl+V 貼上亦可)"
+            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '上傳圖片 (Ctrl+V 貼上亦可)'}
           >
             <ImageIcon className="w-4 h-4 text-purple-400" />
           </button>
@@ -455,6 +468,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            disabled={isCurrentBoardLocked}
             className="hidden"
             onChange={handleFileChange}
           />
@@ -463,26 +477,26 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
 
           {/* Undo / Redo controls */}
           <button
-            onClick={onUndo}
-            disabled={!canUndo || isProjectLoading}
+            onClick={isCurrentBoardLocked ? undefined : onUndo}
+            disabled={!canUndo || isProjectLoading || isCurrentBoardLocked}
             className={`p-1.5 rounded-lg transition-colors ${
-              !canUndo || isProjectLoading
+              !canUndo || isProjectLoading || isCurrentBoardLocked
                 ? 'opacity-30 cursor-not-allowed text-gray-500'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
-            title="復原 (Cmd+Z)"
+            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '復原 (Cmd+Z)'}
           >
             <Undo2 className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={onRedo}
-            disabled={!canRedo || isProjectLoading}
+            onClick={isCurrentBoardLocked ? undefined : onRedo}
+            disabled={!canRedo || isProjectLoading || isCurrentBoardLocked}
             className={`p-1.5 rounded-lg transition-colors ${
-              !canRedo || isProjectLoading
+              !canRedo || isProjectLoading || isCurrentBoardLocked
                 ? 'opacity-30 cursor-not-allowed text-gray-500'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
-            title="重做 (Cmd+Shift+Z)"
+            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '重做 (Cmd+Shift+Z)'}
           >
             <Redo2 className="w-3.5 h-3.5" />
           </button>
@@ -515,7 +529,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           <div className="w-px h-4 bg-gray-800 mx-0.5" />
 
           {/* Export / Download Menu */}
-          {(onExportBoardImage || onDownloadAllImages) && (
+          {!isCurrentBoardLocked && (onExportBoardImage || onDownloadAllImages) && (
             <div className="relative" ref={downloadDropdownRef}>
               <button
                 onClick={() => !isProjectLoading && setDownloadDropdownOpen(prev => !prev)}
@@ -582,14 +596,14 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           )}
 
           <button
-            onClick={onClearCanvas}
-            disabled={isProjectLoading}
+            onClick={isCurrentBoardLocked ? undefined : onClearCanvas}
+            disabled={isProjectLoading || isCurrentBoardLocked}
             className={`p-1.5 rounded-lg transition-colors ${
-              isProjectLoading
-                ? 'opacity-40 cursor-not-allowed text-gray-500'
+              isProjectLoading || isCurrentBoardLocked
+                ? 'opacity-30 cursor-not-allowed text-gray-500'
                 : 'text-gray-400 hover:text-red-400 hover:bg-gray-800'
             }`}
-            title="清空畫布"
+            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '清空畫布'}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
