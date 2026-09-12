@@ -498,8 +498,12 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               playsInline
               className="w-full h-full object-contain rounded-xl"
               onPointerDown={e => {
-                // Allow user to click native video controls without dragging node
-                e.stopPropagation();
+                // Only stop propagation if clicking in the native bottom control bar area (~44px from bottom)
+                // This preserves playback scrubbing/volume while allowing the entire upper video body to drag/select the node!
+                const rect = e.currentTarget.getBoundingClientRect();
+                if (e.clientY >= rect.bottom - 44) {
+                  e.stopPropagation();
+                }
               }}
             />
           ) : (
@@ -537,25 +541,34 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             </div>
           )}
 
-          {/* Video Indicator Badge */}
-          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[10px] text-rose-300 font-medium flex items-center gap-1 pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity">
-            <Film className="w-3 h-3" />
-            <span>MP4</span>
-          </div>
+          {/* Top Video Header & Drag Handle (Allows easy dragging without interfering with video controls) */}
+          <div
+            className="absolute top-0 left-0 right-0 h-9 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-center justify-between px-2.5 z-20 cursor-grab active:cursor-grabbing pointer-events-auto"
+            title="按住此處可拖曳影片節點"
+          >
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-sm border border-rose-500/30 text-[10px] text-rose-300 font-medium select-none shadow-sm pointer-events-none">
+              <Film className="w-3 h-3 text-rose-400" />
+              <span>MP4 影片</span>
+            </div>
 
-          {/* Quick Download Hover Button for Video */}
-          {onDownloadNode && (
-            <button
-              onClick={e => {
-                e.stopPropagation();
-                onDownloadNode(node);
-              }}
-              className="absolute bottom-1.5 right-1.5 p-1 rounded bg-gray-900/85 hover:bg-gray-800 backdrop-blur-sm border border-gray-700 text-rose-400 hover:text-rose-300 transition-all opacity-0 group-hover:opacity-100 shadow-md z-20"
-              title="快速下載此影片檔案 (.mp4)"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
-          )}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] text-gray-300/80 bg-black/50 px-1.5 py-0.5 rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity select-none pointer-events-none">
+                按住此處可拖曳
+              </span>
+              {onDownloadNode && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    onDownloadNode(node);
+                  }}
+                  className="p-1 rounded bg-black/60 hover:bg-black/90 backdrop-blur-sm border border-gray-700 text-rose-400 hover:text-rose-300 transition-all opacity-0 group-hover:opacity-100 shadow-md"
+                  title="快速下載此影片檔案 (.mp4)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

@@ -738,7 +738,9 @@ export const DEFAULT_ATLAS_MODELS: ModelInfo[] = [
 export async function uploadMediaToAtlas(blob: Blob, apiKey: string): Promise<string | null> {
   try {
     const formData = new FormData();
-    formData.append('file', blob, 'reference_image.png');
+    const mime = blob.type || 'image/png';
+    const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : mime.includes('webp') ? 'webp' : mime.includes('mp4') ? 'mp4' : 'png';
+    formData.append('file', blob, `reference_media.${ext}`);
 
     const res = await fetch('https://api.atlascloud.ai/api/v1/model/uploadMedia', {
       method: 'POST',
@@ -1292,6 +1294,22 @@ export async function generateWithAtlasCloud(
         payload.images = referenceImageUrls;
         payload.reference_image_urls = referenceImageUrls;
         payload.image = referenceImageUrls[0];
+
+        // Compute aspect-ratio matched dimensions (multiples of 32 between 512 and 2048)
+        const refNode = imageNodes[0];
+        if (refNode && refNode.width && refNode.height) {
+          const ratio = refNode.width / refNode.height;
+          let targetW = 1024;
+          let targetH = 1024;
+          if (ratio > 1) {
+            targetW = 1024;
+            targetH = Math.max(512, Math.min(2048, Math.round((1024 / ratio) / 32) * 32));
+          } else if (ratio < 1) {
+            targetH = 1024;
+            targetW = Math.max(512, Math.min(2048, Math.round((1024 * ratio) / 32) * 32));
+          }
+          payload.size = `${targetW}*${targetH}`;
+        }
       }
 
       const predRes = await fetch('https://api.atlascloud.ai/api/v1/model/generateImage', {
