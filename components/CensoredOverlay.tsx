@@ -15,7 +15,7 @@ export const CensoredLockedIndicator: React.FC<CensoredLockedIndicatorProps> = (
   boardName,
 }) => {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none select-none">
+    <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none select-none">
       <button
         type="button"
         onClick={onOpenUnlockModal}

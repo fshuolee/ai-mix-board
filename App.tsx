@@ -3659,14 +3659,16 @@ const App: React.FC = () => {
         {/* Nodes Layer */}
         <div
           data-testid="canvas-nodes-layer"
-          className={`absolute top-0 left-0 transition-[filter] duration-300 ${
+          className={`absolute top-0 left-0 ${
             isCurrentBoardLocked ? 'pointer-events-none select-none' : (isSpacePressed ? 'pointer-events-none' : '')
           }`}
           style={{
             transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.zoom})`,
             transformOrigin: '0 0',
             willChange: 'transform',
-            filter: isCurrentBoardLocked ? 'blur(32px)' : undefined,
+            filter: isCurrentBoardLocked
+              ? `blur(${Math.max(64, Math.round(56 / Math.max(0.08, view.zoom)))}px) saturate(0.15) brightness(0.6)`
+              : undefined,
           }}
         >
           {currentBoardNodes.map(node => (
@@ -3691,6 +3693,18 @@ const App: React.FC = () => {
             />
           ))}
         </div>
+
+        {/* Screen-Space Censored Frosted Glass Overlay */}
+        {isCurrentBoardLocked && (
+          <div
+            data-testid="censored-frosted-overlay"
+            className="absolute inset-0 z-10 pointer-events-none backdrop-blur-[40px] bg-gray-950/60"
+            style={{
+              backdropFilter: 'blur(40px) saturate(30%) brightness(70%)',
+              WebkitBackdropFilter: 'blur(40px) saturate(30%) brightness(70%)',
+            }}
+          />
+        )}
 
         {/* Marquee Selection Rectangle Overlay */}
         {marqueeBox && (
