@@ -735,7 +735,8 @@ export const DEFAULT_ATLAS_MODELS: ModelInfo[] = [
 /**
  * Upload a media Blob to Atlas Cloud temporary storage to obtain an HTTP URL for image editing/reference
  */
-export async function uploadMediaToAtlas(blob: Blob, apiKey: string): Promise<string | null> {
+export async function uploadMediaToAtlas(blob?: Blob | null, apiKey?: string): Promise<string | null> {
+  if (!blob || !apiKey) return null;
   try {
     const formData = new FormData();
     const mime = blob.type || 'image/png';
@@ -1296,13 +1297,15 @@ export async function generateWithAtlasCloud(
     let referenceImageUrls: string[] = [];
     if (imageParts.length > 0) {
       const uploadPromises = imageParts.map(async (part) => {
-        // Try uploading to Atlas temporary storage first to get an HTTP URL
-        const uploaded = await uploadMediaToAtlas(part.blob, apiKey);
-        if (uploaded) return uploaded;
-        // Fallback to data URI
-        return `data:${part.mimeType};base64,${part.data}`;
+        if (part.url) return part.url;
+        if (part.blob) {
+          const uploaded = await uploadMediaToAtlas(part.blob, apiKey);
+          if (uploaded) return uploaded;
+          return `data:${part.mimeType};base64,${part.data}`;
+        }
+        return null;
       });
-      referenceImageUrls = await Promise.all(uploadPromises);
+      referenceImageUrls = (await Promise.all(uploadPromises)).filter(Boolean) as string[];
     }
 
     // Strategy A: Atlas Cloud Dedicated Image / Edit Endpoint (POST /api/v1/model/generateImage)
@@ -1344,74 +1347,82 @@ export async function generateWithAtlasCloud(
         body: JSON.stringify(payload),
       });
 
-      if (predRes.ok) {
-        const predData = await predRes.json();
+      if (!predRes.ok) {
+        const errText = await predRes.text();
+        let parsedMsg = errText;
+        try {
+          const errJson = JSON.parse(errText);
+          parsedMsg = errJson.message || errJson.error || errJson.msg || errText;
+        } catch {}
+        throw new Error(`Atlas Cloud 任務建立失敗 (${predRes.status}): ${parsedMsg}`);
+      }
 
-        // Check if returned immediately (e.g. sync mode or instant base64)
-        const instantOutputs = predData?.data?.outputs || predData?.outputs || predData?.output;
-        if (instantOutputs) {
-          const targetUrl = Array.isArray(instantOutputs) ? instantOutputs[0] : instantOutputs;
-          if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
-            const blob = await fetchImageBlob(targetUrl);
-            return { type: 'image', blob: blob || undefined, url: targetUrl };
-          }
+      const predData = await predRes.json();
+
+      // Check if returned immediately (e.g. sync mode or instant base64)
+      const instantOutputs = predData?.data?.outputs || predData?.outputs || predData?.output;
+      if (instantOutputs) {
+        const targetUrl = Array.isArray(instantOutputs) ? instantOutputs[0] : instantOutputs;
+        if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
+          const blob = await fetchImageBlob(targetUrl);
+          return { type: 'image', blob: blob || undefined, url: targetUrl };
         }
+      }
 
-        const predictionId = predData?.data?.id || predData?.id || predData?.prediction_id;
+      const predictionId = predData?.data?.id || predData?.id || predData?.prediction_id;
 
-        if (predictionId) {
-          // Poll prediction status
-          const maxAttempts = 60; // up to ~120 seconds
-          for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            await new Promise(r => setTimeout(r, 2000));
+      if (predictionId) {
+        // Poll prediction status
+        const maxAttempts = 60; // up to ~120 seconds
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
 
-            let statusRes: Response;
-            try {
-              statusRes = await fetch(`https://api.atlascloud.ai/api/v1/model/prediction/${predictionId}`, {
-                headers: {
-                  'Authorization': `Bearer ${apiKey}`,
-                },
-              });
-            } catch (netErr) {
-              console.warn('Network issue polling image status:', netErr);
-              continue;
-            }
+          let statusRes: Response;
+          try {
+            statusRes = await fetch(`https://api.atlascloud.ai/api/v1/model/prediction/${predictionId}`, {
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+              },
+            });
+          } catch (netErr) {
+            console.warn('Network issue polling image status:', netErr);
+            continue;
+          }
 
-            let statusData: any;
-            try {
-              statusData = await statusRes.json();
-            } catch {
-              if (!statusRes.ok) {
-                throw new Error(`Atlas Cloud 影像任務查詢失敗 (${statusRes.status})`);
-              }
-              continue;
-            }
-
+          let statusData: any;
+          try {
+            statusData = await statusRes.json();
+          } catch {
             if (!statusRes.ok) {
-              const errMsg = statusData?.message || statusData?.error || statusData?.data?.error || `Atlas Cloud 影像生成失敗 (${statusRes.status})`;
-              throw new Error(errMsg);
+              throw new Error(`Atlas Cloud 影像任務查詢失敗 (${statusRes.status})`);
             }
-
-            const dataObj = statusData?.data || statusData;
-            const status = dataObj?.status?.toLowerCase();
-
-            if (status === 'completed' || status === 'succeeded') {
-              const outputs = dataObj?.outputs || dataObj?.output;
-              let targetUrl = Array.isArray(outputs) ? outputs[0] : outputs;
-              if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
-                const blob = await fetchImageBlob(targetUrl);
-                return { type: 'image', blob: blob || undefined, url: targetUrl };
-              }
-              throw new Error('生圖成功但未取得有效圖片 URL');
-            }
-
-            if (status === 'failed' || status === 'error') {
-              throw new Error(dataObj?.error || statusData?.message || 'Atlas Cloud 影像生成或編輯失敗');
-            }
+            continue;
           }
 
-          throw new Error('Atlas Cloud 生成等待逾時，請稍後重試');
+          if (!statusRes.ok) {
+            const errMsg = statusData?.message || statusData?.error || statusData?.data?.error || `Atlas Cloud 影像生成失敗 (${statusRes.status})`;
+            throw new Error(errMsg);
+          }
+
+          const dataObj = statusData?.data || statusData;
+          const status = dataObj?.status?.toLowerCase();
+
+          if (status === 'completed' || status === 'succeeded') {
+            const outputs = dataObj?.outputs || dataObj?.output;
+            let targetUrl = Array.isArray(outputs) ? outputs[0] : outputs;
+            if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
+              const blob = await fetchImageBlob(targetUrl);
+              return { type: 'image', blob: blob || undefined, url: targetUrl };
+            }
+            throw new Error('生圖成功但未取得有效圖片 URL');
+          }
+
+          if (status === 'failed' || status === 'error') {
+            throw new Error(dataObj?.error || statusData?.message || 'Atlas Cloud 影像生成或編輯失敗');
+          }
         }
+
+        throw new Error('Atlas Cloud 生成等待逾時，請稍後重試');
       }
     } catch (e: any) {
       console.warn('generateImage endpoint attempt failed, trying fallback:', e);
@@ -1478,7 +1489,7 @@ export async function generateWithAtlasCloud(
         ...imageParts.map(img => ({
           type: 'image_url',
           image_url: {
-            url: `data:${img.mimeType};base64,${img.data}`,
+            url: img.url || `data:${img.mimeType};base64,${img.data}`,
           },
         })),
       ];
