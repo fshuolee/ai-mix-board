@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Undo2,
   Redo2,
+  Lock,
 } from 'lucide-react';
 import { ProjectMetadata, GoogleUserProfile, SyncStatus } from '../types';
 import { getModelById } from '../services/modelsConfig';
@@ -56,6 +57,8 @@ interface TopNavigationProps {
   unuploadedAssetCount?: number;
   onOpenRescueModal?: () => void;
   rescuableAssetCount?: number;
+  projectPassword?: string;
+  onOpenPasswordModal?: () => void;
 }
 
 const TopNavigation: React.FC<TopNavigationProps> = ({
@@ -87,6 +90,8 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   onClearCanvas,
   onExportBoardImage,
   onDownloadAllImages,
+  projectPassword,
+  onOpenPasswordModal,
 }) => {
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
   const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
@@ -273,6 +278,28 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                         {rescuableAssetCount}
                       </span>
                     ) : null}
+                  </button>
+                </div>
+              )}
+
+              {/* Project Password Configuration */}
+              {onOpenPasswordModal && (
+                <div className="p-2 border-t border-gray-800 bg-gray-950/40">
+                  <button
+                    onClick={() => {
+                      setProjectDropdownOpen(false);
+                      onOpenPasswordModal();
+                    }}
+                    className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg bg-gray-900 hover:bg-gray-800 border border-gray-700/60 text-gray-300 hover:text-white text-xs font-medium transition-colors"
+                    title="設定或修改專案機敏保護密碼"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>專案保護密碼</span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
+                      {projectPassword ? '已設定' : '未設定'}
+                    </span>
                   </button>
                 </div>
               )}

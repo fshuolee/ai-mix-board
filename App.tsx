@@ -44,6 +44,7 @@ import {
 import {
   saveGraphToSheet,
   loadGraphFromSheet,
+  saveProjectPasswordToSheet,
   removeNodesFromProjectSpreadsheet,
   isSheetsRateLimited,
   getSheetsRateLimitRemainingSeconds,
@@ -53,6 +54,7 @@ import { DEFAULT_MODEL_ID, getModelById, migrateOldModelId } from './services/mo
 import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
 import TopNavigation from './components/TopNavigation';
 import BoardTabs from './components/BoardTabs';
+import { CensoredOverlay, PasswordManageModal } from './components/CensoredOverlay';
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
@@ -339,6 +341,19 @@ const App: React.FC = () => {
 
   // Filter nodes for the current active board
   const currentBoardId = activeBoardId || boards[0]?.id || DEFAULT_BOARD_ID;
+  const currentBoard = useMemo(() => {
+    return boards.find(b => b.id === currentBoardId) || boards[0];
+  }, [boards, currentBoardId]);
+  const isCurrentBoardCensored = Boolean(currentBoard?.isCensored);
+
+  // Censored Canvas & Sensitive Protection State
+  const [projectPassword, setProjectPassword] = useState<string>('');
+  const projectPasswordRef = useRef<string>('');
+  projectPasswordRef.current = projectPassword;
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isCensoredUnlocked, setIsCensoredUnlocked] = useState<boolean>(false);
+  const isCurrentBoardLocked = isCurrentBoardCensored && !isCensoredUnlocked;
+
   const currentBoardNodes = useMemo(() => {
     const filtered = allNodes.filter(n => (n.boardId || boards[0]?.id || DEFAULT_BOARD_ID) === currentBoardId);
     // Fallback: If filtered is empty, but allNodes has nodes and there is only 1 board,
@@ -602,6 +617,15 @@ const App: React.FC = () => {
                 : loadedBoards[0].id);
 
         setBoards(loadedBoards);
+        const pass = loadedData.projectPassword || '';
+        setProjectPassword(pass);
+        projectPasswordRef.current = pass;
+        try {
+          const unlocked = sessionStorage.getItem(`ai_mix_board_censored_unlocked_${currentProject.id}`) === 'true';
+          setIsCensoredUnlocked(unlocked);
+        } catch {
+          setIsCensoredUnlocked(false);
+        }
         setActiveBoardId(initialBoardId);
         setAllNodes(loadedData.nodes);
         undoStackRef.current = [];
@@ -758,7 +782,8 @@ const App: React.FC = () => {
             args.boards,
             args.viewports,
             args.models,
-            args.allowEmpty
+            args.allowEmpty,
+            { projectPassword: projectPasswordRef.current }
           );
           setSyncStatus('saved');
           setLastSavedAt(new Date());
@@ -1023,6 +1048,100 @@ const App: React.FC = () => {
     triggerAutoSave(updatedNodes, updatedBoards, remainingViewports, remainingModels);
     showToast(`已成功刪除畫布分頁「${boardName}」`);
   };
+
+  const handleToggleCensoredBoard = (boardId: string) => {
+    if (isProjectBusy) return;
+    const targetBoard = boards.find(b => b.id === boardId);
+    if (!targetBoard) return;
+
+    const willBeCensored = !targetBoard.isCensored;
+    const updatedBoards = boards.map(b =>
+      b.id === boardId
+        ? { ...b, isCensored: willBeCensored, updatedAt: new Date().toISOString() }
+        : b
+    );
+
+    setBoards(updatedBoards);
+    triggerAutoSave(allNodes, updatedBoards, viewports, selectedModels);
+
+    if (willBeCensored) {
+      showToast(`畫布「${targetBoard.name}」已設為機敏保護`, 'info');
+      if (!projectPassword && targetBoard.id !== currentBoardId) {
+        setIsPasswordModalOpen(true);
+      }
+    } else {
+      showToast(`畫布「${targetBoard.name}」已解除機敏保護`, 'info');
+    }
+  };
+
+  const handleUnlockCensored = useCallback((enteredPassword: string): boolean => {
+    const curPassword = projectPasswordRef.current;
+    if (!curPassword || enteredPassword.trim() === curPassword.trim()) {
+      setIsCensoredUnlocked(true);
+      const projId = currentProjectRef.current?.id;
+      if (projId) {
+        try {
+          sessionStorage.setItem(`ai_mix_board_censored_unlocked_${projId}`, 'true');
+        } catch {}
+      }
+      showToast('機敏畫布已解鎖', 'success');
+      return true;
+    }
+    return false;
+  }, [showToast]);
+
+  const handleSetProjectPassword = async (newPassword: string) => {
+    const trimmed = newPassword.trim();
+    setProjectPassword(trimmed);
+    projectPasswordRef.current = trimmed;
+    const token = getAccessToken();
+    const proj = currentProjectRef.current;
+    if (token && proj?.spreadsheetId) {
+      await saveProjectPasswordToSheet(token, proj.spreadsheetId, trimmed);
+    }
+    setIsCensoredUnlocked(true);
+    if (proj?.id) {
+      try {
+        sessionStorage.setItem(`ai_mix_board_censored_unlocked_${proj.id}`, 'true');
+      } catch {}
+    }
+    showToast('專案保護密碼已儲存並解鎖', 'success');
+  };
+
+  const handleToggleLockSession = useCallback(() => {
+    setIsCensoredUnlocked(prev => {
+      const projId = currentProjectRef.current?.id;
+      if (prev) {
+        // Currently unlocked -> Instantly lock
+        if (projId) {
+          try {
+            sessionStorage.removeItem(`ai_mix_board_censored_unlocked_${projId}`);
+          } catch {}
+        }
+        showToast('機敏畫布已鎖定', 'info');
+        return false;
+      } else {
+        // Currently locked -> Open password prompt or focus
+        if (!projectPasswordRef.current) {
+          setIsPasswordModalOpen(true);
+        } else {
+          // If on a censored board, focus input in CensoredOverlay; or open modal
+          const curBoard = boardsRef.current.find(b => b.id === currentBoardIdRef.current);
+          if (curBoard?.isCensored) {
+            const input = document.querySelector('input[type="password"], input[type="text"][autocomplete*="password"]') as HTMLInputElement;
+            if (input) {
+              input.focus();
+            } else {
+              setIsPasswordModalOpen(true);
+            }
+          } else {
+            setIsPasswordModalOpen(true);
+          }
+        }
+        return prev;
+      }
+    });
+  }, [showToast]);
 
   // Duplicate node: creates a new node pointing to the EXACT same asset without cloning file
   const handleDuplicateNode = useCallback(
@@ -2795,8 +2914,19 @@ const App: React.FC = () => {
         isProjectModalOpen ||
         isAuthModalOpen ||
         isRescueModalOpen ||
+        isPasswordModalOpen ||
         Boolean(infoModalNode) ||
         Boolean(orphanAssetModal?.isOpen);
+
+      // Toggle Censored Lock / Unlock with Alt+L or Cmd+Shift+L
+      if (
+        (e.altKey && e.key.toLowerCase() === 'l') ||
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'l')
+      ) {
+        e.preventDefault();
+        handleToggleLockSession();
+        return;
+      }
 
       // Space key for panning cursor - completely enter pan mode
       if (e.code === 'Space' && !isInputActive && !isAnyModalOpen) {
@@ -2965,7 +3095,7 @@ const App: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [handleUndo, handleRedo, handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, infoModalNode, orphanAssetModal]);
+  }, [handleUndo, handleRedo, handleExecute, handleDuplicateNode, handleCut, handleCopy, handleDeleteNodes, fitToView, selectedNodeIds, currentBoardNodes, updateMultipleNodes, isModelModalOpen, isProjectModalOpen, isAuthModalOpen, isRescueModalOpen, isPasswordModalOpen, handleToggleLockSession, infoModalNode, orphanAssetModal]);
 
   useEffect(() => {
     window.addEventListener('paste', handlePaste);
@@ -3302,6 +3432,8 @@ const App: React.FC = () => {
         unuploadedAssetCount={unuploadedAssetCount}
         onOpenRescueModal={() => handleScanLostAssets(false)}
         rescuableAssetCount={rescuableAssets.length}
+        projectPassword={projectPassword}
+        onOpenPasswordModal={() => setIsPasswordModalOpen(true)}
         onAddTextNode={() => {
           if (isProjectBusy) return;
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
@@ -3504,11 +3636,14 @@ const App: React.FC = () => {
         {/* Nodes Layer */}
         <div
           data-testid="canvas-nodes-layer"
-          className={`absolute top-0 left-0 ${isSpacePressed ? 'pointer-events-none' : ''}`}
+          className={`absolute top-0 left-0 transition-[filter] duration-300 ${
+            isCurrentBoardLocked ? 'pointer-events-none select-none' : (isSpacePressed ? 'pointer-events-none' : '')
+          }`}
           style={{
             transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.zoom})`,
             transformOrigin: '0 0',
             willChange: 'transform',
+            filter: isCurrentBoardLocked ? 'blur(32px)' : undefined,
           }}
         >
           {currentBoardNodes.map(node => (
@@ -3546,6 +3681,22 @@ const App: React.FC = () => {
             }}
           />
         )}
+
+        {/* Censored Overlay for Locked Canvas */}
+        {isCurrentBoardLocked && (
+          <CensoredOverlay
+            boardName={currentBoard?.name || '目前畫布'}
+            projectPassword={projectPassword}
+            onUnlock={handleUnlockCensored}
+            onSetProjectPassword={handleSetProjectPassword}
+            onSwitchToSafeBoard={() => {
+              const safeBoard = boards.find(b => !b.isCensored);
+              if (safeBoard) {
+                handleSelectBoard(safeBoard.id);
+              }
+            }}
+          />
+        )}
       </div>
 
       {/* Multi-Board Switcher Tabs Bar (Bottom-Left) */}
@@ -3557,48 +3708,53 @@ const App: React.FC = () => {
           onAddBoard={handleAddBoard}
           onRenameBoard={handleRenameBoard}
           onDeleteBoard={handleDeleteBoard}
+          onToggleCensoredBoard={handleToggleCensoredBoard}
+          isCensoredUnlocked={isCensoredUnlocked}
+          onToggleLockSession={handleToggleLockSession}
           allNodes={allNodes}
           disabled={isProjectBusy}
         />
       </div>
 
       {/* Floating Bottom Right Action Bar */}
-      <div
-        className={`absolute bottom-6 right-6 z-20 flex items-center gap-3 ${
-          marqueeBox ? 'pointer-events-none select-none' : ''
-        }`}
-        onPointerDown={e => e.stopPropagation()}
-      >
-        {/* Primary Generate Floating CTA */}
-        <button
-          onClick={handleExecute}
-          disabled={isProjectBusy || selectedNodeIds.size === 0}
-          className={`px-5 py-3 text-white font-medium rounded-2xl shadow-2xl transition-all duration-200 flex items-center gap-2 text-xs select-none ${
-            selectedNodeIds.size > 0
-              ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 shadow-blue-600/30 border border-blue-400/30 active:scale-95 cursor-pointer'
-              : 'bg-gray-900/80 border border-gray-800 text-gray-500 cursor-not-allowed opacity-60'
+      {!isCurrentBoardLocked && (
+        <div
+          className={`absolute bottom-6 right-6 z-20 flex items-center gap-3 ${
+            marqueeBox ? 'pointer-events-none select-none' : ''
           }`}
-          title={
-            selectedNodeIds.size === 0
-              ? '選取畫布上的節點後即可進行 AI 生成 (Shift+Enter)'
-              : '以 Gemini 進行合成生成 (Shift+Enter)'
-          }
-          aria-label="Generate from selected nodes"
+          onPointerDown={e => e.stopPropagation()}
         >
-          <Sparkles className={`w-4 h-4 ${selectedNodeIds.size > 0 ? 'text-amber-300' : 'text-gray-500'}`} />
-          <span>
-            {selectedNodeIds.size === 0
-              ? '生成'
-              : `生成 (${selectedNodeIds.size})`}
-          </span>
-          {activeJobCount > 0 && (
-            <span className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded-full bg-blue-500/25 text-blue-200 text-[10px] font-mono border border-blue-400/30 shadow-sm animate-pulse">
-              <Loader2 className="w-3 h-3 animate-spin text-blue-300" />
-              <span>{activeJobCount} 處理中</span>
+          {/* Primary Generate Floating CTA */}
+          <button
+            onClick={handleExecute}
+            disabled={isProjectBusy || selectedNodeIds.size === 0}
+            className={`px-5 py-3 text-white font-medium rounded-2xl shadow-2xl transition-all duration-200 flex items-center gap-2 text-xs select-none ${
+              selectedNodeIds.size > 0
+                ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 shadow-blue-600/30 border border-blue-400/30 active:scale-95 cursor-pointer'
+                : 'bg-gray-900/80 border border-gray-800 text-gray-500 cursor-not-allowed opacity-60'
+            }`}
+            title={
+              selectedNodeIds.size === 0
+                ? '選取畫布上的節點後即可進行 AI 生成 (Shift+Enter)'
+                : '以 Gemini 進行合成生成 (Shift+Enter)'
+            }
+            aria-label="Generate from selected nodes"
+          >
+            <Sparkles className={`w-4 h-4 ${selectedNodeIds.size > 0 ? 'text-amber-300' : 'text-gray-500'}`} />
+            <span>
+              {selectedNodeIds.size === 0
+                ? '生成'
+                : `生成 (${selectedNodeIds.size})`}
             </span>
-          )}
-        </button>
-      </div>
+            {activeJobCount > 0 && (
+              <span className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded-full bg-blue-500/25 text-blue-200 text-[10px] font-mono border border-blue-400/30 shadow-sm animate-pulse">
+                <Loader2 className="w-3 h-3 animate-spin text-blue-300" />
+                <span>{activeJobCount} 處理中</span>
+              </span>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Floating Deletion In-Progress Banner */}
       {deletingNodeIds.size > 0 && (
@@ -3701,29 +3857,31 @@ const App: React.FC = () => {
       )}
 
       {/* Redesigned Multi-Selection Bar HUD */}
-      <div className={marqueeBox || isSpacePressed ? 'pointer-events-none select-none' : ''}>
-        <MultiSelectionBar
-          selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
-          onAutoArrange={handleAutoArrange}
-          onAlign={handleAlignNodes}
-          onDistribute={handleDistributeNodes}
-          onResetAspect={handleResetAspect}
-          onApplyDefaultSize={handleApplyDefaultSize}
-          onSaveAsDefaultSize={handleSaveAsDefaultSize}
-          onCut={handleCut}
-          onCopyToClipboard={handleCopy}
-          onDuplicate={handleDuplicateSelected}
-          onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
-          onDeselectAll={() => setSelectedNodeIds(new Set())}
-          onGenerate={handleExecute}
-          onDownloadSelected={handleDownloadSelectedNodes}
-          onRetrySelectedErrors={handleRetrySelectedErrorNodes}
-        />
-      </div>
+      {!isCurrentBoardLocked && (
+        <div className={marqueeBox || isSpacePressed ? 'pointer-events-none select-none' : ''}>
+          <MultiSelectionBar
+            selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
+            onAutoArrange={handleAutoArrange}
+            onAlign={handleAlignNodes}
+            onDistribute={handleDistributeNodes}
+            onResetAspect={handleResetAspect}
+            onApplyDefaultSize={handleApplyDefaultSize}
+            onSaveAsDefaultSize={handleSaveAsDefaultSize}
+            onCut={handleCut}
+            onCopyToClipboard={handleCopy}
+            onDuplicate={handleDuplicateSelected}
+            onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
+            onDeselectAll={() => setSelectedNodeIds(new Set())}
+            onGenerate={handleExecute}
+            onDownloadSelected={handleDownloadSelectedNodes}
+            onRetrySelectedErrors={handleRetrySelectedErrorNodes}
+          />
+        </div>
+      )}
 
       {/* Context Menu (Right Click) */}
       <ContextMenu
-        isOpen={contextMenu.isOpen}
+        isOpen={!isCurrentBoardLocked && contextMenu.isOpen}
         position={contextMenu.position}
         targetType={contextMenu.targetType}
         selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
@@ -3804,7 +3962,7 @@ const App: React.FC = () => {
 
       {/* Canvas Minimap */}
       <Minimap
-        nodes={currentBoardNodes}
+        nodes={isCurrentBoardLocked ? [] : currentBoardNodes}
         selectedNodeIds={selectedNodeIds}
         viewport={view}
         onPanTo={handlePanTo}
@@ -3925,6 +4083,14 @@ const App: React.FC = () => {
         isLoading={isScanningRescue}
         onRescan={() => handleScanLostAssets(false)}
         onDeleteLocalAssets={handleDeleteLocalAssets}
+      />
+
+      {/* Project Password Configuration Modal */}
+      <PasswordManageModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        currentPassword={projectPassword}
+        onSavePassword={handleSetProjectPassword}
       />
 
       {/* Node Info & Metadata Inspection Modal */}

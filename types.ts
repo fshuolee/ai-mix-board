@@ -64,6 +64,7 @@ export interface BoardMetadata {
   name: string;
   createdAt?: string;
   updatedAt?: string;
+  isCensored?: boolean; // If true, canvas requires project password to view
 }
 
 export interface BoardCanvasData {
@@ -83,6 +84,7 @@ export interface ProjectMetadata {
   sheetViewLink?: string;
   boards?: BoardMetadata[];
   activeBoardId?: string;
+  password?: string; // Plaintext project password stored in Google Sheet
   createdAt?: string;
   updatedAt?: string;
 }

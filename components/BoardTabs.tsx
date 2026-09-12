@@ -12,6 +12,10 @@ import {
   ChevronRight,
   Search,
   ListFilter,
+  Lock,
+  Unlock,
+  Shield,
+  ShieldAlert,
 } from 'lucide-react';
 import { BoardMetadata, CanvasNode } from '../types';
 
@@ -22,6 +26,9 @@ interface BoardTabsProps {
   onAddBoard: (name?: string) => void;
   onRenameBoard: (boardId: string, newName: string) => void;
   onDeleteBoard: (boardId: string) => void;
+  onToggleCensoredBoard?: (boardId: string) => void;
+  isCensoredUnlocked?: boolean;
+  onToggleLockSession?: () => void;
   allNodes: CanvasNode[];
   disabled?: boolean;
 }
@@ -33,6 +40,9 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   onAddBoard,
   onRenameBoard,
   onDeleteBoard,
+  onToggleCensoredBoard,
+  isCensoredUnlocked = false,
+  onToggleLockSession,
   allNodes,
   disabled = false,
 }) => {
@@ -342,6 +352,23 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                     }`}
                     title={`${board.name} (雙擊可重新命名，右鍵查看選項)`}
                   >
+                    {board.isCensored && (
+                      <span
+                        className="shrink-0"
+                        title={
+                          isCensoredUnlocked
+                            ? '此畫布已設為機敏保護 (已解鎖)'
+                            : '此畫布已設為機敏保護 (未解鎖時霧化)'
+                        }
+                      >
+                        <Lock
+                          className={`w-3 h-3 ${
+                            isCensoredUnlocked ? 'text-emerald-300' : 'text-amber-400'
+                          }`}
+                        />
+                      </span>
+                    )}
+
                     <span className="max-w-[120px] truncate">{board.name}</span>
 
                     {/* Node count pill */}
@@ -355,23 +382,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       {nodeCount}
                     </span>
 
-                    {/* Hover Delete Button if more than 1 board */}
-                    {boards.length > 1 && (
-                      <div
-                        onClick={e => {
-                          e.stopPropagation();
-                          if (window.confirm(`確定要刪除畫布 "${board.name}" 嗎？畫布上的節點將會一併移除。`)) {
-                            onDeleteBoard(board.id);
-                          }
-                        }}
-                        className="p-0.5 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="刪除此畫布分頁"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </div>
-                    )}
-
-                    {/* Options Menu Trigger */}
+                    {/* Options Hamburger Menu Trigger (Delete is now securely placed inside here) */}
                     <div
                       onClick={e => {
                         e.stopPropagation();
@@ -380,18 +391,18 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       className={`p-0.5 rounded-md hover:bg-white/20 text-gray-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity ${
                         menuOpenBoardId === board.id ? 'opacity-100' : ''
                       }`}
-                      title="更多選項"
+                      title="畫布選項與設定"
                     >
                       <MoreVertical className="w-3 h-3" />
                     </div>
                   </div>
                 )}
 
-                {/* Context Menu */}
+                {/* Context Menu / Hamburger Dots Dropdown */}
                 {menuOpenBoardId === board.id && (
                   <div
                     ref={menuRef}
-                    className="absolute bottom-full left-0 mb-2 w-36 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1 z-50 animate-fadeIn"
+                    className="absolute bottom-full left-0 mb-2 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1 z-50 animate-fadeIn"
                     onPointerDown={e => e.stopPropagation()}
                   >
                     <button
@@ -401,6 +412,33 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       <Edit2 className="w-3.5 h-3.5 text-blue-400" />
                       <span>重新命名</span>
                     </button>
+
+                    {onToggleCensoredBoard && (
+                      <button
+                        onClick={() => {
+                          setMenuOpenBoardId(null);
+                          onToggleCensoredBoard(board.id);
+                        }}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg text-left transition-colors cursor-pointer ${
+                          board.isCensored
+                            ? 'text-amber-300 hover:text-white hover:bg-amber-950/40'
+                            : 'text-gray-300 hover:text-white hover:bg-gray-800'
+                        }`}
+                      >
+                        {board.isCensored ? (
+                          <>
+                            <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                            <span>解除機敏保護</span>
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-3.5 h-3.5 text-blue-400" />
+                            <span>設為機敏保護 (需密碼)</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
                     {boards.length > 1 && (
                       <button
                         onClick={() => {
@@ -409,7 +447,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                             onDeleteBoard(board.id);
                           }
                         }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-lg text-left transition-colors cursor-pointer"
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-lg text-left transition-colors cursor-pointer border-t border-gray-800/80 mt-0.5 pt-1.5"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         <span>刪除畫布</span>
@@ -442,6 +480,35 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
           <Plus className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">新增</span>
         </button>
+
+        {/* Censored Status & Quick Lock/Unlock Shortcut Button */}
+        {boards.some(b => b.isCensored) && onToggleLockSession && (
+          <button
+            onClick={onToggleLockSession}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 ml-1 border shadow-sm ${
+              isCensoredUnlocked
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 hover:border-emerald-400'
+                : 'bg-amber-500/15 text-amber-400 border-amber-500/40 hover:bg-amber-500/25 hover:border-amber-400 animate-pulse'
+            }`}
+            title={`機敏保護快捷切換 (快捷鍵 Alt + L)\n目前狀態：${
+              isCensoredUnlocked
+                ? '已解鎖 (點擊或按 Alt+L 立即鎖定)'
+                : '已鎖定霧化 (點擊或按 Alt+L 輸入密碼解鎖)'
+            }`}
+          >
+            {isCensoredUnlocked ? (
+              <Unlock className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+            )}
+            <span className="hidden sm:inline">
+              {isCensoredUnlocked ? '機敏已解鎖' : '機敏已鎖定'}
+            </span>
+            <span className="text-[10px] font-mono text-gray-400/90 ml-0.5 px-1 py-0.2 bg-black/40 rounded border border-white/10">
+              Alt+L
+            </span>
+          </button>
+        )}
       </div>
     </div>
   );

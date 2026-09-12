@@ -120,6 +120,13 @@ export async function createProjectSpreadsheet(
           gridProperties: { rowCount: 200, columnCount: 8, frozenRowCount: 1 },
         },
       },
+      {
+        properties: {
+          sheetId: 4,
+          title: 'Settings',
+          gridProperties: { rowCount: 20, columnCount: 5, frozenRowCount: 1 },
+        },
+      },
     ],
   };
 
@@ -159,10 +166,16 @@ async function initializeSheetHeaders(
   spreadsheetId: string,
   initialBoards: BoardMetadata[] = [{ id: 'board_main', name: 'MAIN', createdAt: new Date().toISOString() }]
 ) {
-  const boardHeaders = ['BoardId', 'Name', 'CreatedAt', 'UpdatedAt'];
+  const boardHeaders = ['BoardId', 'Name', 'CreatedAt', 'UpdatedAt', 'IsCensored'];
   const boardRows = [
     boardHeaders,
-    ...initialBoards.map(b => [b.id, b.name, b.createdAt || new Date().toISOString(), new Date().toISOString()]),
+    ...initialBoards.map(b => [
+      b.id,
+      b.name,
+      b.createdAt || new Date().toISOString(),
+      new Date().toISOString(),
+      b.isCensored ? 'TRUE' : 'FALSE',
+    ]),
   ];
 
   const nodeHeaders = [
@@ -211,7 +224,7 @@ async function initializeSheetHeaders(
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: `Boards!A1:D${boardRows.length}`,
+            range: `Boards!A1:E${boardRows.length}`,
             values: boardRows,
           },
           {
@@ -225,6 +238,13 @@ async function initializeSheetHeaders(
           {
             range: 'AssetReferences!A1:E1',
             values: [assetHeaders],
+          },
+          {
+            range: 'Settings!A1:C2',
+            values: [
+              ['Key', 'Value', 'UpdatedAt'],
+              ['project_password', '', new Date().toISOString()],
+            ],
           },
         ],
       }),
@@ -250,7 +270,8 @@ const previousSheetRowCounts = new Map<string, SheetRowCounts>();
  * Ensure all required sheets ('Boards', 'Nodes', 'Viewport', 'AssetReferences') exist
  */
 async function ensureSheetsStructure(token: string, spreadsheetId: string) {
-  if (verifiedSpreadsheets.has(spreadsheetId)) return;
+  const verificationKey = `${spreadsheetId}_v2_settings`;
+  if (verifiedSpreadsheets.has(verificationKey)) return;
   try {
     const metaRes = await sheetsFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title,gridProperties))`,
@@ -319,6 +340,16 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
         },
       });
     }
+    if (!sheetTitles.includes('Settings')) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: 'Settings',
+            gridProperties: { rowCount: 20, columnCount: 5, frozenRowCount: 1 },
+          },
+        },
+      });
+    }
 
     if (requests.length > 0) {
       await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, token, {
@@ -327,7 +358,7 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
         body: JSON.stringify({ requests }),
       });
     }
-    verifiedSpreadsheets.add(spreadsheetId);
+    verifiedSpreadsheets.add(verificationKey);
   } catch (err) {
     console.warn('Could not verify/add sheets structure:', err);
   }
@@ -343,7 +374,8 @@ export async function saveGraphToSheet(
   boardsOrViewport: BoardMetadata[] | ViewportState,
   viewportsOrModel?: Record<string, ViewportState> | string,
   modelsMap?: Record<string, string>,
-  allowEmptyNodes: boolean = false
+  allowEmptyNodes: boolean = false,
+  options?: { projectPassword?: string }
 ): Promise<void> {
   if (!spreadsheetId) {
     throw new Error('Spreadsheet ID is missing for this project');
@@ -380,10 +412,16 @@ export async function saveGraphToSheet(
   const defaultBoardId = boards[0].id;
 
   // 1. Prepare Boards Rows
-  const boardHeaders = ['BoardId', 'Name', 'CreatedAt', 'UpdatedAt'];
+  const boardHeaders = ['BoardId', 'Name', 'CreatedAt', 'UpdatedAt', 'IsCensored'];
   const boardRows: any[][] = [boardHeaders];
   boards.forEach(b => {
-    boardRows.push([b.id, b.name, b.createdAt || new Date().toISOString(), new Date().toISOString()]);
+    boardRows.push([
+      b.id,
+      b.name,
+      b.createdAt || new Date().toISOString(),
+      new Date().toISOString(),
+      b.isCensored ? 'TRUE' : 'FALSE',
+    ]);
   });
 
   // 2. Prepare Nodes Rows (with BoardId at col M / index 12)
@@ -491,6 +529,35 @@ export async function saveGraphToSheet(
   await ensureSheetsStructure(token, spreadsheetId);
 
   // 5. Write updated data FIRST in batchUpdate (Never clear beforehand to avoid data loss on failure)
+  const updateData: any[] = [
+    {
+      range: `Boards!A1:E${boardRows.length}`,
+      values: boardRows,
+    },
+    {
+      range: `Nodes!A1:S${nodeRows.length}`,
+      values: nodeRows,
+    },
+    {
+      range: `Viewport!A1:F${viewportRows.length}`,
+      values: viewportRows,
+    },
+    {
+      range: `AssetReferences!A1:E${assetRows.length}`,
+      values: assetRows,
+    },
+  ];
+
+  if (options?.projectPassword !== undefined) {
+    updateData.push({
+      range: 'Settings!A1:C2',
+      values: [
+        ['Key', 'Value', 'UpdatedAt'],
+        ['project_password', options.projectPassword, new Date().toISOString()],
+      ],
+    });
+  }
+
   await sheetsFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
     token,
@@ -499,24 +566,7 @@ export async function saveGraphToSheet(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         valueInputOption: 'USER_ENTERED',
-        data: [
-          {
-            range: `Boards!A1:D${boardRows.length}`,
-            values: boardRows,
-          },
-          {
-            range: `Nodes!A1:S${nodeRows.length}`,
-            values: nodeRows,
-          },
-          {
-            range: `Viewport!A1:F${viewportRows.length}`,
-            values: viewportRows,
-          },
-          {
-            range: `AssetReferences!A1:E${assetRows.length}`,
-            values: assetRows,
-          },
-        ],
+        data: updateData,
       }),
     }
   );
@@ -528,7 +578,7 @@ export async function saveGraphToSheet(
 
   if (prev) {
     if (boardRows.length < prev.boards) {
-      clearRanges.push(`Boards!A${boardRows.length + 1}:D${prev.boards}`);
+      clearRanges.push(`Boards!A${boardRows.length + 1}:E${prev.boards}`);
     }
     if (nodeRows.length < prev.nodes) {
       clearRanges.push(`Nodes!A${nodeRows.length + 1}:S${prev.nodes}`);
@@ -579,6 +629,7 @@ export async function loadGraphFromSheet(
   selectedModels: Record<string, string>;
   viewport: ViewportState;
   selectedModel: string;
+  projectPassword?: string;
 }> {
   // Query metadata first to find existing sheet names
   let existingSheets: string[] = [];
@@ -596,6 +647,7 @@ export async function loadGraphFromSheet(
   // Identify which sheet contains nodes: preferably 'Nodes', or fallback to first sheet
   const hasBoards = existingSheets.length === 0 || existingSheets.includes('Boards');
   const hasViewport = existingSheets.length === 0 || existingSheets.includes('Viewport');
+  const hasSettings = existingSheets.length === 0 || existingSheets.includes('Settings');
   const nodesSheet = existingSheets.includes('Nodes')
     ? 'Nodes'
     : (existingSheets.length > 0 ? existingSheets[0] : 'Nodes');
@@ -604,10 +656,11 @@ export async function loadGraphFromSheet(
   let boardsIdx = -1;
   let nodesIdx = -1;
   let viewportIdx = -1;
+  let settingsIdx = -1;
 
   if (hasBoards) {
     boardsIdx = rangesToFetch.length;
-    rangesToFetch.push('Boards!A1:D100');
+    rangesToFetch.push('Boards!A1:E100');
   }
   if (nodesSheet) {
     nodesIdx = rangesToFetch.length;
@@ -616,6 +669,10 @@ export async function loadGraphFromSheet(
   if (hasViewport) {
     viewportIdx = rangesToFetch.length;
     rangesToFetch.push('Viewport!A1:F50');
+  }
+  if (hasSettings) {
+    settingsIdx = rangesToFetch.length;
+    rangesToFetch.push('Settings!A1:C20');
   }
 
   let boardValues: any[][] = [];
@@ -646,12 +703,13 @@ export async function loadGraphFromSheet(
     for (let i = 1; i < boardValues.length; i++) {
       const row = boardValues[i];
       if (!row || row.length === 0 || !row[0]) continue;
-      const [id, name, createdAt, updatedAt] = row;
+      const [id, name, createdAt, updatedAt, isCensored] = row;
       boards.push({
         id: String(id),
         name: String(name || 'Untitled Board'),
         createdAt: createdAt ? String(createdAt) : undefined,
         updatedAt: updatedAt ? String(updatedAt) : undefined,
+        isCensored: isCensored === true || isCensored === 'TRUE' || isCensored === 'true',
       });
     }
   }
@@ -857,6 +915,18 @@ export async function loadGraphFromSheet(
     }
   }
 
+  // 4. Parse Settings (Unencrypted project password)
+  let projectPassword = '';
+  if (settingsIdx >= 0 && valueRanges[settingsIdx]?.values) {
+    const sRows = valueRanges[settingsIdx].values;
+    for (const r of sRows) {
+      if (r && r[0] === 'project_password') {
+        projectPassword = String(r[1] || '').trim();
+        break;
+      }
+    }
+  }
+
   const primaryViewport = viewports[defaultBoardId] || { x: 0, y: 0, zoom: 1 };
   const primaryModel = selectedModels[defaultBoardId] || 'gemini-2.5-flash-image';
 
@@ -877,7 +947,69 @@ export async function loadGraphFromSheet(
     selectedModels,
     viewport: primaryViewport,
     selectedModel: primaryModel,
+    projectPassword,
   };
+}
+
+/**
+ * Save unencrypted project password directly to Google Sheet Settings tab
+ */
+export async function saveProjectPasswordToSheet(
+  token: string,
+  spreadsheetId: string,
+  password: string
+): Promise<void> {
+  if (!token || !spreadsheetId) return;
+  await ensureSheetsStructure(token, spreadsheetId);
+  const rows = [
+    ['Key', 'Value', 'UpdatedAt'],
+    ['project_password', password, new Date().toISOString()],
+  ];
+
+  const putSettings = () =>
+    sheetsFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Settings!A1:C2?valueInputOption=USER_ENTERED`,
+      token,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          range: 'Settings!A1:C2',
+          majorDimension: 'ROWS',
+          values: rows,
+        }),
+      }
+    );
+
+  try {
+    await putSettings();
+  } catch (err: any) {
+    if (err?.message?.includes('Settings') || err?.message?.includes('Unable to parse range')) {
+      try {
+        await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, token, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: 'Settings',
+                    gridProperties: { rowCount: 20, columnCount: 5, frozenRowCount: 1 },
+                  },
+                },
+              },
+            ],
+          }),
+        });
+        await putSettings();
+        return;
+      } catch (innerErr) {
+        console.warn('Failed to auto-create Settings sheet in fallback:', innerErr);
+      }
+    }
+    throw err;
+  }
 }
 
 /**
