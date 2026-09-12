@@ -64,6 +64,14 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         return;
       }
 
+      // If targetFileId is already a direct URL
+      if (targetFileId.startsWith('http://') || targetFileId.startsWith('https://') || targetFileId.startsWith('data:')) {
+        nodeObjectUrlCache.set(targetFileId, targetFileId);
+        setImageUrl(targetFileId);
+        setIsLoadingImage(false);
+        return;
+      }
+
       setIsLoadingImage(true);
 
       const loadImage = async () => {
@@ -104,7 +112,16 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             }
             setImageUrl(url);
           } else {
-            setImageUrl(null);
+            const directUrl =
+              (mediaNode?.content && (mediaNode.content.startsWith('http://') || mediaNode.content.startsWith('https://') || mediaNode.content.startsWith('data:')) ? mediaNode.content : null) ||
+              (mediaNode?.driveViewLink && (mediaNode.driveViewLink.startsWith('http://') || mediaNode.driveViewLink.startsWith('https://')) ? mediaNode.driveViewLink : null);
+
+            if (directUrl) {
+              nodeObjectUrlCache.set(targetFileId, directUrl);
+              setImageUrl(directUrl);
+            } else {
+              setImageUrl(null);
+            }
           }
         } catch (err) {
           console.error('Failed to load media for node:', node.id, err);
@@ -428,6 +445,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               alt={mediaNode?.originalFileName || 'Asset'}
               className="w-full h-full object-contain rounded-xl"
               draggable={false}
+              referrerPolicy="no-referrer"
             />
           ) : (
             <div className="text-gray-500 text-xs text-center p-3 flex flex-col items-center justify-center gap-2">
@@ -496,6 +514,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               loop
               muted
               playsInline
+              referrerPolicy="no-referrer"
               className="w-full h-full object-contain rounded-xl"
               onPointerDown={e => {
                 // Only stop propagation if clicking in the native bottom control bar area (~44px from bottom)

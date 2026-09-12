@@ -172,9 +172,29 @@ export async function getNodeBlob(
  */
 export async function downloadSingleNode(node: CanvasNode, token?: string): Promise<boolean> {
   const result = await getNodeBlob(node, token);
-  if (!result) return false;
-  downloadBlob(result.blob, result.filename);
-  return true;
+  if (result) {
+    downloadBlob(result.blob, result.filename);
+    return true;
+  }
+
+  // Fallback if blob cannot be fetched via fetch (e.g. CORS restricted direct HTTP url)
+  const mediaNode = (node.type === 'image' || node.type === 'video') ? (node as ImageNode | VideoNode) : null;
+  const directUrl = (mediaNode?.content?.startsWith('http') ? mediaNode.content : mediaNode?.driveViewLink?.startsWith('http') ? mediaNode.driveViewLink : null);
+  if (directUrl) {
+    const ext = node.type === 'video' ? '.mp4' : '.png';
+    const filename = mediaNode?.originalFileName || `${node.type}_${node.id.slice(-6)}${ext}`;
+    const a = document.createElement('a');
+    a.href = directUrl;
+    a.download = filename;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 100);
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -197,7 +217,23 @@ export async function batchDownloadNodes(
         downloadBlob(res.blob, res.filename);
         successCount++;
       } else {
-        failCount++;
+        const mediaNode = (node.type === 'image' || node.type === 'video') ? (node as ImageNode | VideoNode) : null;
+        const directUrl = (mediaNode?.content?.startsWith('http') ? mediaNode.content : mediaNode?.driveViewLink?.startsWith('http') ? mediaNode.driveViewLink : null);
+        if (directUrl) {
+          const ext = node.type === 'video' ? '.mp4' : '.png';
+          const filename = mediaNode?.originalFileName || `${node.type}_${node.id.slice(-6)}${ext}`;
+          const a = document.createElement('a');
+          a.href = directUrl;
+          a.download = filename;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => a.remove(), 100);
+          successCount++;
+        } else {
+          failCount++;
+        }
       }
     } catch (err) {
       console.error('Failed to download node asset:', node.id, err);

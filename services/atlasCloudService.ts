@@ -770,10 +770,14 @@ export async function uploadMediaToAtlas(blob: Blob, apiKey: string): Promise<st
 /**
  * Safely fetches an image blob from a URL (handles data URIs, direct fetch, and Vite dev server proxy for CORS-restricted hosts like Aliyun OSS)
  */
-export async function fetchImageBlob(targetUrl: string): Promise<Blob> {
+export async function fetchImageBlob(targetUrl: string): Promise<Blob | null> {
   if (targetUrl.startsWith('data:')) {
-    const res = await fetch(targetUrl);
-    return await res.blob();
+    try {
+      const res = await fetch(targetUrl);
+      return await res.blob();
+    } catch {
+      return null;
+    }
   }
 
   // 1. Try direct fetch first
@@ -797,7 +801,7 @@ export async function fetchImageBlob(targetUrl: string): Promise<Blob> {
     console.warn('Dev proxy fetch failed:', proxyErr);
   }
 
-  throw new Error('無法載入生成的圖片檔案 (CORS 或網路限制)');
+  return null;
 }
 
 /**
@@ -1055,8 +1059,8 @@ export function isAtlasCloudModel(modelId: string, modelInfo?: ModelInfo): boole
 }
 
 export type GenerationResult =
-  | { type: 'image'; blob: Blob }
-  | { type: 'video'; blob: Blob; mimeType?: string }
+  | { type: 'image'; blob?: Blob; url?: string }
+  | { type: 'video'; blob?: Blob; url?: string; mimeType?: string }
   | { type: 'text'; text: string };
 
 /**
@@ -1085,7 +1089,7 @@ export async function generateWithAtlasCloud(
 
   // Load image blobs and base64 strings
   const imageNodes = nodes.filter(n => n.type === 'image') as ImageNode[];
-  const imageParts: { mimeType: string; data: string; blob: Blob }[] = [];
+  const imageParts: { mimeType: string; data: string; blob?: Blob; url?: string }[] = [];
 
   for (const node of imageNodes) {
     try {
@@ -1110,6 +1114,13 @@ export async function generateWithAtlasCloud(
         const match = base64.match(/^data:(image\/\w+);base64,(.*)$/);
         if (match) {
           imageParts.push({ mimeType: match[1], data: match[2], blob });
+        }
+      } else {
+        const directHttpUrl =
+          (node.content && (node.content.startsWith('http://') || node.content.startsWith('https://')) ? node.content : null) ||
+          (node.driveViewLink && (node.driveViewLink.startsWith('http://') || node.driveViewLink.startsWith('https://')) ? node.driveViewLink : null);
+        if (directHttpUrl) {
+          imageParts.push({ mimeType: 'image/png', data: '', url: directHttpUrl });
         }
       }
     } catch (err) {
@@ -1146,11 +1157,15 @@ export async function generateWithAtlasCloud(
     let referenceImageUrls: string[] = [];
     if (imageParts.length > 0) {
       const uploadPromises = imageParts.map(async (part) => {
-        const uploaded = await uploadMediaToAtlas(part.blob, apiKey);
-        if (uploaded) return uploaded;
-        return `data:${part.mimeType};base64,${part.data}`;
+        if (part.url) return part.url;
+        if (part.blob) {
+          const uploaded = await uploadMediaToAtlas(part.blob, apiKey);
+          if (uploaded) return uploaded;
+          return `data:${part.mimeType};base64,${part.data}`;
+        }
+        return null;
       });
-      referenceImageUrls = await Promise.all(uploadPromises);
+      referenceImageUrls = (await Promise.all(uploadPromises)).filter(Boolean) as string[];
     }
 
     const payload: any = {
@@ -1194,7 +1209,7 @@ export async function generateWithAtlasCloud(
       const targetUrl = Array.isArray(directOutputs) ? directOutputs[0] : directOutputs;
       if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
         const blob = await fetchImageBlob(targetUrl);
-        return { type: 'video', blob, mimeType: 'video/mp4' };
+        return { type: 'video', blob: blob || undefined, url: targetUrl, mimeType: 'video/mp4' };
       }
       throw new Error('未取得影片生成任務 ID');
     }
@@ -1220,7 +1235,15 @@ export async function generateWithAtlasCloud(
       try {
         statusData = await statusRes.json();
       } catch {
+        if (!statusRes.ok) {
+          throw new Error(`Atlas Cloud 影片任務查詢失敗 (${statusRes.status})`);
+        }
         continue;
+      }
+
+      if (!statusRes.ok) {
+        const errMsg = statusData?.message || statusData?.error || statusData?.data?.error || `Atlas Cloud 影片生成失敗 (${statusRes.status})`;
+        throw new Error(errMsg);
       }
 
       const dataObj = statusData?.data || statusData;
@@ -1231,12 +1254,12 @@ export async function generateWithAtlasCloud(
         let targetUrl = Array.isArray(outputs) ? outputs[0] : outputs;
         if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
           const blob = await fetchImageBlob(targetUrl);
-          return { type: 'video', blob, mimeType: 'video/mp4' };
+          return { type: 'video', blob: blob || undefined, url: targetUrl, mimeType: 'video/mp4' };
         }
         throw new Error('影片生成成功但未取得有效影片網址');
       }
 
-      if (status === 'failed' || status === 'error' || (!statusRes.ok && statusRes.status >= 400 && dataObj?.error)) {
+      if (status === 'failed' || status === 'error') {
         throw new Error(dataObj?.error || statusData?.message || `Atlas Cloud 影片生成失敗 (${statusRes.status})`);
       }
     }
@@ -1330,7 +1353,7 @@ export async function generateWithAtlasCloud(
           const targetUrl = Array.isArray(instantOutputs) ? instantOutputs[0] : instantOutputs;
           if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
             const blob = await fetchImageBlob(targetUrl);
-            return { type: 'image', blob };
+            return { type: 'image', blob: blob || undefined, url: targetUrl };
           }
         }
 
@@ -1342,15 +1365,33 @@ export async function generateWithAtlasCloud(
           for (let attempt = 0; attempt < maxAttempts; attempt++) {
             await new Promise(r => setTimeout(r, 2000));
 
-            const statusRes = await fetch(`https://api.atlascloud.ai/api/v1/model/prediction/${predictionId}`, {
-              headers: {
-                'Authorization': `Bearer ${apiKey}`,
-              },
-            });
+            let statusRes: Response;
+            try {
+              statusRes = await fetch(`https://api.atlascloud.ai/api/v1/model/prediction/${predictionId}`, {
+                headers: {
+                  'Authorization': `Bearer ${apiKey}`,
+                },
+              });
+            } catch (netErr) {
+              console.warn('Network issue polling image status:', netErr);
+              continue;
+            }
 
-            if (!statusRes.ok) continue;
+            let statusData: any;
+            try {
+              statusData = await statusRes.json();
+            } catch {
+              if (!statusRes.ok) {
+                throw new Error(`Atlas Cloud 影像任務查詢失敗 (${statusRes.status})`);
+              }
+              continue;
+            }
 
-            const statusData = await statusRes.json();
+            if (!statusRes.ok) {
+              const errMsg = statusData?.message || statusData?.error || statusData?.data?.error || `Atlas Cloud 影像生成失敗 (${statusRes.status})`;
+              throw new Error(errMsg);
+            }
+
             const dataObj = statusData?.data || statusData;
             const status = dataObj?.status?.toLowerCase();
 
@@ -1359,13 +1400,13 @@ export async function generateWithAtlasCloud(
               let targetUrl = Array.isArray(outputs) ? outputs[0] : outputs;
               if (typeof targetUrl === 'string' && (targetUrl.startsWith('http') || targetUrl.startsWith('data:'))) {
                 const blob = await fetchImageBlob(targetUrl);
-                return { type: 'image', blob };
+                return { type: 'image', blob: blob || undefined, url: targetUrl };
               }
               throw new Error('生圖成功但未取得有效圖片 URL');
             }
 
             if (status === 'failed' || status === 'error') {
-              throw new Error(dataObj?.error || 'Atlas Cloud 影像生成或編輯失敗');
+              throw new Error(dataObj?.error || statusData?.message || 'Atlas Cloud 影像生成或編輯失敗');
             }
           }
 
@@ -1403,12 +1444,12 @@ export async function generateWithAtlasCloud(
         if (b64) {
           const fetchRes = await fetch(`data:image/png;base64,${b64}`);
           const blob = await fetchRes.blob();
-          return { type: 'image', blob };
+          return { type: 'image', blob: blob || undefined };
         }
         const imgUrl = data?.data?.[0]?.url;
         if (imgUrl) {
           const blob = await fetchImageBlob(imgUrl);
-          return { type: 'image', blob };
+          return { type: 'image', blob: blob || undefined, url: imgUrl };
         }
       }
     } catch (e) {

@@ -2317,129 +2317,63 @@ const App: React.FC = () => {
         const result = await generateFromNodes(capturedSelectedNodes, capturedModelId);
 
         if (result.type === 'video') {
-          const newVideoBlob = result.blob;
-          await storeImage(jobId, newVideoBlob);
+          if (result.blob) {
+            const newVideoBlob = result.blob;
+            await storeImage(jobId, newVideoBlob);
 
-          let driveFileId = jobId;
-          let driveViewLink: string | undefined;
+            let driveFileId = jobId;
+            let driveViewLink: string | undefined;
 
-          // Upload generated video asset to Google Drive project assets folder if connected
-          const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
-          const targetProj = currentProjectRef.current || currentProject;
-          const projFolderId =
-            targetProj?.folderId ||
-            (activeToken && targetProj?.spreadsheetId
-              ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
-              : null);
+            // Upload generated video asset to Google Drive project assets folder if connected
+            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+            const targetProj = currentProjectRef.current || currentProject;
+            const projFolderId =
+              targetProj?.folderId ||
+              (activeToken && targetProj?.spreadsheetId
+                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                : null);
 
-          if (activeToken && projFolderId) {
-            try {
-              const assetsFolderId =
-                targetProj?.assetsFolderId ||
-                (await ensureAssetsFolder(activeToken, projFolderId));
-              const uploaded = await uploadAssetToDrive(
-                activeToken,
-                assetsFolderId,
-                newVideoBlob,
-                `video_gen_${jobId}.mp4`
-              );
-              driveFileId = uploaded.fileId;
-              driveViewLink = uploaded.webViewLink;
+            if (activeToken && projFolderId) {
+              try {
+                const assetsFolderId =
+                  targetProj?.assetsFolderId ||
+                  (await ensureAssetsFolder(activeToken, projFolderId));
+                const uploaded = await uploadAssetToDrive(
+                  activeToken,
+                  assetsFolderId,
+                  newVideoBlob,
+                  `video_gen_${jobId}.mp4`
+                );
+                driveFileId = uploaded.fileId;
+                driveViewLink = uploaded.webViewLink;
 
-              if (driveFileId !== jobId) {
-                await storeImage(driveFileId, newVideoBlob, undefined, true);
-                await storeImage(jobId, newVideoBlob, undefined, true);
+                if (driveFileId !== jobId) {
+                  await storeImage(driveFileId, newVideoBlob, undefined, true);
+                  await storeImage(jobId, newVideoBlob, undefined, true);
+                }
+              } catch (uploadErr) {
+                console.warn('Drive upload failed for generated video:', uploadErr);
               }
-            } catch (uploadErr) {
-              console.warn('Drive upload failed for generated video:', uploadErr);
             }
-          }
 
-          // Pre-populate memory ObjectURL cache
-          const objectUrl = URL.createObjectURL(newVideoBlob);
-          nodeObjectUrlCache.set(driveFileId, objectUrl);
-          nodeObjectUrlCache.set(jobId, objectUrl);
+            // Pre-populate memory ObjectURL cache
+            const objectUrl = URL.createObjectURL(newVideoBlob);
+            nodeObjectUrlCache.set(driveFileId, objectUrl);
+            nodeObjectUrlCache.set(jobId, objectUrl);
 
-          updateNodesAndSave(prev => {
-            const exists = prev.some(n => n.id === jobId);
-            if (!exists) return prev;
-            return prev.map(node => {
-              if (node.id !== jobId) return node;
-              return {
-                ...node,
-                type: 'video',
-                width: 480,
-                height: 270,
-                content: driveFileId,
-                driveFileId,
-                originalFileName: `video_${jobId}.mp4`,
-                driveViewLink,
-                status: 'idle',
-                errorMessage: undefined,
-                updatedAt: Date.now(),
-              };
-            });
-          });
-        } else if (result.type === 'image') {
-          const newImageBlob = result.blob;
-          await storeImage(jobId, newImageBlob);
-
-          let driveFileId = jobId;
-          let driveViewLink: string | undefined;
-
-          // Upload generated image asset to Google Drive project assets folder if connected
-          const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
-          const targetProj = currentProjectRef.current || currentProject;
-          const projFolderId =
-            targetProj?.folderId ||
-            (activeToken && targetProj?.spreadsheetId
-              ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
-              : null);
-
-          if (activeToken && projFolderId) {
-            try {
-              const assetsFolderId =
-                targetProj?.assetsFolderId ||
-                (await ensureAssetsFolder(activeToken, projFolderId));
-              const uploaded = await uploadAssetToDrive(
-                activeToken,
-                assetsFolderId,
-                newImageBlob,
-                `gemini_gen_${jobId}.png`
-              );
-              driveFileId = uploaded.fileId;
-              driveViewLink = uploaded.webViewLink;
-
-              if (driveFileId !== jobId) {
-                await storeImage(driveFileId, newImageBlob, undefined, true);
-                await storeImage(jobId, newImageBlob, undefined, true);
-              }
-            } catch (uploadErr) {
-              console.warn('Drive upload failed for generated image:', uploadErr);
-            }
-          }
-
-          // Pre-populate memory ObjectURL cache so image displays with zero delay/flicker
-          const objectUrl = URL.createObjectURL(newImageBlob);
-          nodeObjectUrlCache.set(driveFileId, objectUrl);
-          nodeObjectUrlCache.set(jobId, objectUrl);
-
-          const base64 = await blobToBase64(newImageBlob);
-          const img = new Image();
-          img.onload = () => {
-            const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
             updateNodesAndSave(prev => {
               const exists = prev.some(n => n.id === jobId);
-              if (!exists) return prev; // User deleted the node while generating
+              if (!exists) return prev;
               return prev.map(node => {
                 if (node.id !== jobId) return node;
                 return {
                   ...node,
-                  width: fitted.width,
-                  height: fitted.height,
+                  type: 'video',
+                  width: 480,
+                  height: 270,
                   content: driveFileId,
                   driveFileId,
-                  originalFileName: `generated_${jobId}.png`,
+                  originalFileName: `video_${jobId}.mp4`,
                   driveViewLink,
                   status: 'idle',
                   errorMessage: undefined,
@@ -2447,8 +2381,148 @@ const App: React.FC = () => {
                 };
               });
             });
-          };
-          img.src = base64;
+          } else if (result.url) {
+            const targetUrl = result.url;
+            nodeObjectUrlCache.set(jobId, targetUrl);
+            updateNodesAndSave(prev => {
+              const exists = prev.some(n => n.id === jobId);
+              if (!exists) return prev;
+              return prev.map(node => {
+                if (node.id !== jobId) return node;
+                return {
+                  ...node,
+                  type: 'video',
+                  width: 480,
+                  height: 270,
+                  content: targetUrl,
+                  driveFileId: undefined,
+                  originalFileName: `video_${jobId}.mp4`,
+                  driveViewLink: targetUrl,
+                  status: 'idle',
+                  errorMessage: undefined,
+                  updatedAt: Date.now(),
+                };
+              });
+            });
+          }
+        } else if (result.type === 'image') {
+          if (result.blob) {
+            const newImageBlob = result.blob;
+            await storeImage(jobId, newImageBlob);
+
+            let driveFileId = jobId;
+            let driveViewLink: string | undefined;
+
+            // Upload generated image asset to Google Drive project assets folder if connected
+            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+            const targetProj = currentProjectRef.current || currentProject;
+            const projFolderId =
+              targetProj?.folderId ||
+              (activeToken && targetProj?.spreadsheetId
+                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                : null);
+
+            if (activeToken && projFolderId) {
+              try {
+                const assetsFolderId =
+                  targetProj?.assetsFolderId ||
+                  (await ensureAssetsFolder(activeToken, projFolderId));
+                const uploaded = await uploadAssetToDrive(
+                  activeToken,
+                  assetsFolderId,
+                  newImageBlob,
+                  `gemini_gen_${jobId}.png`
+                );
+                driveFileId = uploaded.fileId;
+                driveViewLink = uploaded.webViewLink;
+
+                if (driveFileId !== jobId) {
+                  await storeImage(driveFileId, newImageBlob, undefined, true);
+                  await storeImage(jobId, newImageBlob, undefined, true);
+                }
+              } catch (uploadErr) {
+                console.warn('Drive upload failed for generated image:', uploadErr);
+              }
+            }
+
+            // Pre-populate memory ObjectURL cache so image displays with zero delay/flicker
+            const objectUrl = URL.createObjectURL(newImageBlob);
+            nodeObjectUrlCache.set(driveFileId, objectUrl);
+            nodeObjectUrlCache.set(jobId, objectUrl);
+
+            const base64 = await blobToBase64(newImageBlob);
+            const img = new Image();
+            img.onload = () => {
+              const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+              updateNodesAndSave(prev => {
+                const exists = prev.some(n => n.id === jobId);
+                if (!exists) return prev; // User deleted the node while generating
+                return prev.map(node => {
+                  if (node.id !== jobId) return node;
+                  return {
+                    ...node,
+                    width: fitted.width,
+                    height: fitted.height,
+                    content: driveFileId,
+                    driveFileId,
+                    originalFileName: `generated_${jobId}.png`,
+                    driveViewLink,
+                    status: 'idle',
+                    errorMessage: undefined,
+                    updatedAt: Date.now(),
+                  };
+                });
+              });
+            };
+            img.src = base64;
+          } else if (result.url) {
+            const targetUrl = result.url;
+            nodeObjectUrlCache.set(jobId, targetUrl);
+            const img = new Image();
+            img.referrerPolicy = 'no-referrer';
+            img.onload = () => {
+              const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+              updateNodesAndSave(prev => {
+                const exists = prev.some(n => n.id === jobId);
+                if (!exists) return prev;
+                return prev.map(node => {
+                  if (node.id !== jobId) return node;
+                  return {
+                    ...node,
+                    width: fitted.width,
+                    height: fitted.height,
+                    content: targetUrl,
+                    driveFileId: undefined,
+                    originalFileName: `generated_${jobId}.png`,
+                    driveViewLink: targetUrl,
+                    status: 'idle',
+                    errorMessage: undefined,
+                    updatedAt: Date.now(),
+                  };
+                });
+              });
+            };
+            img.onerror = () => {
+              updateNodesAndSave(prev => {
+                const exists = prev.some(n => n.id === jobId);
+                if (!exists) return prev;
+                return prev.map(node => {
+                  if (node.id !== jobId) return node;
+                  return {
+                    ...node,
+                    content: targetUrl,
+                    driveFileId: undefined,
+                    originalFileName: `generated_${jobId}.png`,
+                    driveViewLink: targetUrl,
+                    status: 'idle',
+                    errorMessage: undefined,
+                    updatedAt: Date.now(),
+                  };
+                });
+              });
+            };
+            img.src = targetUrl;
+          }
         } else {
           // Text output from reasoning model
           updateNodesAndSave(prev => {
@@ -2616,114 +2690,48 @@ const App: React.FC = () => {
           const result = await generateFromNodes(sourceNodes, targetModelId);
 
           if (result.type === 'video') {
-            const newVideoBlob = result.blob;
-            await storeImage(nodeId, newVideoBlob);
+            if (result.blob) {
+              const newVideoBlob = result.blob;
+              await storeImage(nodeId, newVideoBlob);
 
-            let driveFileId = nodeId;
-            let driveViewLink: string | undefined;
+              let driveFileId = nodeId;
+              let driveViewLink: string | undefined;
 
-            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
-            const targetProj = currentProjectRef.current || currentProject;
-            const projFolderId =
-              targetProj?.folderId ||
-              (activeToken && targetProj?.spreadsheetId
-                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
-                : null);
+              const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+              const targetProj = currentProjectRef.current || currentProject;
+              const projFolderId =
+                targetProj?.folderId ||
+                (activeToken && targetProj?.spreadsheetId
+                  ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                  : null);
 
-            if (activeToken && projFolderId) {
-              try {
-                const assetsFolderId =
-                  targetProj?.assetsFolderId ||
-                  (await ensureAssetsFolder(activeToken, projFolderId));
-                const uploaded = await uploadAssetToDrive(
-                  activeToken,
-                  assetsFolderId,
-                  newVideoBlob,
-                  `video_gen_${nodeId}.mp4`
-                );
-                driveFileId = uploaded.fileId;
-                driveViewLink = uploaded.webViewLink;
+              if (activeToken && projFolderId) {
+                try {
+                  const assetsFolderId =
+                    targetProj?.assetsFolderId ||
+                    (await ensureAssetsFolder(activeToken, projFolderId));
+                  const uploaded = await uploadAssetToDrive(
+                    activeToken,
+                    assetsFolderId,
+                    newVideoBlob,
+                    `video_gen_${nodeId}.mp4`
+                  );
+                  driveFileId = uploaded.fileId;
+                  driveViewLink = uploaded.webViewLink;
 
-                if (driveFileId !== nodeId) {
-                  await storeImage(driveFileId, newVideoBlob, undefined, true);
-                  await storeImage(nodeId, newVideoBlob, undefined, true);
+                  if (driveFileId !== nodeId) {
+                    await storeImage(driveFileId, newVideoBlob, undefined, true);
+                    await storeImage(nodeId, newVideoBlob, undefined, true);
+                  }
+                } catch (uploadErr) {
+                  console.warn('Drive upload failed for retried video:', uploadErr);
                 }
-              } catch (uploadErr) {
-                console.warn('Drive upload failed for retried video:', uploadErr);
               }
-            }
 
-            const objectUrl = URL.createObjectURL(newVideoBlob);
-            nodeObjectUrlCache.set(driveFileId, objectUrl);
-            nodeObjectUrlCache.set(nodeId, objectUrl);
+              const objectUrl = URL.createObjectURL(newVideoBlob);
+              nodeObjectUrlCache.set(driveFileId, objectUrl);
+              nodeObjectUrlCache.set(nodeId, objectUrl);
 
-            updateNodesAndSave(prev => {
-              const exists = prev.some(n => n.id === nodeId);
-              if (!exists) return prev;
-              return prev.map(node => {
-                if (node.id !== nodeId) return node;
-                return {
-                  ...node,
-                  type: 'video',
-                  width: 480,
-                  height: 270,
-                  content: driveFileId,
-                  driveFileId,
-                  originalFileName: `video_${nodeId}.mp4`,
-                  driveViewLink,
-                  status: 'idle',
-                  errorMessage: undefined,
-                  updatedAt: Date.now(),
-                };
-              });
-            });
-            showToast('影片節點重試生成成功！');
-          } else if (result.type === 'image') {
-            const newImageBlob = result.blob;
-            await storeImage(nodeId, newImageBlob);
-
-            let driveFileId = nodeId;
-            let driveViewLink: string | undefined;
-
-            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
-            const targetProj = currentProjectRef.current || currentProject;
-            const projFolderId =
-              targetProj?.folderId ||
-              (activeToken && targetProj?.spreadsheetId
-                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
-                : null);
-
-            if (activeToken && projFolderId) {
-              try {
-                const assetsFolderId =
-                  targetProj?.assetsFolderId ||
-                  (await ensureAssetsFolder(activeToken, projFolderId));
-                const uploaded = await uploadAssetToDrive(
-                  activeToken,
-                  assetsFolderId,
-                  newImageBlob,
-                  `gemini_gen_${nodeId}.png`
-                );
-                driveFileId = uploaded.fileId;
-                driveViewLink = uploaded.webViewLink;
-
-                if (driveFileId !== nodeId) {
-                  await storeImage(driveFileId, newImageBlob, undefined, true);
-                  await storeImage(nodeId, newImageBlob, undefined, true);
-                }
-              } catch (uploadErr) {
-                console.warn('Drive upload failed for retried image:', uploadErr);
-              }
-            }
-
-            const objectUrl = URL.createObjectURL(newImageBlob);
-            nodeObjectUrlCache.set(driveFileId, objectUrl);
-            nodeObjectUrlCache.set(nodeId, objectUrl);
-
-            const base64 = await blobToBase64(newImageBlob);
-            const img = new Image();
-            img.onload = () => {
-              const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
               updateNodesAndSave(prev => {
                 const exists = prev.some(n => n.id === nodeId);
                 if (!exists) return prev;
@@ -2731,11 +2739,12 @@ const App: React.FC = () => {
                   if (node.id !== nodeId) return node;
                   return {
                     ...node,
-                    width: fitted.width,
-                    height: fitted.height,
+                    type: 'video',
+                    width: 480,
+                    height: 270,
                     content: driveFileId,
                     driveFileId,
-                    originalFileName: `generated_${nodeId}.png`,
+                    originalFileName: `video_${nodeId}.mp4`,
                     driveViewLink,
                     status: 'idle',
                     errorMessage: undefined,
@@ -2743,9 +2752,151 @@ const App: React.FC = () => {
                   };
                 });
               });
-              showToast('節點重試生成成功！');
-            };
-            img.src = base64;
+              showToast('影片節點重試生成成功！');
+            } else if (result.url) {
+              const targetUrl = result.url;
+              nodeObjectUrlCache.set(nodeId, targetUrl);
+              updateNodesAndSave(prev => {
+                const exists = prev.some(n => n.id === nodeId);
+                if (!exists) return prev;
+                return prev.map(node => {
+                  if (node.id !== nodeId) return node;
+                  return {
+                    ...node,
+                    type: 'video',
+                    width: 480,
+                    height: 270,
+                    content: targetUrl,
+                    driveFileId: undefined,
+                    originalFileName: `video_${nodeId}.mp4`,
+                    driveViewLink: targetUrl,
+                    status: 'idle',
+                    errorMessage: undefined,
+                    updatedAt: Date.now(),
+                  };
+                });
+              });
+              showToast('影片節點重試生成成功！');
+            }
+          } else if (result.type === 'image') {
+            if (result.blob) {
+              const newImageBlob = result.blob;
+              await storeImage(nodeId, newImageBlob);
+
+              let driveFileId = nodeId;
+              let driveViewLink: string | undefined;
+
+              const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+              const targetProj = currentProjectRef.current || currentProject;
+              const projFolderId =
+                targetProj?.folderId ||
+                (activeToken && targetProj?.spreadsheetId
+                  ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                  : null);
+
+              if (activeToken && projFolderId) {
+                try {
+                  const assetsFolderId =
+                    targetProj?.assetsFolderId ||
+                    (await ensureAssetsFolder(activeToken, projFolderId));
+                  const uploaded = await uploadAssetToDrive(
+                    activeToken,
+                    assetsFolderId,
+                    newImageBlob,
+                    `gemini_gen_${nodeId}.png`
+                  );
+                  driveFileId = uploaded.fileId;
+                  driveViewLink = uploaded.webViewLink;
+
+                  if (driveFileId !== nodeId) {
+                    await storeImage(driveFileId, newImageBlob, undefined, true);
+                    await storeImage(nodeId, newImageBlob, undefined, true);
+                  }
+                } catch (uploadErr) {
+                  console.warn('Drive upload failed for retried image:', uploadErr);
+                }
+              }
+
+              const objectUrl = URL.createObjectURL(newImageBlob);
+              nodeObjectUrlCache.set(driveFileId, objectUrl);
+              nodeObjectUrlCache.set(nodeId, objectUrl);
+
+              const base64 = await blobToBase64(newImageBlob);
+              const img = new Image();
+              img.onload = () => {
+                const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+                updateNodesAndSave(prev => {
+                  const exists = prev.some(n => n.id === nodeId);
+                  if (!exists) return prev;
+                  return prev.map(node => {
+                    if (node.id !== nodeId) return node;
+                    return {
+                      ...node,
+                      width: fitted.width,
+                      height: fitted.height,
+                      content: driveFileId,
+                      driveFileId,
+                      originalFileName: `generated_${nodeId}.png`,
+                      driveViewLink,
+                      status: 'idle',
+                      errorMessage: undefined,
+                      updatedAt: Date.now(),
+                    };
+                  });
+                });
+                showToast('節點重試生成成功！');
+              };
+              img.src = base64;
+            } else if (result.url) {
+              const targetUrl = result.url;
+              nodeObjectUrlCache.set(nodeId, targetUrl);
+              const img = new Image();
+              img.referrerPolicy = 'no-referrer';
+              img.onload = () => {
+                const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
+                updateNodesAndSave(prev => {
+                  const exists = prev.some(n => n.id === nodeId);
+                  if (!exists) return prev;
+                  return prev.map(node => {
+                    if (node.id !== nodeId) return node;
+                    return {
+                      ...node,
+                      width: fitted.width,
+                      height: fitted.height,
+                      content: targetUrl,
+                      driveFileId: undefined,
+                      originalFileName: `generated_${nodeId}.png`,
+                      driveViewLink: targetUrl,
+                      status: 'idle',
+                      errorMessage: undefined,
+                      updatedAt: Date.now(),
+                    };
+                  });
+                });
+                showToast('節點重試生成成功！');
+              };
+              img.onerror = () => {
+                updateNodesAndSave(prev => {
+                  const exists = prev.some(n => n.id === nodeId);
+                  if (!exists) return prev;
+                  return prev.map(node => {
+                    if (node.id !== nodeId) return node;
+                    return {
+                      ...node,
+                      content: targetUrl,
+                      driveFileId: undefined,
+                      originalFileName: `generated_${nodeId}.png`,
+                      driveViewLink: targetUrl,
+                      status: 'idle',
+                      errorMessage: undefined,
+                      updatedAt: Date.now(),
+                    };
+                  });
+                });
+                showToast('節點重試生成成功！');
+              };
+              img.src = targetUrl;
+            }
           } else {
             // Text output
             updateNodesAndSave(prev => {
