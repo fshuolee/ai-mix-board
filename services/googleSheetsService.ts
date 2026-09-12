@@ -678,6 +678,7 @@ export async function loadGraphFromSheet(
   let boardValues: any[][] = [];
   let nodeValues: any[][] = [];
   let viewportValues: any[][] = [];
+  let settingsValues: any[][] = [];
 
   if (rangesToFetch.length > 0) {
     try {
@@ -691,6 +692,7 @@ export async function loadGraphFromSheet(
       if (boardsIdx >= 0) boardValues = valueRanges[boardsIdx]?.values || [];
       if (nodesIdx >= 0) nodeValues = valueRanges[nodesIdx]?.values || [];
       if (viewportIdx >= 0) viewportValues = valueRanges[viewportIdx]?.values || [];
+      if (settingsIdx >= 0) settingsValues = valueRanges[settingsIdx]?.values || [];
     } catch (fetchErr) {
       console.error('Failed to load canvas data from Google Sheet:', fetchErr);
       throw fetchErr;
@@ -917,9 +919,8 @@ export async function loadGraphFromSheet(
 
   // 4. Parse Settings (Unencrypted project password)
   let projectPassword = '';
-  if (settingsIdx >= 0 && valueRanges[settingsIdx]?.values) {
-    const sRows = valueRanges[settingsIdx].values;
-    for (const r of sRows) {
+  if (settingsValues.length > 0) {
+    for (const r of settingsValues) {
       if (r && r[0] === 'project_password') {
         projectPassword = String(r[1] || '').trim();
         break;

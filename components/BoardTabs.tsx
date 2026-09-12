@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Layers,
   Plus,
@@ -48,7 +49,11 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
 }) => {
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [menuOpenBoardId, setMenuOpenBoardId] = useState<string | null>(null);
+  const [menuState, setMenuState] = useState<{
+    board: BoardMetadata;
+    bottom: number;
+    left: number;
+  } | null>(null);
   const [isOverviewOpen, setIsOverviewOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -93,19 +98,60 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
     updateScrollBounds();
   }, [activeBoardId]);
 
+  const handleOpenMenu = (board: BoardMetadata, targetEl: HTMLElement) => {
+    if (menuState?.board.id === board.id) {
+      setMenuState(null);
+      return;
+    }
+    const rect = targetEl.getBoundingClientRect();
+    const menuWidth = 190;
+    // Calculate distance from bottom of screen to top of target element
+    const bottom = Math.max(16, window.innerHeight - rect.top + 8);
+    let left = rect.left;
+    if (left + menuWidth > window.innerWidth - 16) {
+      left = window.innerWidth - menuWidth - 16;
+    }
+    if (left < 16) {
+      left = 16;
+    }
+    setMenuState({
+      board,
+      bottom,
+      left,
+    });
+  };
+
   // Close context menu & overview on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpenBoardId(null);
+      const target = e.target as Node;
+      if (menuRef.current && menuRef.current.contains(target)) {
+        return;
       }
-      if (overviewRef.current && !overviewRef.current.contains(e.target as Node)) {
+      const isTrigger = (target as HTMLElement)?.closest?.('[data-board-menu-trigger]');
+      if (!isTrigger) {
+        setMenuState(null);
+      }
+      if (overviewRef.current && !overviewRef.current.contains(target)) {
         setIsOverviewOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Close floating menu on window resize or scroll
+  useEffect(() => {
+    const handleClose = () => {
+      if (menuState) setMenuState(null);
+    };
+    window.addEventListener('resize', handleClose);
+    window.addEventListener('scroll', handleClose, true);
+    return () => {
+      window.removeEventListener('resize', handleClose);
+      window.removeEventListener('scroll', handleClose, true);
+    };
+  }, [menuState]);
 
   const handleScroll = (delta: number) => {
     if (scrollContainerRef.current) {
@@ -128,7 +174,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   const handleStartRename = (board: BoardMetadata) => {
     setEditingBoardId(board.id);
     setEditingName(board.name);
-    setMenuOpenBoardId(null);
+    setMenuState(null);
     setIsOverviewOpen(false);
   };
 
@@ -248,29 +294,19 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                             {count} 個物件
                           </span>
                           <button
+                            type="button"
+                            data-board-menu-trigger="true"
                             onClick={e => {
                               e.stopPropagation();
-                              handleStartRename(b);
+                              handleOpenMenu(b, e.currentTarget);
                             }}
-                            className="p-1 text-gray-400 hover:text-blue-400 rounded transition-colors opacity-0 group-hover:opacity-100"
-                            title="重新命名"
+                            className={`p-1 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700 transition-colors opacity-0 group-hover:opacity-100 ${
+                              menuState?.board.id === b.id ? 'opacity-100 bg-gray-700 text-white' : ''
+                            }`}
+                            title="畫布選項與設定"
                           >
-                            <Edit2 className="w-3 h-3" />
+                            <MoreVertical className="w-3.5 h-3.5" />
                           </button>
-                          {boards.length > 1 && (
-                            <button
-                              onClick={e => {
-                                e.stopPropagation();
-                                if (window.confirm(`確定要刪除畫布 "${b.name}" 嗎？畫布上的節點將會一併移除。`)) {
-                                  onDeleteBoard(b.id);
-                                }
-                              }}
-                              className="p-1 text-gray-400 hover:text-red-400 rounded transition-colors opacity-0 group-hover:opacity-100"
-                              title="刪除此畫布分頁"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
                         </div>
                       </div>
                     );
@@ -314,7 +350,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                 onContextMenu={e => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setMenuOpenBoardId(menuOpenBoardId === board.id ? null : board.id);
+                  handleOpenMenu(board, e.currentTarget);
                 }}
               >
                 {isEditing ? (
@@ -382,77 +418,22 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       {nodeCount}
                     </span>
 
-                    {/* Options Hamburger Menu Trigger (Delete is now securely placed inside here) */}
-                    <div
+                    {/* Options Hamburger Menu Trigger */}
+                    <button
+                      type="button"
+                      data-board-menu-trigger="true"
                       onClick={e => {
                         e.stopPropagation();
-                        setMenuOpenBoardId(menuOpenBoardId === board.id ? null : board.id);
+                        handleOpenMenu(board, e.currentTarget);
                       }}
-                      className={`p-0.5 rounded-md hover:bg-white/20 text-gray-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity ${
-                        menuOpenBoardId === board.id ? 'opacity-100' : ''
-                      }`}
+                      className={`p-1 rounded-lg hover:bg-white/25 text-gray-300 hover:text-white transition-all cursor-pointer ${
+                        isActive ? 'opacity-85 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      } ${menuState?.board.id === board.id ? 'opacity-100 bg-white/25 text-white' : ''}`}
                       title="畫布選項與設定"
+                      aria-label="畫布選項與設定"
                     >
-                      <MoreVertical className="w-3 h-3" />
-                    </div>
-                  </div>
-                )}
-
-                {/* Context Menu / Hamburger Dots Dropdown */}
-                {menuOpenBoardId === board.id && (
-                  <div
-                    ref={menuRef}
-                    className="absolute bottom-full left-0 mb-2 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1 z-50 animate-fadeIn"
-                    onPointerDown={e => e.stopPropagation()}
-                  >
-                    <button
-                      onClick={() => handleStartRename(board)}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg text-left transition-colors cursor-pointer"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-blue-400" />
-                      <span>重新命名</span>
+                      <MoreVertical className="w-3.5 h-3.5" />
                     </button>
-
-                    {onToggleCensoredBoard && (
-                      <button
-                        onClick={() => {
-                          setMenuOpenBoardId(null);
-                          onToggleCensoredBoard(board.id);
-                        }}
-                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg text-left transition-colors cursor-pointer ${
-                          board.isCensored
-                            ? 'text-amber-300 hover:text-white hover:bg-amber-950/40'
-                            : 'text-gray-300 hover:text-white hover:bg-gray-800'
-                        }`}
-                      >
-                        {board.isCensored ? (
-                          <>
-                            <Unlock className="w-3.5 h-3.5 text-amber-400" />
-                            <span>解除機敏保護</span>
-                          </>
-                        ) : (
-                          <>
-                            <Lock className="w-3.5 h-3.5 text-blue-400" />
-                            <span>設為機敏保護 (需密碼)</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    {boards.length > 1 && (
-                      <button
-                        onClick={() => {
-                          setMenuOpenBoardId(null);
-                          if (window.confirm(`確定要刪除畫布 "${board.name}" 嗎？畫布上的節點將會一併移除。`)) {
-                            onDeleteBoard(board.id);
-                          }
-                        }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-lg text-left transition-colors cursor-pointer border-t border-gray-800/80 mt-0.5 pt-1.5"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>刪除畫布</span>
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
@@ -510,6 +491,96 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
           </button>
         )}
       </div>
+
+      {/* Portal-rendered Dropdown Menu (Guarantees zero clipping from overflow-x-auto or z-index) */}
+      {menuState &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: 'fixed',
+              bottom: `${menuState.bottom}px`,
+              left: `${menuState.left}px`,
+              zIndex: 99999,
+            }}
+            className="w-48 bg-gray-900/98 backdrop-blur-2xl border border-gray-700/90 rounded-2xl shadow-2xl p-1.5 animate-fadeIn select-none shadow-black/80 ring-1 ring-white/10"
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header / Board Name indicator */}
+            <div className="px-2.5 py-1.5 mb-1 border-b border-gray-800 text-[11px] font-semibold text-gray-400 flex items-center justify-between">
+              <span className="truncate max-w-[120px] text-gray-200 font-medium">
+                {menuState.board.name}
+              </span>
+              <span className="text-[10px] font-mono text-gray-500">
+                {getNodeCountForBoard(menuState.board.id)} 物件
+              </span>
+            </div>
+
+            {/* 重新命名 */}
+            <button
+              type="button"
+              onClick={() => {
+                const target = menuState.board;
+                setMenuState(null);
+                handleStartRename(target);
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-gray-300 hover:text-white hover:bg-gray-800/80 rounded-xl text-left transition-colors cursor-pointer"
+            >
+              <Edit2 className="w-3.5 h-3.5 text-blue-400" />
+              <span>重新命名</span>
+            </button>
+
+            {/* 設為機敏保護 (需密碼) / 解除機敏保護 */}
+            {onToggleCensoredBoard && (
+              <button
+                type="button"
+                onClick={() => {
+                  const targetBoardId = menuState.board.id;
+                  setMenuState(null);
+                  onToggleCensoredBoard(targetBoardId);
+                }}
+                className={`w-full flex items-center gap-2 px-2.5 py-2 text-xs rounded-xl text-left transition-colors cursor-pointer ${
+                  menuState.board.isCensored
+                    ? 'text-amber-300 hover:text-white hover:bg-amber-950/40'
+                    : 'text-gray-300 hover:text-white hover:bg-gray-800/80'
+                }`}
+              >
+                {menuState.board.isCensored ? (
+                  <>
+                    <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>解除機敏保護</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-blue-400" />
+                    <span>設為機敏保護 (需密碼)</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* 刪除畫布 */}
+            {boards.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const targetBoardId = menuState.board.id;
+                  const targetBoardName = menuState.board.name;
+                  setMenuState(null);
+                  if (window.confirm(`確定要刪除畫布 "${targetBoardName}" 嗎？畫布上的節點將會一併移除。`)) {
+                    onDeleteBoard(targetBoardId);
+                  }
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-xl text-left transition-colors cursor-pointer border-t border-gray-800/80 mt-1 pt-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>刪除畫布</span>
+              </button>
+            )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
