@@ -18,6 +18,7 @@ import {
   Database,
   Trash2,
   Cloud,
+  Languages,
 } from 'lucide-react';
 import { getLocalCacheStats, clearAllLocalImages, LocalCacheStats } from '../services/dbService';
 import {
@@ -42,12 +43,15 @@ import {
   setCustomCorsProxy,
 } from '../services/atlasCloudService';
 import { GoogleUserProfile } from '../types';
+import { Locale } from '../services/i18n';
 
 interface AuthSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: GoogleUserProfile | null;
   onAuthChange: () => void;
+  locale?: Locale;
+  onToggleLocale?: () => void;
 }
 
 const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
@@ -55,6 +59,8 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   onClose,
   user,
   onAuthChange,
+  locale = 'zh-TW',
+  onToggleLocale,
 }) => {
   const [apiKey, setApiKey] = useState('');
   const [atlasApiKey, setAtlasApiKey] = useState('');
@@ -759,6 +765,45 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Section 5: Interface Language */}
+          {onToggleLocale && (
+            <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Languages className="w-5 h-5 text-blue-400" />
+                  <h3 className="text-sm font-semibold text-white">介面語言 / Language</h3>
+                </div>
+                <div className="flex items-center gap-1.5 p-1 bg-gray-900/80 border border-gray-700/80 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={locale !== 'zh-TW' ? onToggleLocale : undefined}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      locale === 'zh-TW'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 cursor-pointer'
+                    }`}
+                  >
+                    正體中文 (繁體)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={locale !== 'en' ? onToggleLocale : undefined}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      locale === 'en'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 cursor-pointer'
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400">
+                切換整套畫布、導航列與 Inspector 參數面板的顯示語言。目前僅支援正體中文與英文。
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

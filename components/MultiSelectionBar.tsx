@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
+import { Locale, t } from '../services/i18n';
 
 export interface MultiSelectionBarProps {
   selectedNodes: CanvasNode[];
@@ -42,10 +43,12 @@ export interface MultiSelectionBarProps {
   onGenerate?: () => void;
   onDownloadSelected?: () => void;
   onRetrySelectedErrors?: () => void;
+  locale?: Locale;
 }
 
 const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
   selectedNodes,
+  locale,
   onAutoArrange,
   onAlign,
   onDistribute,
@@ -78,7 +81,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-xl font-medium text-xs">
         <Layers className="w-3.5 h-3.5 text-blue-400" />
         <span className="font-mono font-semibold">{count}</span>
-        <span className="text-blue-300/80 text-[11px]">選取</span>
+        <span className="text-blue-300/80 text-[11px]">{t('selection.selected', locale)}</span>
       </div>
 
       {/* Retry Failed Nodes CTA */}
@@ -86,10 +89,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         <button
           onClick={onRetrySelectedErrors}
           className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
-          title="重試選取項目中所有失敗的生成任務"
+          title={t('selection.retry', locale)}
         >
           <RotateCw className="w-3.5 h-3.5" />
-          <span>重試失敗 ({selectedNodes.filter(n => n.status === 'error').length})</span>
+          <span>{t('selection.retry', locale)} ({selectedNodes.filter(n => n.status === 'error').length})</span>
         </button>
       )}
 
@@ -98,52 +101,53 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       {/* Auto Arrange with Dropdown */}
       <div className="relative flex items-center">
         <button
-          onClick={() => onAutoArrange('grid')}
-          className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
-          title="自動排列 (Alt+G)"
+          onClick={() => {
+            setShowArrangeMenu(prev => !prev);
+            setShowAlignMenu(false);
+          }}
+          className={`p-1.5 rounded-lg transition-colors flex items-center gap-0.5 ${
+            showArrangeMenu ? 'bg-blue-600/30 text-blue-300' : 'hover:bg-gray-800 text-gray-300 hover:text-white'
+          }`}
+          title={t('selection.arrange', locale)}
         >
           <LayoutGrid className="w-4 h-4 text-blue-400" />
-        </button>
-
-        <button
-          onClick={() => setShowArrangeMenu(prev => !prev)}
-          className="p-1 rounded-md hover:bg-gray-800 text-gray-400 hover:text-white transition-colors -ml-1"
-          title="更多排列選項 (網格 / 水平 / 垂直)"
-        >
-          <ChevronUp className={`w-3 h-3 transition-transform ${showArrangeMenu ? 'rotate-180' : ''}`} />
+          <ChevronUp className={`w-3 h-3 text-gray-400 transition-transform ${showArrangeMenu ? 'rotate-180' : ''}`} />
         </button>
 
         {showArrangeMenu && (
-          <div className="absolute bottom-full left-0 mb-2 p-1 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl space-y-0.5 min-w-[130px] animate-in fade-in zoom-in-95 duration-100 z-50">
+          <div className="absolute bottom-full left-0 mb-2 p-1 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl space-y-0.5 min-w-[140px] animate-in fade-in zoom-in-95 duration-100 z-50">
+            <div className="px-2 py-1 text-[10px] text-gray-400 font-semibold border-b border-gray-800/80 mb-0.5">
+              {t('selection.arrange', locale)}
+            </div>
             <button
               onClick={() => {
                 onAutoArrange('grid');
                 setShowArrangeMenu(false);
               }}
-              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs"
+              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs text-gray-200 transition-colors"
             >
               <LayoutGrid className="w-3.5 h-3.5 text-blue-400" />
-              <span>網格排列 (Grid)</span>
+              <span>{t('selection.grid', locale)}</span>
             </button>
             <button
               onClick={() => {
                 onAutoArrange('horizontal');
                 setShowArrangeMenu(false);
               }}
-              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs"
+              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs text-gray-200 transition-colors"
             >
               <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-              <span>水平單列 (Row)</span>
+              <span>{t('selection.row', locale)}</span>
             </button>
             <button
               onClick={() => {
                 onAutoArrange('vertical');
                 setShowArrangeMenu(false);
               }}
-              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs"
+              className="w-full px-2.5 py-1.5 rounded-lg hover:bg-blue-600/20 text-left flex items-center gap-2 hover:text-blue-300 text-xs text-gray-200 transition-colors"
             >
               <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-              <span>垂直單行 (Column)</span>
+              <span>{t('selection.column', locale)}</span>
             </button>
           </div>
         )}
@@ -160,7 +164,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
             className={`p-1.5 rounded-lg transition-colors ${
               showAlignMenu ? 'bg-blue-600/30 text-blue-300' : 'hover:bg-gray-800 text-gray-300 hover:text-white'
             }`}
-            title="對齊與等距分佈"
+            title={t('selection.align', locale)}
           >
             <AlignCenterHorizontal className="w-4 h-4 text-blue-400" />
           </button>
@@ -168,7 +172,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
           {showAlignMenu && (
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl space-y-2 min-w-[190px] animate-in fade-in zoom-in-95 duration-100 z-50">
               <div>
-                <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">水平對齊</div>
+                <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">{t('selection.align', locale)} (H)</div>
                 <div className="grid grid-cols-3 gap-1">
                   <button
                     onClick={() => {
@@ -176,10 +180,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                       setShowAlignMenu(false);
                     }}
                     className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
-                    title="靠左對齊"
+                    title={t('selection.alignLeft', locale)}
                   >
                     <AlignLeft className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-[10px]">靠左</span>
+                    <span className="text-[10px]">{t('selection.alignLeft', locale)}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -187,10 +191,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                       setShowAlignMenu(false);
                     }}
                     className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
-                    title="水平置中"
+                    title={t('selection.alignCenter', locale)}
                   >
                     <AlignCenter className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-[10px]">置中</span>
+                    <span className="text-[10px]">{t('selection.alignCenter', locale)}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -198,16 +202,16 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                       setShowAlignMenu(false);
                     }}
                     className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
-                    title="靠右對齊"
+                    title={t('selection.alignRight', locale)}
                   >
                     <AlignRight className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-[10px]">靠右</span>
+                    <span className="text-[10px]">{t('selection.alignRight', locale)}</span>
                   </button>
                 </div>
               </div>
 
               <div className="pt-1 border-t border-gray-800">
-                <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">垂直對齊</div>
+                <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">{t('selection.align', locale)} (V)</div>
                 <div className="grid grid-cols-3 gap-1">
                   <button
                     onClick={() => {
@@ -215,10 +219,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                       setShowAlignMenu(false);
                     }}
                     className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
-                    title="靠頂對齊"
+                    title={t('selection.alignTop', locale)}
                   >
                     <AlignStartHorizontal className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-[10px]">靠頂</span>
+                    <span className="text-[10px]">{t('selection.alignTop', locale)}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -226,10 +230,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                       setShowAlignMenu(false);
                     }}
                     className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
-                    title="垂直置中"
+                    title={t('selection.alignMiddle', locale)}
                   >
                     <AlignCenterVertical className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-[10px]">置中</span>
+                    <span className="text-[10px]">{t('selection.alignMiddle', locale)}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -237,17 +241,17 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                       setShowAlignMenu(false);
                     }}
                     className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex flex-col items-center justify-center gap-1 transition-colors"
-                    title="靠底對齊"
+                    title={t('selection.alignBottom', locale)}
                   >
                     <AlignEndHorizontal className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-[10px]">靠底</span>
+                    <span className="text-[10px]">{t('selection.alignBottom', locale)}</span>
                   </button>
                 </div>
               </div>
 
               {onDistribute && count > 2 && (
                 <div className="pt-1 border-t border-gray-800">
-                  <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">等距分佈</div>
+                  <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">{t('selection.distribute', locale)}</div>
                   <div className="grid grid-cols-2 gap-1">
                     <button
                       onClick={() => {
@@ -255,10 +259,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                         setShowAlignMenu(false);
                       }}
                       className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex items-center justify-center gap-1.5 transition-colors"
-                      title="水平等距分佈"
+                      title={t('selection.distributeH', locale)}
                     >
                       <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-                      <span className="text-[10px]">水平等距</span>
+                      <span className="text-[10px]">{t('selection.distributeH', locale)}</span>
                     </button>
                     <button
                       onClick={() => {
@@ -266,10 +270,10 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
                         setShowAlignMenu(false);
                       }}
                       className="p-1.5 rounded-lg bg-gray-800/60 hover:bg-gray-800 hover:text-blue-300 text-gray-300 flex items-center justify-center gap-1.5 transition-colors"
-                      title="垂直等距分佈"
+                      title={t('selection.distributeV', locale)}
                     >
                       <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-                      <span className="text-[10px]">垂直等距</span>
+                      <span className="text-[10px]">{t('selection.distributeV', locale)}</span>
                     </button>
                   </div>
                 </div>
@@ -284,7 +288,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         <button
           onClick={onResetAspect}
           className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-emerald-300 transition-colors"
-          title="還原為原圖真實比例"
+          title={t('selection.resetAspect', locale)}
         >
           <Maximize2 className="w-4 h-4 text-emerald-400" />
         </button>
@@ -294,7 +298,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <button
         onClick={onApplyDefaultSize}
         className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-purple-300 transition-colors"
-        title={`套用最適尺寸 (${defaultSize.width}×${defaultSize.height})`}
+        title={`${t('selection.applyOptimalSize', locale)} (${defaultSize.width}×${defaultSize.height})`}
       >
         <Ruler className="w-4 h-4 text-purple-400" />
       </button>
@@ -303,7 +307,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <button
         onClick={onSaveAsDefaultSize}
         className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-amber-300 transition-colors"
-        title="將首個選取尺寸儲存為預設"
+        title={t('selection.setAsDefaultSize', locale)}
       >
         <Bookmark className="w-4 h-4 text-amber-400" />
       </button>
@@ -315,7 +319,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         <button
           onClick={onDownloadSelected}
           className="p-1.5 rounded-lg hover:bg-cyan-950/50 text-gray-300 hover:text-cyan-300 transition-colors"
-          title={`批次下載選取的 ${count} 個檔案`}
+          title={`${t('selection.download', locale)} (${count})`}
         >
           <Download className="w-4 h-4 text-cyan-400" />
         </button>
@@ -326,7 +330,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         <button
           onClick={onCut}
           className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-blue-300 transition-colors"
-          title="剪下物件 (Cmd+X)"
+          title={`${t('selection.cut', locale)} (Cmd+X)`}
         >
           <Scissors className="w-4 h-4 text-blue-400" />
         </button>
@@ -337,7 +341,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
         <button
           onClick={onCopyToClipboard}
           className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-blue-300 transition-colors"
-          title="複製節點 (Cmd+C)"
+          title={`${t('selection.copy', locale)} (Cmd+C)`}
         >
           <ClipboardCopy className="w-4 h-4 text-blue-400" />
         </button>
@@ -347,7 +351,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <button
         onClick={onDuplicate}
         className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white transition-colors"
-        title="在畫布上製作複本 (Ctrl+D)"
+        title={`${t('selection.duplicate', locale)} (Ctrl+D)`}
       >
         <Copy className="w-4 h-4 text-gray-400" />
       </button>
@@ -356,7 +360,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <button
         onClick={onDelete}
         className="p-1.5 rounded-lg hover:bg-red-600/20 text-gray-400 hover:text-red-400 transition-colors"
-        title="刪除選取物件 (Delete)"
+        title={`${t('selection.delete', locale)} (Delete)`}
       >
         <Trash2 className="w-4 h-4" />
       </button>
@@ -367,7 +371,7 @@ const MultiSelectionBar: React.FC<MultiSelectionBarProps> = ({
       <button
         onClick={onDeselectAll}
         className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
-        title="取消選取 (Esc)"
+        title={t('selection.deselect', locale)}
       >
         <X className="w-4 h-4" />
       </button>

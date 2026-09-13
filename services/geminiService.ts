@@ -6,6 +6,7 @@ import { getModelById, DEFAULT_MODEL_ID, fetchModelsFromApi } from './modelsConf
 import { getAssetBlobFromDrive } from './googleDriveService';
 import { getAccessToken } from './googleAuthService';
 import { generateWithAtlasCloud, isAtlasCloudModel } from './atlasCloudService';
+import { parseRawPayload } from './modelParamsService';
 
 function getApiKey(): string {
   return (
@@ -64,13 +65,14 @@ export type GenerationResult =
  */
 export const generateFromNodes = async (
   nodes: CanvasNode[],
-  modelId: string = DEFAULT_MODEL_ID
+  modelId: string = DEFAULT_MODEL_ID,
+  params?: Record<string, any>
 ): Promise<GenerationResult> => {
   const modelConfig = getModelById(modelId);
 
   // Route Atlas Cloud models directly without requiring Google Gemini API client
   if (modelConfig.provider === 'atlascloud' || isAtlasCloudModel(modelId, modelConfig)) {
-    return generateWithAtlasCloud(nodes, modelId, modelConfig);
+    return generateWithAtlasCloud(nodes, modelId, modelConfig, params);
   }
 
   const ai = getAiClient();
@@ -140,6 +142,9 @@ export const generateFromNodes = async (
     effectiveModelConfig = getModelById(effectiveModelId);
   }
 
+  // Parse raw JSON payload if user specified custom fields
+  const customRawPayload = parseRawPayload(params?.rawPayload);
+
   // Handle Imagen 3 Dedicated Image Model
   if (effectiveModelId.startsWith('imagen-3')) {
     const promptText = textParts.map(t => t.text).join(' \n');
@@ -148,14 +153,20 @@ export const generateFromNodes = async (
     }
 
     try {
+      const imagenConfig: any = {
+        numberOfImages: 1,
+        outputMimeType: 'image/png',
+        aspectRatio: params?.aspectRatio || '1:1',
+      };
+      if (params?.personGeneration) {
+        imagenConfig.personGeneration = params.personGeneration;
+      }
+      Object.assign(imagenConfig, customRawPayload);
+
       const response = await ai.models.generateImages({
         model: effectiveModelId,
         prompt: promptText,
-        config: {
-          numberOfImages: 1,
-          outputMimeType: 'image/png',
-          aspectRatio: '1:1',
-        },
+        config: imagenConfig,
       });
 
       const imageObj = response.generatedImages?.[0]?.image;
@@ -182,6 +193,18 @@ export const generateFromNodes = async (
       });
     }
 
+    const imageGenerationConfig: any = {
+      responseModalities: [Modality.IMAGE],
+    };
+
+    if (params?.aspectRatio) {
+      imageGenerationConfig.imageConfig = {
+        aspectRatio: params.aspectRatio,
+      };
+    }
+
+    Object.assign(imageGenerationConfig, customRawPayload);
+
     try {
       const response = await ai.models.generateContent({
         model: effectiveModelId,
@@ -190,9 +213,7 @@ export const generateFromNodes = async (
             parts: promptParts,
           },
         ],
-        config: {
-          responseModalities: [Modality.IMAGE],
-        },
+        config: imageGenerationConfig,
       });
 
       for (const part of response.candidates?.[0]?.content?.parts || []) {
@@ -225,7 +246,7 @@ export const generateFromNodes = async (
           const fallbackRes = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: [{ parts: promptParts }],
-            config: { responseModalities: [Modality.IMAGE] },
+            config: imageGenerationConfig,
           });
           for (const part of fallbackRes.candidates?.[0]?.content?.parts || []) {
             if (part.inlineData) {
@@ -255,9 +276,23 @@ export const generateFromNodes = async (
       },
     ];
 
+    const textGenConfig: any = {};
+    if (typeof params?.temperature === 'number') textGenConfig.temperature = params.temperature;
+    if (typeof params?.topP === 'number') textGenConfig.topP = params.topP;
+    if (typeof params?.topK === 'number') textGenConfig.topK = params.topK;
+    if (typeof params?.maxOutputTokens === 'number') textGenConfig.maxOutputTokens = params.maxOutputTokens;
+    if (params?.systemInstruction && typeof params.systemInstruction === 'string') {
+      textGenConfig.systemInstruction = params.systemInstruction;
+    }
+    if (typeof params?.thinkingBudget === 'number' && params.thinkingBudget > 0) {
+      textGenConfig.thinkingConfig = { thinkingBudget: params.thinkingBudget };
+    }
+    Object.assign(textGenConfig, customRawPayload);
+
     const response = await ai.models.generateContent({
       model: effectiveModelId,
       contents: [{ parts: promptParts }],
+      config: Object.keys(textGenConfig).length > 0 ? textGenConfig : undefined,
     });
 
     const textOutput = response.text || response.candidates?.[0]?.content?.parts?.[0]?.text;

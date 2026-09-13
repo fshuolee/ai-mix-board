@@ -139,11 +139,37 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
     }
   }, [node.id, mediaNode?.driveFileId, mediaNode?.content, node.type, node.status, targetFileId, isMedia]);
 
+  const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
+
   const handlePointerDown = (e: React.PointerEvent) => {
     if (isSpacePressed) return;
+    if (e.button !== 0) return; // Ignore right click or middle click
     e.stopPropagation();
-    onSelect(node.id, e.shiftKey);
+
+    pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
+
+    // If node is already selected and shift is not pressed, defer single-selection collapse
+    // to pointer up if no dragging occurred. This preserves multi-selection when dragging multiple nodes!
+    if (!isSelected || e.shiftKey) {
+      onSelect(node.id, e.shiftKey);
+    }
     onDragStart(e, node.id);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (isSpacePressed) return;
+    if (e.button !== 0) return;
+
+    if (pointerDownPosRef.current) {
+      const dx = Math.abs(e.clientX - pointerDownPosRef.current.x);
+      const dy = Math.abs(e.clientY - pointerDownPosRef.current.y);
+      pointerDownPosRef.current = null;
+
+      // If this was a click without drag movement on an already selected node in a multi-selection
+      if (dx < 4 && dy < 4 && isSelected && !e.shiftKey && isMultiSelecting) {
+        onSelect(node.id, false);
+      }
+    }
   };
 
   const handleDoubleClick = () => {
@@ -255,6 +281,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
       }`}
       style={commonStyle}
       onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
       onDoubleClick={handleDoubleClick}
       onContextMenu={e => {
         if (isSpacePressed) return;

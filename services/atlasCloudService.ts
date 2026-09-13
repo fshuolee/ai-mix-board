@@ -3,6 +3,7 @@ import { getImage } from './dbService';
 import { blobToBase64 } from '../utils/canvasUtils';
 import { getAccessToken } from './googleAuthService';
 import { getAssetBlobFromDrive } from './googleDriveService';
+import { parseRawPayload } from './modelParamsService';
 
 const STORAGE_KEY_ATLAS_API_KEY = 'ai_mix_board_atlascloud_api_key';
 const STORAGE_KEY_CACHED_ATLAS_MODELS = 'ai_mix_board_cached_atlas_models';
@@ -1107,7 +1108,8 @@ export type GenerationResult =
 export async function generateWithAtlasCloud(
   nodes: CanvasNode[],
   modelId: string,
-  modelInfo?: ModelInfo
+  modelInfo?: ModelInfo,
+  params?: Record<string, any>
 ): Promise<GenerationResult> {
   const apiKey = getEffectiveAtlasCloudApiKey();
   if (!apiKey) {
@@ -1206,10 +1208,12 @@ export async function generateWithAtlasCloud(
       referenceImageUrls = (await Promise.all(uploadPromises)).filter(Boolean) as string[];
     }
 
+    const customRawPayload = parseRawPayload(params?.rawPayload);
+
     const payload: any = {
       model: actualModelId,
       prompt: finalPrompt,
-      ratio: '16:9',
+      ratio: params?.aspectRatio || '16:9',
     };
 
     if (referenceImageUrls.length > 0) {
@@ -1217,13 +1221,31 @@ export async function generateWithAtlasCloud(
       payload.images = referenceImageUrls;
     }
 
-    if (actualModelId.includes('h3-fast')) {
+    if (params?.resolution) {
+      payload.resolution = params.resolution;
+    } else if (actualModelId.includes('h3-fast')) {
       payload.resolution = '480P';
     } else if (actualModelId.includes('h3')) {
       payload.resolution = '720P';
     }
 
-    payload.duration = 5;
+    payload.duration = params?.duration !== undefined ? Number(params.duration) : 5;
+
+    if (params?.fps) {
+      payload.fps = Number(params.fps);
+    }
+    if (params?.motionScale) {
+      payload.motion_scale = Number(params.motionScale);
+    }
+    if (params?.cameraMovement && params.cameraMovement !== 'none') {
+      payload.camera_movement = params.cameraMovement;
+    }
+    if (typeof params?.seed === 'number' && params.seed !== -1) {
+      payload.seed = params.seed;
+    }
+
+    // Merge custom raw payload for forward compatibility
+    Object.assign(payload, customRawPayload);
 
     const res = await fetch('https://api.atlascloud.ai/api/v1/model/generateVideo', {
       method: 'POST',
@@ -1347,10 +1369,48 @@ export async function generateWithAtlasCloud(
 
     // Strategy A: Atlas Cloud Dedicated Image / Edit Endpoint (POST /api/v1/model/generateImage)
     try {
+      const customRawPayload = parseRawPayload(params?.rawPayload);
+
       const payload: any = {
         model: actualModelId,
         prompt: finalPrompt,
       };
+
+      if (params?.aspectRatio) {
+        payload.ratio = params.aspectRatio;
+        const ratioMap: Record<string, string> = {
+          '1:1': '1024*1024',
+          '16:9': '1280*720',
+          '9:16': '720*1280',
+          '4:3': '1024*768',
+          '3:4': '768*1024',
+          '21:9': '1536*640',
+        };
+        if (ratioMap[params.aspectRatio]) {
+          payload.size = ratioMap[params.aspectRatio];
+        }
+      }
+
+      if (params?.negativePrompt) {
+        payload.negative_prompt = params.negativePrompt;
+      }
+      if (typeof params?.steps === 'number') {
+        payload.steps = params.steps;
+        payload.num_inference_steps = params.steps;
+      }
+      if (typeof params?.cfgScale === 'number') {
+        payload.cfg_scale = params.cfgScale;
+        payload.guidance_scale = params.cfgScale;
+      }
+      if (params?.sampler) {
+        payload.sampler = params.sampler;
+      }
+      if (typeof params?.imageGuidanceScale === 'number') {
+        payload.image_guidance_scale = params.imageGuidanceScale;
+      }
+      if (typeof params?.seed === 'number' && params.seed !== -1) {
+        payload.seed = params.seed;
+      }
 
       if (referenceImageUrls.length > 0) {
         // Official Atlas Cloud schema accepts "images"
@@ -1358,22 +1418,27 @@ export async function generateWithAtlasCloud(
         payload.reference_image_urls = referenceImageUrls;
         payload.image = referenceImageUrls[0];
 
-        // Compute aspect-ratio matched dimensions (multiples of 32 between 512 and 2048)
-        const refNode = imageNodes[0];
-        if (refNode && refNode.width && refNode.height) {
-          const ratio = refNode.width / refNode.height;
-          let targetW = 1024;
-          let targetH = 1024;
-          if (ratio > 1) {
-            targetW = 1024;
-            targetH = Math.max(512, Math.min(2048, Math.round((1024 / ratio) / 32) * 32));
-          } else if (ratio < 1) {
-            targetH = 1024;
-            targetW = Math.max(512, Math.min(2048, Math.round((1024 * ratio) / 32) * 32));
+        // Compute aspect-ratio matched dimensions (multiples of 32 between 512 and 2048) if ratio wasn't explicitly set
+        if (!payload.size) {
+          const refNode = imageNodes[0];
+          if (refNode && refNode.width && refNode.height) {
+            const ratio = refNode.width / refNode.height;
+            let targetW = 1024;
+            let targetH = 1024;
+            if (ratio > 1) {
+              targetW = 1024;
+              targetH = Math.max(512, Math.min(2048, Math.round((1024 / ratio) / 32) * 32));
+            } else if (ratio < 1) {
+              targetH = 1024;
+              targetW = Math.max(512, Math.min(2048, Math.round((1024 * ratio) / 32) * 32));
+            }
+            payload.size = `${targetW}*${targetH}`;
           }
-          payload.size = `${targetW}*${targetH}`;
         }
       }
+
+      // Merge custom raw payload for forward compatibility
+      Object.assign(payload, customRawPayload);
 
       const predRes = await fetch('https://api.atlascloud.ai/api/v1/model/generateImage', {
         method: 'POST',
@@ -1538,21 +1603,35 @@ export async function generateWithAtlasCloud(
       userContent = fullText;
     }
 
+    const customRawPayload = parseRawPayload(params?.rawPayload);
+    const messages: any[] = [];
+    if (params?.systemInstruction && typeof params.systemInstruction === 'string' && params.systemInstruction.trim()) {
+      messages.push({
+        role: 'system',
+        content: params.systemInstruction.trim(),
+      });
+    }
+    messages.push({
+      role: 'user',
+      content: userContent,
+    });
+
+    const chatBody: any = {
+      model: actualModelId,
+      messages,
+    };
+    if (typeof params?.temperature === 'number') chatBody.temperature = params.temperature;
+    if (typeof params?.topP === 'number') chatBody.top_p = params.topP;
+    if (typeof params?.maxOutputTokens === 'number') chatBody.max_tokens = params.maxOutputTokens;
+    Object.assign(chatBody, customRawPayload);
+
     const chatRes = await fetch('https://api.atlascloud.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: actualModelId,
-        messages: [
-          {
-            role: 'user',
-            content: userContent,
-          },
-        ],
-      }),
+      body: JSON.stringify(chatBody),
     });
 
     if (!chatRes.ok) {

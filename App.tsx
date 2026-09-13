@@ -49,7 +49,14 @@ import {
   isSheetsRateLimited,
   getSheetsRateLimitRemainingSeconds,
 } from './services/googleSheetsService';
-import { DEFAULT_MODEL_ID, getModelById, migrateOldModelId } from './services/modelsConfig';
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODALITY_MODELS,
+  getModelById,
+  migrateOldModelId,
+} from './services/modelsConfig';
+import { getLocale, toggleLocale, subscribeLocale, Locale } from './services/i18n';
+import type { ModalityType } from './types';
 
 import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
 import TopNavigation from './components/TopNavigation';
@@ -60,8 +67,18 @@ import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
 import AssetRescueModal from './components/AssetRescueModal';
 import { NodeInfoModal } from './components/NodeInfoModal';
+import { InspectorPanel } from './components/InspectorPanel';
+import {
+  getModelParams,
+  saveModelParams,
+  getInspectorOpenState,
+  setInspectorOpenState,
+  countModifiedParams,
+  getModelModality,
+} from './services/modelParamsService';
 import ContextMenu from './components/ContextMenu';
 import MultiSelectionBar from './components/MultiSelectionBar';
+import UnifiedSubToolbar from './components/UnifiedSubToolbar';
 import { Minimap } from './components/Minimap';
 import {
   getDefaultNodeSize,
@@ -99,6 +116,9 @@ import {
   ExternalLink,
   ShieldCheck,
   X,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 const checkOverlap = (
@@ -221,6 +241,47 @@ const App: React.FC = () => {
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [view, setView] = useState<ViewportState>({ x: 0, y: 0, zoom: 1 });
   const [selectedModelId, setSelectedModelId] = useState<string>(DEFAULT_MODEL_ID);
+  const [modelParams, setModelParams] = useState<Record<string, any>>(() => getModelParams(DEFAULT_MODEL_ID));
+  const modelParamsRef = useRef<Record<string, any>>(modelParams);
+  modelParamsRef.current = modelParams;
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(() => getInspectorOpenState());
+
+  useEffect(() => {
+    setModelParams(getModelParams(selectedModelId));
+  }, [selectedModelId]);
+
+  const handleToggleInspector = useCallback(() => {
+    setIsInspectorOpen(prev => {
+      const next = !prev;
+      setInspectorOpenState(next);
+      return next;
+    });
+  }, []);
+
+  // Localization State
+  const [locale, setLocaleState] = useState<Locale>(() => getLocale());
+  useEffect(() => {
+    return subscribeLocale(newLocale => setLocaleState(newLocale));
+  }, []);
+
+  // Multi-Modality State & Switching
+  const currentModel = useMemo(() => {
+    return getModelById(selectedModelId);
+  }, [selectedModelId]);
+
+  const activeModality = useMemo<ModalityType>(() => {
+    return getModelModality(currentModel);
+  }, [currentModel]);
+
+  const handleSelectModality = useCallback((modality: 'text' | 'image' | 'video' | 'audio') => {
+    const targetModelId = DEFAULT_MODALITY_MODELS[modality];
+    if (targetModelId) {
+      setSelectedModelId(targetModelId);
+      localStorage.setItem('ai_mix_board_last_model', targetModelId);
+      const params = getModelParams(targetModelId, getModelById(targetModelId));
+      setModelParams(params);
+    }
+  }, []);
 
   // Drag-and-drop file upload onto canvas state
   const [isDraggingFileOver, setIsDraggingFileOver] = useState(false);
@@ -2302,6 +2363,8 @@ const App: React.FC = () => {
       originalFileName: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).originalFileName : undefined,
     }));
 
+    const capturedParams = { ...modelParamsRef.current };
+
     // 4. Create and place the placeholder node immediately
     const placeholderNode: CanvasNode = {
       id: jobId,
@@ -2319,6 +2382,7 @@ const App: React.FC = () => {
       generationModelId: capturedModelId,
       generationSourceIds: capturedSelectedNodes.map(n => n.id),
       generationSourceDetails: sourceDetails,
+      generationParams: capturedParams,
       createdAt: Date.now(),
     };
 
@@ -2330,7 +2394,7 @@ const App: React.FC = () => {
     // 5. Run async generation in the background without blocking the user
     (async () => {
       try {
-        const result = await generateFromNodes(capturedSelectedNodes, capturedModelId);
+        const result = await generateFromNodes(capturedSelectedNodes, capturedModelId, capturedParams);
 
         if (result.type === 'video') {
           if (result.blob) {
@@ -2703,7 +2767,8 @@ const App: React.FC = () => {
         const defaultSize = getDefaultNodeSize();
 
         try {
-          const result = await generateFromNodes(sourceNodes, targetModelId);
+          const retryParams = (nodeToRetry as any)?.generationParams || getModelParams(targetModelId);
+          const result = await generateFromNodes(sourceNodes, targetModelId, retryParams);
 
           if (result.type === 'video') {
             if (result.blob) {
@@ -3212,9 +3277,22 @@ const App: React.FC = () => {
         }
       }
 
-      // Execute with Shift+Enter
-      if (e.key === 'Enter' && e.shiftKey) {
-        handleExecute();
+      // Toggle Inspector with Cmd+I / Ctrl+I
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
+        if (!isInputActive && !isAnyModalOpen) {
+          e.preventDefault();
+          handleToggleInspector();
+          return;
+        }
+      }
+
+      // Execute with Shift+Enter or Cmd+Enter / Ctrl+Enter
+      if (e.key === 'Enter' && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+        if (selectedNodeIds.size > 0) {
+          e.preventDefault();
+          handleExecute();
+          return;
+        }
       }
 
       // Duplicate selected with Cmd+D / Ctrl+D
@@ -3691,14 +3769,14 @@ const App: React.FC = () => {
         onOpenModelModal={() => setIsModelModalOpen(true)}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         selectedModelId={selectedModelId}
+        activeModality={activeModality}
+        onSelectModality={handleSelectModality}
+        locale={locale}
+        onToggleLocale={toggleLocale}
         user={user}
         syncStatus={syncStatus}
         lastSavedAt={lastSavedAt}
         isProjectLoading={isProjectBusy}
-        canUndo={!isCurrentBoardLocked && historyCounts.undo > 0}
-        canRedo={!isCurrentBoardLocked && historyCounts.redo > 0}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
         isSyncingAssets={isSyncingAssets}
         onSyncAssetsToDrive={handleSyncAssetsToDrive}
         unuploadedAssetCount={unuploadedAssetCount}
@@ -3707,11 +3785,21 @@ const App: React.FC = () => {
         projectPassword={projectPassword}
         onOpenPasswordModal={() => setIsPasswordModalOpen(true)}
         isCurrentBoardLocked={isCurrentBoardLocked}
+      />
+
+      {/* Unified Sub-Header Toolbar (Consolidated Canvas & Selection Bar) */}
+      <UnifiedSubToolbar
+        isLocked={isCurrentBoardLocked}
+        isLoading={isProjectBusy}
+        canUndo={!isCurrentBoardLocked && historyCounts.undo > 0}
+        canRedo={!isCurrentBoardLocked && historyCounts.redo > 0}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onAddTextNode={() => {
           if (isProjectBusy || isCurrentBoardLocked) return;
           const coords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
           addNode({
-            id: Date.now().toString(),
+            id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
             type: 'text',
             x: coords.x,
             y: coords.y,
@@ -3752,6 +3840,21 @@ const App: React.FC = () => {
         }}
         onExportBoardImage={isCurrentBoardLocked ? undefined : handleExportBoardImage}
         onDownloadAllImages={isCurrentBoardLocked ? undefined : handleDownloadAllBoardImages}
+        selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
+        onAutoArrange={handleAutoArrange}
+        onAlign={handleAlignNodes}
+        onDistribute={handleDistributeNodes}
+        onResetAspect={handleResetAspect}
+        onApplyDefaultSize={handleApplyDefaultSize}
+        onSaveAsDefaultSize={handleSaveAsDefaultSize}
+        onCut={handleCut}
+        onCopyToClipboard={handleCopy}
+        onDuplicate={handleDuplicateSelected}
+        onDeleteSelected={() => handleDeleteNodes(Array.from(selectedNodeIds))}
+        onDeselectAll={() => setSelectedNodeIds(new Set())}
+        onDownloadSelected={handleDownloadSelectedNodes}
+        onRetrySelectedErrors={handleRetrySelectedErrorNodes}
+        locale={locale}
       />
 
       {/* Infinite Canvas with Drag-and-Drop Image File Support */}
@@ -3995,13 +4098,34 @@ const App: React.FC = () => {
           onToggleLockSession={handleToggleLockSession}
           allNodes={allNodes}
           disabled={isProjectBusy}
+          locale={locale}
         />
+      </div>
+
+      {/* Floating Canvas Top Model Selector */}
+      <div className="fixed top-[98px] left-1/2 -translate-x-1/2 z-20 pointer-events-auto select-none">
+        <button
+          onClick={() => setIsModelModalOpen(true)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-gray-900/90 hover:bg-gray-850 border border-gray-700/80 hover:border-gray-600 text-gray-200 hover:text-white shadow-xl backdrop-blur-xl text-xs font-medium transition-all group active:scale-95 cursor-pointer"
+          title={currentModel.description || currentModel.name}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform shrink-0" />
+          <span className="font-semibold text-white tracking-wide truncate max-w-[160px] sm:max-w-[240px]">
+            {currentModel.name}
+          </span>
+          <span className="text-[10px] font-mono text-gray-400 px-1.5 py-0.5 rounded bg-gray-800/80 border border-gray-700/50">
+            {currentModel.provider === 'atlascloud' ? 'Atlas' : 'Gemini'}
+          </span>
+          <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-gray-200 transition-colors shrink-0" />
+        </button>
       </div>
 
       {/* Floating Bottom Right Action Bar */}
       {!isCurrentBoardLocked && (
         <div
-          className={`absolute bottom-6 right-6 z-20 flex items-center gap-3 ${
+          className={`fixed bottom-6 z-20 flex items-center gap-3 transition-all duration-300 ${
+            isInspectorOpen ? 'right-[336px] sm:right-[404px]' : 'right-6'
+          } ${
             marqueeBox ? 'pointer-events-none select-none' : ''
           }`}
           onPointerDown={e => e.stopPropagation()}
@@ -4138,28 +4262,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Redesigned Multi-Selection Bar HUD */}
-      {!isCurrentBoardLocked && (
-        <div className={marqueeBox || isSpacePressed ? 'pointer-events-none select-none' : ''}>
-          <MultiSelectionBar
-            selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
-            onAutoArrange={handleAutoArrange}
-            onAlign={handleAlignNodes}
-            onDistribute={handleDistributeNodes}
-            onResetAspect={handleResetAspect}
-            onApplyDefaultSize={handleApplyDefaultSize}
-            onSaveAsDefaultSize={handleSaveAsDefaultSize}
-            onCut={handleCut}
-            onCopyToClipboard={handleCopy}
-            onDuplicate={handleDuplicateSelected}
-            onDelete={() => handleDeleteNodes(Array.from(selectedNodeIds))}
-            onDeselectAll={() => setSelectedNodeIds(new Set())}
-            onGenerate={handleExecute}
-            onDownloadSelected={handleDownloadSelectedNodes}
-            onRetrySelectedErrors={handleRetrySelectedErrorNodes}
-          />
-        </div>
-      )}
 
       {/* Context Menu (Right Click) */}
       <ContextMenu
@@ -4233,6 +4335,8 @@ const App: React.FC = () => {
         onDownloadAllBoardImages={handleDownloadAllBoardImages}
         onRescueAssets={() => handleScanLostAssets(false)}
         onRetryNode={handleRetrySelectedErrorNodes}
+        onToggleInspector={handleToggleInspector}
+        locale={locale}
         onShowInfo={() => {
           const targetId = contextMenu.targetId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
           if (targetId) {
@@ -4261,13 +4365,13 @@ const App: React.FC = () => {
           setView(newView);
           setViewports(prev => ({ ...prev, [currentBoardId]: newView }));
         }}
+        className={`transition-all duration-300 ${isInspectorOpen ? 'right-[332px] sm:right-[396px]' : 'right-4'}`}
       />
 
-      {/* Floating Toast Notification Banner */}
+      {/* Floating Status / Toast notification */}
       {toastMessage && (
         <div
-          role="status"
-          className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-gray-900/95 backdrop-blur-xl border border-blue-500/40 text-blue-300 text-xs font-medium rounded-full shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150 pointer-events-none select-none"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-gray-900/90 backdrop-blur-xl border border-blue-500/40 text-blue-200 text-xs font-medium rounded-full shadow-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none"
         >
           <ClipboardCheck className="w-4 h-4 text-blue-400 shrink-0" />
           <span>{toastMessage}</span>
@@ -4298,6 +4402,7 @@ const App: React.FC = () => {
         isOpen={isModelModalOpen}
         onClose={() => setIsModelModalOpen(false)}
         selectedModelId={selectedModelId}
+        locale={locale}
         onSelectModel={id => {
           setSelectedModelId(id);
           setSelectedModels(prev => ({ ...prev, [currentBoardId]: id }));
@@ -4325,6 +4430,8 @@ const App: React.FC = () => {
             loadProjects();
           }
         }}
+        locale={locale}
+        onToggleLocale={toggleLocale}
       />
 
       {/* Proactive Lost Assets Detected Pill/Banner */}
@@ -4403,7 +4510,55 @@ const App: React.FC = () => {
         onSelectSources={sourceIds => {
           setSelectedNodeIds(new Set(sourceIds));
         }}
+        onApplyNodeParams={nodeParams => {
+          setModelParams(nodeParams);
+          saveModelParams(selectedModelId, nodeParams);
+          setIsInspectorOpen(true);
+          setInspectorOpenState(true);
+          showToast('已成功套用節點的生成參數至 Inspector！');
+        }}
       />
+
+      {/* Model Parameter Inspector Panel */}
+      <InspectorPanel
+        isOpen={isInspectorOpen}
+        onClose={() => {
+          setIsInspectorOpen(false);
+          setInspectorOpenState(false);
+        }}
+        selectedModelId={selectedModelId}
+        onOpenModelModal={() => setIsModelModalOpen(true)}
+        params={modelParams}
+        onParamsChange={newParams => {
+          setModelParams(newParams);
+          saveModelParams(selectedModelId, newParams);
+        }}
+        selectedNodes={currentBoardNodes.filter(n => selectedNodeIds.has(n.id))}
+        onGenerate={handleExecute}
+        onApplyNodeParams={nodeParams => {
+          setModelParams(nodeParams);
+          saveModelParams(selectedModelId, nodeParams);
+          showToast('已將節點參數成功套用至目前設定！');
+        }}
+        isGenerating={activeJobCount > 0}
+        locale={locale}
+      />
+
+      {/* Canvas Side Parameters Drawer Arrow Toggle Button */}
+      <button
+        onClick={handleToggleInspector}
+        className={`fixed top-1/2 -translate-y-1/2 z-50 flex items-center justify-center w-6 h-12 rounded-l-xl bg-gray-900/90 hover:bg-gray-800 border border-r-0 border-gray-700/80 text-gray-400 hover:text-white shadow-2xl backdrop-blur-md transition-all duration-300 active:scale-95 cursor-pointer ${
+          isInspectorOpen ? 'right-80 sm:right-96' : 'right-0'
+        }`}
+        title={isInspectorOpen ? '收合參數面板 (Inspector)' : '展開參數面板 (Inspector)'}
+        aria-label="Toggle parameter inspector"
+      >
+        {isInspectorOpen ? (
+          <ChevronRight className="w-4 h-4" />
+        ) : (
+          <ChevronLeft className="w-4 h-4" />
+        )}
+      </button>
     </div>
   );
 };

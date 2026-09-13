@@ -19,6 +19,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { BoardMetadata, CanvasNode } from '../types';
+import { t, Locale } from '../services/i18n';
 
 interface BoardTabsProps {
   boards: BoardMetadata[];
@@ -32,6 +33,7 @@ interface BoardTabsProps {
   onToggleLockSession?: () => void;
   allNodes: CanvasNode[];
   disabled?: boolean;
+  locale?: Locale;
 }
 
 const BoardTabs: React.FC<BoardTabsProps> = ({
@@ -46,6 +48,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   onToggleLockSession,
   allNodes,
   disabled = false,
+  locale = 'zh-TW',
 }) => {
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -222,10 +225,10 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                 ? 'bg-blue-600/20 text-blue-400 border-blue-500/50'
                 : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 border-transparent'
             }`}
-            title="查看所有畫布清單 / 搜尋畫布"
+            title={t('board.allBoards', locale)}
           >
             <LayoutGrid className="w-4 h-4 text-blue-400" />
-            <span className="hidden sm:inline">畫布</span>
+            <span className="hidden sm:inline">{t('board.boards', locale)}</span>
             <span className="px-1.5 py-0.2 text-[10px] bg-gray-800 text-gray-400 rounded-full font-mono">
               {boards.length}
             </span>
@@ -239,7 +242,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-bold text-gray-200">
                     <ListFilter className="w-4 h-4 text-blue-400" />
-                    <span>所有畫布清單 ({boards.length})</span>
+                    <span>{t('board.allBoards', locale)} ({boards.length})</span>
                   </div>
                   <button
                     onClick={() => {
@@ -249,7 +252,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                     className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>新增</span>
+                    <span>{t('board.newBoard', locale)}</span>
                   </button>
                 </div>
 
@@ -259,7 +262,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                     type="text"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="搜尋畫布名稱..."
+                    placeholder={t('board.searchPlaceholder', locale)}
                     className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-950/80 border border-gray-800 rounded-xl text-gray-200 focus:outline-none focus:border-blue-500"
                   />
                 </div>
@@ -268,7 +271,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
               {/* Vertical Scrollable List */}
               <div className="overflow-y-auto max-h-60 p-1 space-y-1 mt-1 scrollbar-thin">
                 {filteredBoards.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-gray-500">無相符畫布</div>
+                  <div className="text-center py-6 text-xs text-gray-500">{t('board.noMatch', locale)}</div>
                 ) : (
                   filteredBoards.map((b, idx) => {
                     const isActive = b.id === activeBoardId;
@@ -294,7 +297,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-800/80 text-gray-400 font-mono">
-                            {count} 個物件
+                            {count} {t('board.objects', locale)}
                           </span>
                           <button
                             type="button"
@@ -306,7 +309,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                             className={`p-1 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700 transition-colors opacity-0 group-hover:opacity-100 ${
                               menuState?.board.id === b.id ? 'opacity-100 bg-gray-700 text-white' : ''
                             }`}
-                            title="畫布選項與設定"
+                            title={t('board.options', locale)}
                           >
                             <MoreVertical className="w-3.5 h-3.5" />
                           </button>
@@ -327,7 +330,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
           <button
             onClick={() => handleScroll(-180)}
             className="p-1 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0"
-            title="向左滾動畫布分頁"
+            title={t('board.scrollLeft', locale)}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -389,15 +392,15 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                         ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/30 font-semibold'
                         : 'text-gray-300 hover:text-white hover:bg-gray-850 bg-gray-900/60 border border-gray-800/80'
                     }`}
-                    title={`${board.name} (雙擊可重新命名，右鍵查看選項)`}
+                    title={board.name}
                   >
                     {board.isCensored && (
                       <span
                         className="shrink-0"
                         title={
                           isCensoredUnlocked
-                            ? '此畫布已設為機敏保護 (已解鎖)'
-                            : '此畫布已設為機敏保護 (未解鎖時霧化)'
+                            ? t('board.lockUnlocked', locale)
+                            : t('board.lockLocked', locale)
                         }
                       >
                         <Lock
@@ -432,8 +435,8 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       className={`p-1 rounded-lg hover:bg-white/25 text-gray-300 hover:text-white transition-all cursor-pointer ${
                         isActive ? 'opacity-85 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
                       } ${menuState?.board.id === board.id ? 'opacity-100 bg-white/25 text-white' : ''}`}
-                      title="畫布選項與設定"
-                      aria-label="畫布選項與設定"
+                      title={t('board.options', locale)}
+                      aria-label={t('board.options', locale)}
                     >
                       <MoreVertical className="w-3.5 h-3.5" />
                     </button>
@@ -449,7 +452,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
           <button
             onClick={() => handleScroll(180)}
             className="p-1 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0"
-            title="向右滾動畫布分頁"
+            title={t('board.scrollRight', locale)}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -459,10 +462,10 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
         <button
           onClick={() => onAddBoard()}
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-blue-400 hover:text-blue-300 hover:bg-blue-600/10 border border-dashed border-blue-500/40 hover:border-blue-400 transition-all shrink-0 ml-1"
-          title="新增畫布 (Board)"
+          title={t('board.newBoardTip', locale)}
         >
           <Plus className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">新增</span>
+          <span className="hidden sm:inline">{t('board.newBoard', locale)}</span>
         </button>
 
         {/* Censored Status & Quick Lock/Unlock Shortcut Button */}
@@ -474,11 +477,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 hover:border-emerald-400'
                 : 'bg-amber-500/15 text-amber-400 border-amber-500/40 hover:bg-amber-500/25 hover:border-amber-400 animate-pulse'
             }`}
-            title={`機敏保護快捷切換 (快捷鍵 Alt + L)\n目前狀態：${
-              isCensoredUnlocked
-                ? '已解鎖 (點擊或按 Alt+L 立即鎖定)'
-                : '已鎖定霧化 (點擊或按 Alt+L 輸入密碼解鎖)'
-            }`}
+            title={`Alt + L (${isCensoredUnlocked ? t('board.lockUnlocked', locale) : t('board.lockLocked', locale)})`}
           >
             {isCensoredUnlocked ? (
               <Unlock className="w-3.5 h-3.5 text-emerald-400" />
@@ -486,7 +485,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
               <Lock className="w-3.5 h-3.5 text-amber-400" />
             )}
             <span className="hidden sm:inline">
-              {isCensoredUnlocked ? '機敏已解鎖' : '機敏已鎖定'}
+              {isCensoredUnlocked ? t('board.lockUnlocked', locale) : t('board.lockLocked', locale)}
             </span>
             <span className="text-[10px] font-mono text-gray-400/90 ml-0.5 px-1 py-0.2 bg-black/40 rounded border border-white/10">
               Alt+L
@@ -516,7 +515,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                 {menuState.board.name}
               </span>
               <span className="text-[10px] font-mono text-gray-500">
-                {getNodeCountForBoard(menuState.board.id)} 物件
+                {getNodeCountForBoard(menuState.board.id)} {t('board.objects', locale)}
               </span>
             </div>
 
@@ -524,10 +523,10 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
               <div className="px-2.5 py-2.5 text-center text-xs text-amber-300 bg-amber-500/10 rounded-xl border border-amber-500/20 my-1">
                 <div className="flex items-center justify-center gap-1.5 font-semibold">
                   <Lock className="w-3.5 h-3.5 text-amber-400" />
-                  <span>畫布鎖定中（唯讀）</span>
+                  <span>{t('board.lockedState', locale)}</span>
                 </div>
                 <div className="text-[10px] text-gray-400 mt-1 leading-relaxed">
-                  請先按 Alt+L 或點擊畫面中央輸入密碼解鎖後方可重新命名或刪除
+                  {t('board.lockedDesc', locale)}
                 </div>
               </div>
             ) : (
@@ -543,7 +542,7 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                   className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-gray-300 hover:text-white hover:bg-gray-800/80 rounded-xl text-left transition-colors cursor-pointer"
                 >
                   <Edit2 className="w-3.5 h-3.5 text-blue-400" />
-                  <span>重新命名</span>
+                  <span>{t('board.rename', locale)}</span>
                 </button>
 
                 {/* 設為機敏保護 (需密碼) / 解除機敏保護 */}
@@ -564,12 +563,12 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                     {menuState.board.isCensored ? (
                       <>
                         <Unlock className="w-3.5 h-3.5 text-amber-400" />
-                        <span>解除機敏保護</span>
+                        <span>{t('board.unprotect', locale)}</span>
                       </>
                     ) : (
                       <>
                         <Lock className="w-3.5 h-3.5 text-blue-400" />
-                        <span>設為機敏保護 (需密碼)</span>
+                        <span>{t('board.protect', locale)}</span>
                       </>
                     )}
                   </button>
@@ -583,14 +582,14 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
                       const targetBoardId = menuState.board.id;
                       const targetBoardName = menuState.board.name;
                       setMenuState(null);
-                      if (window.confirm(`確定要刪除畫布 "${targetBoardName}" 嗎？畫布上的節點將會一併移除。`)) {
+                      if (window.confirm(t('board.deleteConfirm', locale).replace('{name}', targetBoardName))) {
                         onDeleteBoard(targetBoardId);
                       }
                     }}
                     className="w-full flex items-center gap-2 px-2.5 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 rounded-xl text-left transition-colors cursor-pointer border-t border-gray-800/80 mt-1 pt-1.5"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>刪除畫布</span>
+                    <span>{t('board.delete', locale)}</span>
                   </button>
                 )}
               </>

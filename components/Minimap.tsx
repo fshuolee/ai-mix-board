@@ -10,6 +10,7 @@ export interface MinimapProps {
   onResetZoom?: () => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
+  className?: string;
 }
 
 const MAP_WIDTH = 210;
@@ -24,6 +25,7 @@ export const Minimap: React.FC<MinimapProps> = ({
   onResetZoom,
   onZoomIn,
   onZoomOut,
+  className,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
@@ -164,7 +166,9 @@ export const Minimap: React.FC<MinimapProps> = ({
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed top-16 right-4 z-20 p-2.5 bg-gray-900/90 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700/80 rounded-xl shadow-xl backdrop-blur-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 text-xs font-medium"
+        className={`fixed top-24 z-20 p-2.5 bg-gray-900/90 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700/80 rounded-xl shadow-xl backdrop-blur-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 text-xs font-medium ${
+          className || 'right-4'
+        }`}
         title="開啟畫布小地圖 (Minimap)"
       >
         <Map className="w-4 h-4 text-blue-400" />
@@ -177,7 +181,9 @@ export const Minimap: React.FC<MinimapProps> = ({
 
   return (
     <div
-      className="fixed top-16 right-4 z-20 bg-gray-950/92 border border-gray-800/90 rounded-2xl shadow-2xl backdrop-blur-xl select-none animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+      className={`fixed top-24 z-20 bg-gray-950/92 border border-gray-800/90 rounded-2xl shadow-2xl backdrop-blur-xl select-none animate-in fade-in zoom-in-95 duration-150 overflow-hidden ${
+        className || 'right-4'
+      }`}
       onPointerDown={e => e.stopPropagation()}
     >
       {/* Header Bar */}

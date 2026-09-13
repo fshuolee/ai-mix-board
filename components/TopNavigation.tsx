@@ -10,23 +10,19 @@ import {
   LogIn,
   Type,
   Image as ImageIcon,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
-  Trash2,
   Check,
   Loader2,
   AlertTriangle,
   ExternalLink,
-  Download,
   ShieldCheck,
-  Undo2,
-  Redo2,
   Lock,
+  Video,
+  Volume2,
 } from 'lucide-react';
-import { ProjectMetadata, GoogleUserProfile, SyncStatus } from '../types';
+import { ProjectMetadata, GoogleUserProfile, SyncStatus, ModalityType } from '../types';
 import { getModelById } from '../services/modelsConfig';
 import { signInWithGooglePopup } from '../services/googleAuthService';
+import { t, Locale } from '../services/i18n';
 
 interface TopNavigationProps {
   projects: ProjectMetadata[];
@@ -36,22 +32,14 @@ interface TopNavigationProps {
   onOpenModelModal: () => void;
   onOpenAuthModal: () => void;
   selectedModelId: string;
+  activeModality?: ModalityType;
+  onSelectModality?: (modality: 'text' | 'image' | 'video' | 'audio') => void;
+  locale?: Locale;
+  onToggleLocale?: () => void;
   user: GoogleUserProfile | null;
   syncStatus: SyncStatus;
   lastSavedAt?: Date | null;
   isProjectLoading?: boolean;
-  canUndo?: boolean;
-  canRedo?: boolean;
-  onUndo?: () => void;
-  onRedo?: () => void;
-  onAddTextNode: () => void;
-  onUploadImage: (file: File) => void;
-  onResetZoom: () => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onClearCanvas: () => void;
-  onExportBoardImage?: () => void;
-  onDownloadAllImages?: () => void;
   isSyncingAssets?: boolean;
   onSyncAssetsToDrive?: () => void;
   unuploadedAssetCount?: number;
@@ -70,37 +58,26 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   onOpenModelModal,
   onOpenAuthModal,
   selectedModelId,
+  activeModality = 'image',
+  onSelectModality,
+  locale = 'zh-TW',
+  onToggleLocale,
   user,
   syncStatus,
   lastSavedAt,
   isProjectLoading = false,
-  canUndo = false,
-  canRedo = false,
-  onUndo,
-  onRedo,
   isSyncingAssets = false,
   onSyncAssetsToDrive,
   unuploadedAssetCount = 0,
   onOpenRescueModal,
   rescuableAssetCount = 0,
-  onAddTextNode,
-  onUploadImage,
-  onResetZoom,
-  onZoomIn,
-  onZoomOut,
-  onClearCanvas,
-  onExportBoardImage,
-  onDownloadAllImages,
   projectPassword,
   onOpenPasswordModal,
   isCurrentBoardLocked = false,
 }) => {
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
-  const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
   const [isDirectLoggingIn, setIsDirectLoggingIn] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const downloadDropdownRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const modelInfo = getModelById(selectedModelId);
 
@@ -109,9 +86,6 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setProjectDropdownOpen(false);
-      }
-      if (downloadDropdownRef.current && !downloadDropdownRef.current.contains(e.target as Node)) {
-        setDownloadDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -170,7 +144,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                 ? 'bg-blue-950/40 border-blue-500/50 text-blue-200 cursor-wait'
                 : 'bg-gray-900/90 hover:bg-gray-800 border-gray-700/80 text-white'
             }`}
-            title={isProjectLoading ? '專案資料載入中...' : '切換或管理專案'}
+            title={isProjectLoading ? t('nav.statusLoading', locale) : t('nav.projects', locale)}
           >
             {isProjectLoading ? (
               <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
@@ -179,8 +153,8 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
             )}
             <span className="max-w-[140px] truncate font-semibold">
               {isProjectLoading
-                ? `${currentProject?.name || '專案'} (載入中)`
-                : currentProject?.name || '選擇專案'}
+                ? `${currentProject?.name || 'Project'} (${t('nav.statusLoading', locale)})`
+                : currentProject?.name || t('nav.projects', locale)}
             </span>
             <ChevronDown className={`w-3 h-3 text-gray-400 ${isProjectLoading ? 'opacity-40' : ''}`} />
           </button>
@@ -189,7 +163,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           {projectDropdownOpen && (
             <div className="absolute top-full left-0 mt-1.5 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-50 animate-fadeIn">
               <div className="p-2 border-b border-gray-800 bg-gray-950/50 flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-400">專案列表 (Google Drive)</span>
+                <span className="text-xs font-semibold text-gray-400">{t('nav.projects', locale)} (Google Drive)</span>
                 <button
                   onClick={() => {
                     setProjectDropdownOpen(false);
@@ -198,7 +172,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                   className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 font-medium"
                 >
                   <Plus className="w-3 h-3" />
-                  <span>新增專案</span>
+                  <span>{t('nav.newProject', locale)}</span>
                 </button>
               </div>
 
@@ -237,10 +211,10 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-gray-300 hover:text-white"
-                      title="開啟專案 Drive 資料夾"
+                      title={t('nav.driveFolder', locale)}
                     >
                       <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Drive 資料夾</span>
+                      <span>{t('nav.driveFolder', locale)}</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   )}
@@ -250,10 +224,10 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-gray-300 hover:text-emerald-300"
-                      title="開啟專案 Google Sheet"
+                      title={t('nav.googleSheet', locale)}
                     >
                       <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Google Sheet</span>
+                      <span>{t('nav.googleSheet', locale)}</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   )}
@@ -269,11 +243,11 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                       onOpenRescueModal();
                     }}
                     className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-700/50 text-indigo-300 text-xs font-medium transition-colors cursor-pointer"
-                    title="掃描本機 IndexedDB 快取與 Google Drive 專案資料夾，救回遺失或未呈現在畫布上的圖片"
+                    title={t('nav.rescueTip', locale)}
                   >
                     <div className="flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>救回遺失圖片資源</span>
+                      <span>{t('nav.rescueAssets', locale)}</span>
                     </div>
                     {rescuableAssetCount > 0 ? (
                       <span className="px-1.5 py-0.2 rounded-full bg-indigo-600 text-white text-[10px] font-bold">
@@ -293,14 +267,14 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                       onOpenPasswordModal();
                     }}
                     className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg bg-gray-900 hover:bg-gray-800 border border-gray-700/60 text-gray-300 hover:text-white text-xs font-medium transition-colors"
-                    title="設定或修改專案機敏保護密碼"
+                    title={t('nav.projectPassword', locale)}
                   >
                     <div className="flex items-center gap-1.5">
                       <Lock className="w-3.5 h-3.5 text-amber-400" />
-                      <span>專案保護密碼</span>
+                      <span>{t('nav.projectPassword', locale)}</span>
                     </div>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
-                      {projectPassword ? '已設定' : '未設定'}
+                      {projectPassword ? t('nav.passwordSet', locale) : t('nav.passwordNotSet', locale)}
                     </span>
                   </button>
                 </div>
@@ -316,19 +290,19 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
                     }}
                     disabled={isSyncingAssets}
                     className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-700/50 text-emerald-300 text-xs font-medium transition-colors disabled:opacity-50"
-                    title="掃描並上傳尚未同步至 Google Drive 的本機圖片"
+                    title={t('nav.syncImages', locale)}
                   >
                     {isSyncingAssets ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                        <span>圖片同步上傳中...</span>
+                        <span>{t('nav.syncingImages', locale)}</span>
                       </>
                     ) : (
                       <>
                         <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
                         <span>
-                          同步圖片至雲端硬碟
-                          {unuploadedAssetCount > 0 ? ` (${unuploadedAssetCount} 張未上傳)` : ''}
+                          {t('nav.syncImages', locale)}
+                          {unuploadedAssetCount > 0 ? ` (${t('nav.unuploadedCount', locale).replace('{count}', String(unuploadedAssetCount))})` : ''}
                         </span>
                       </>
                     )}
@@ -344,44 +318,42 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-900/60 border border-gray-800 text-xs cursor-help select-none"
           title={
             isSyncingAssets
-              ? '正在同步本機圖片至 Google Drive 專案資料夾...'
+              ? t('nav.syncingImages', locale)
               : isProjectLoading || syncStatus === 'loading'
-              ? '專案資料讀取中...'
+              ? t('nav.statusLoading', locale)
               : syncStatus === 'saving'
-              ? '正在儲存同步至 Google Sheet...'
+              ? t('nav.statusSyncing', locale)
               : syncStatus === 'saved'
-              ? `已同步至雲端 (${lastSavedAt ? lastSavedAt.toLocaleTimeString() : '就緒'})${
-                  unuploadedAssetCount > 0 ? ` • ${unuploadedAssetCount} 張圖片待上傳` : ''
-                }`
+              ? `${t('nav.statusSynced', locale)} (${lastSavedAt ? lastSavedAt.toLocaleTimeString() : 'OK'})`
               : syncStatus === 'error'
-              ? '雲端同步錯誤，請檢查帳號權限'
-              : '本機離線暫存模式'
+              ? t('nav.statusError', locale)
+              : t('nav.statusOffline', locale)
           }
         >
           {isSyncingAssets || syncStatus === 'saving' ? (
             <>
               <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
-              <span className="text-emerald-400 text-[11px] font-medium">同步中</span>
+              <span className="text-emerald-400 text-[11px] font-medium">{t('nav.statusSyncing', locale)}</span>
             </>
           ) : isProjectLoading || syncStatus === 'loading' ? (
             <>
               <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
-              <span className="text-blue-300 text-[11px]">讀取中</span>
+              <span className="text-blue-300 text-[11px]">{t('nav.statusLoading', locale)}</span>
             </>
           ) : syncStatus === 'saved' ? (
             <>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span className="text-[11px] text-gray-300">已同步</span>
+              <span className="text-[11px] text-gray-300">{t('nav.statusSynced', locale)}</span>
             </>
           ) : syncStatus === 'error' ? (
             <>
               <AlertTriangle className="w-3 h-3 text-red-400" />
-              <span className="text-red-300 text-[11px]">錯誤</span>
+              <span className="text-red-300 text-[11px]">{t('nav.statusError', locale)}</span>
             </>
           ) : (
             <>
               <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
-              <span className="text-gray-400 text-[11px]">離線</span>
+              <span className="text-gray-400 text-[11px]">{t('nav.statusOffline', locale)}</span>
             </>
           )}
         </div>
@@ -391,306 +363,120 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
           <button
             onClick={onOpenRescueModal}
             className="hidden md:flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-500/60 text-indigo-300 text-[11px] hover:bg-indigo-900 transition-colors shadow-sm cursor-pointer"
-            title="點擊檢視並救回遺失的圖片資源"
+            title={t('nav.rescueTip', locale)}
           >
             <ShieldCheck className="w-3 h-3 text-indigo-400" />
-            <span>救回 {rescuableAssetCount} 圖</span>
+            <span>{t('nav.rescueCount', locale).replace('{count}', String(rescuableAssetCount))}</span>
           </button>
         )}
       </div>
 
-      {/* Center Section: Compact Single-Line Model Selector (Rock-solid Centered) */}
-      <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-auto">
-        <button
-          onClick={onOpenModelModal}
-          disabled={isProjectLoading}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border shadow-sm transition-all group ${
-            isProjectLoading
-              ? 'opacity-60 cursor-not-allowed bg-gray-900/90 border-gray-800 text-gray-400'
-              : 'bg-gray-900/90 hover:bg-gray-850 border-gray-700/80 hover:border-gray-600 text-white'
-          }`}
-          title={`目前模型：${modelInfo.name} (${modelInfo.tag}) · 點擊切換`}
-        >
-          <Sparkles className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
-          <span className="text-xs font-semibold text-white max-w-[180px] truncate">
-            {modelInfo.name}
-          </span>
-          {modelInfo.badge && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-amber-500/15 text-amber-300 font-medium border border-amber-500/25">
-              {modelInfo.badge}
-            </span>
-          )}
-          <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-gray-200 transition-colors" />
-        </button>
-      </div>
-
-      {/* Right Section: Canvas Controls & Account */}
-      <div className="flex items-center gap-2">
-        {/* Canvas Toolbar Capsule */}
-        <div className="flex items-center gap-0.5 bg-gray-900/90 border border-gray-800 rounded-xl p-1 shadow-sm">
-          {/* Read-Only State Indicator Pill */}
-          {isCurrentBoardLocked && (
-            <div
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold select-none mr-0.5 animate-fadeIn"
-              title="此畫布已設為機敏保護並處於唯讀狀態，請先解鎖以進行編輯"
-            >
-              <Lock className="w-3.5 h-3.5 text-amber-400" />
-              <span>唯讀狀態</span>
-            </div>
-          )}
-
+      {/* Center Section: Multi-Modality Switcher & Inspector Trigger */}
+      <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 pointer-events-auto">
+        <div className="flex items-center p-1 bg-gray-900/90 backdrop-blur-md border border-gray-800 rounded-2xl shadow-sm">
+          {/* 1. Text */}
           <button
-            onClick={isCurrentBoardLocked ? undefined : onAddTextNode}
-            disabled={isProjectLoading || isCurrentBoardLocked}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isProjectLoading || isCurrentBoardLocked
-                ? 'opacity-30 cursor-not-allowed text-gray-500'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            onClick={() => onSelectModality?.('text')}
+            disabled={isProjectLoading}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              activeModality === 'text'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
             }`}
-            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '新增文字節點 (雙擊畫布亦可)'}
+            title={t('modality.text', locale)}
           >
-            <Type className="w-4 h-4 text-blue-400" />
+            <Type className="w-3.5 h-3.5" />
+            <span>{t('modality.text', locale)}</span>
           </button>
 
+          {/* 2. Image */}
           <button
-            onClick={() => !isProjectLoading && !isCurrentBoardLocked && fileInputRef.current?.click()}
-            disabled={isProjectLoading || isCurrentBoardLocked}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isProjectLoading || isCurrentBoardLocked
-                ? 'opacity-30 cursor-not-allowed text-gray-500'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            onClick={() => onSelectModality?.('image')}
+            disabled={isProjectLoading}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              activeModality === 'image'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
             }`}
-            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '上傳圖片 (Ctrl+V 貼上亦可)'}
+            title={t('modality.image', locale)}
           >
-            <ImageIcon className="w-4 h-4 text-purple-400" />
+            <ImageIcon className="w-3.5 h-3.5" />
+            <span>{t('modality.image', locale)}</span>
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            disabled={isCurrentBoardLocked}
-            className="hidden"
-            onChange={handleFileChange}
-          />
 
-          <div className="w-px h-4 bg-gray-800 mx-0.5" />
-
-          {/* Undo / Redo controls */}
+          {/* 3. Video */}
           <button
-            onClick={isCurrentBoardLocked ? undefined : onUndo}
-            disabled={!canUndo || isProjectLoading || isCurrentBoardLocked}
-            className={`p-1.5 rounded-lg transition-colors ${
-              !canUndo || isProjectLoading || isCurrentBoardLocked
-                ? 'opacity-30 cursor-not-allowed text-gray-500'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            onClick={() => onSelectModality?.('video')}
+            disabled={isProjectLoading}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              activeModality === 'video'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
             }`}
-            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '復原 (Cmd+Z)'}
+            title={t('modality.video', locale)}
           >
-            <Undo2 className="w-3.5 h-3.5" />
+            <Video className="w-3.5 h-3.5" />
+            <span>{t('modality.video', locale)}</span>
           </button>
+
+          {/* 4. Audio */}
           <button
-            onClick={isCurrentBoardLocked ? undefined : onRedo}
-            disabled={!canRedo || isProjectLoading || isCurrentBoardLocked}
-            className={`p-1.5 rounded-lg transition-colors ${
-              !canRedo || isProjectLoading || isCurrentBoardLocked
-                ? 'opacity-30 cursor-not-allowed text-gray-500'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            onClick={() => onSelectModality?.('audio')}
+            disabled={isProjectLoading}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              activeModality === 'audio'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
             }`}
-            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '重做 (Cmd+Shift+Z)'}
+            title={t('modality.audio', locale)}
           >
-            <Redo2 className="w-3.5 h-3.5" />
-          </button>
-
-          <div className="w-px h-4 bg-gray-800 mx-0.5" />
-
-          {/* Zoom controls */}
-          <button
-            onClick={onZoomOut}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            title="縮小"
-          >
-            <ZoomOut className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={onResetZoom}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            title="最適視角 / 符合畫面 (快速鍵 F)"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={onZoomIn}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            title="放大"
-          >
-            <ZoomIn className="w-3.5 h-3.5" />
-          </button>
-
-          <div className="w-px h-4 bg-gray-800 mx-0.5" />
-
-          {/* Export / Download Menu */}
-          {!isCurrentBoardLocked && (onExportBoardImage || onDownloadAllImages) && (
-            <div className="relative" ref={downloadDropdownRef}>
-              <button
-                onClick={() => !isProjectLoading && setDownloadDropdownOpen(prev => !prev)}
-                disabled={isProjectLoading}
-                className={`flex items-center gap-0.5 p-1.5 rounded-lg transition-colors ${
-                  isProjectLoading
-                    ? 'opacity-40 cursor-not-allowed text-gray-500'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                }`}
-                title="畫布下載與匯出"
-              >
-                <Download className="w-3.5 h-3.5 text-cyan-400" />
-                <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${downloadDropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {downloadDropdownOpen && (
-                <div className="absolute top-full right-0 mt-1.5 w-52 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2.5 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-800 mb-1">
-                    匯出與下載
-                  </div>
-
-                  {onExportBoardImage && (
-                    <button
-                      onClick={() => {
-                        setDownloadDropdownOpen(false);
-                        onExportBoardImage();
-                      }}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left hover:bg-cyan-600/20 text-gray-200 hover:text-cyan-300 transition-colors flex items-center gap-2.5 group"
-                    >
-                      <Download className="w-4 h-4 text-cyan-400 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="font-medium text-xs text-white group-hover:text-cyan-300">
-                          匯出畫布 (PNG)
-                        </div>
-                        <div className="text-[10px] text-gray-400 truncate">
-                          整幅畫布拼接輸出
-                        </div>
-                      </div>
-                    </button>
-                  )}
-
-                  {onDownloadAllImages && (
-                    <button
-                      onClick={() => {
-                        setDownloadDropdownOpen(false);
-                        onDownloadAllImages();
-                      }}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left hover:bg-emerald-600/20 text-gray-200 hover:text-emerald-300 transition-colors flex items-center gap-2.5 group mt-0.5"
-                    >
-                      <ImageIcon className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="font-medium text-xs text-white group-hover:text-emerald-300">
-                          下載所有圖片
-                        </div>
-                        <div className="text-[10px] text-gray-400 truncate">
-                          打包下載原始圖檔
-                        </div>
-                      </div>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          <button
-            onClick={isCurrentBoardLocked ? undefined : onClearCanvas}
-            disabled={isProjectLoading || isCurrentBoardLocked}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isProjectLoading || isCurrentBoardLocked
-                ? 'opacity-30 cursor-not-allowed text-gray-500'
-                : 'text-gray-400 hover:text-red-400 hover:bg-gray-800'
-            }`}
-            title={isCurrentBoardLocked ? '機敏畫布鎖定中（唯讀）' : '清空畫布'}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Volume2 className="w-3.5 h-3.5" />
+            <span>{t('modality.audio', locale)}</span>
           </button>
         </div>
+      </div>
 
-        {/* User Account / Settings Button */}
+      {/* Right Section: User Avatar & Settings Trigger (Rightmost) */}
+      <div className="flex items-center gap-2">
         {user ? (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={user.isExpired ? () => handleDirectGoogleLogin(user.email) : onOpenAuthModal}
-              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all shadow-sm ${
-                user.isExpired
-                  ? 'border-amber-500/50 bg-amber-950/40 text-amber-200 hover:border-amber-400 hover:bg-amber-900/40'
-                  : 'border-emerald-500/40 bg-gray-900/90 text-white hover:border-emerald-400'
-              }`}
-              title={user.isExpired ? 'Google 憑證已過期，點擊立即重新連線' : 'Google 帳號與 API 金鑰設定'}
-            >
-              <div className="relative flex items-center justify-center">
-                {user.picture ? (
-                  <img
-                    src={user.picture}
-                    alt={user.name}
-                    className={`w-5 h-5 rounded-full border ${user.isExpired ? 'border-amber-400' : 'border-emerald-400'}`}
-                  />
-                ) : (
-                  <div
-                    className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] text-white ${
-                      user.isExpired ? 'bg-amber-600' : 'bg-emerald-600'
-                    }`}
-                  >
-                    {user.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
-                {user.isExpired && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-gray-950 animate-pulse" />
-                )}
-              </div>
-              <span className="hidden sm:inline text-xs font-medium max-w-[100px] truncate">
-                {user.name}
-              </span>
-              {user.isExpired ? (
-                <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
-                  {isDirectLoggingIn && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                  <span>重新連線</span>
-                </span>
-              ) : (
-                <Settings className="w-3.5 h-3.5 text-gray-400" />
-              )}
-            </button>
-            {user.isExpired && (
-              <button
-                onClick={onOpenAuthModal}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors border border-gray-800"
-                title="帳號與 API 設定"
+          <button
+            onClick={user.isExpired ? () => handleDirectGoogleLogin(user.email) : onOpenAuthModal}
+            className={`relative p-0.5 rounded-full border transition-all shadow-sm active:scale-95 cursor-pointer ${
+              user.isExpired
+                ? 'border-amber-500/80 bg-amber-950/40 hover:border-amber-400 ring-2 ring-amber-500/30'
+                : 'border-emerald-500/60 bg-gray-900/90 hover:border-emerald-400 ring-1 ring-emerald-500/20'
+            }`}
+            title={user.isExpired ? `${user.name} (${t('nav.reconnect', locale)})` : `${user.name} (${t('nav.settings', locale)})`}
+            aria-label="User profile and settings"
+          >
+            {user.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="w-7 h-7 rounded-full object-cover"
+              />
+            ) : (
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs text-white ${
+                  user.isExpired ? 'bg-amber-600' : 'bg-emerald-600'
+                }`}
               >
-                <Settings className="w-3.5 h-3.5" />
-              </button>
+                {user.name.charAt(0).toUpperCase()}
+              </div>
             )}
-          </div>
+            {user.isExpired && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-gray-950 animate-pulse" />
+            )}
+          </button>
         ) : (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => handleDirectGoogleLogin()}
-              disabled={isDirectLoggingIn}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white border border-blue-500 shadow-sm transition-all text-xs font-semibold"
-              title="一鍵登入 Google (授權 Google Drive & Sheets)"
-            >
-              {isDirectLoggingIn ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>登入中...</span>
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>登入 Google</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={onOpenAuthModal}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors border border-gray-800"
-              title="進階帳號與 API 設定"
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <button
+            onClick={onOpenAuthModal}
+            className="p-1.5 rounded-xl border border-gray-800 bg-gray-900/90 hover:bg-gray-800 text-gray-300 hover:text-white transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center"
+            title={t('nav.settings', locale)}
+            aria-label="Settings and Google Login"
+          >
+            <Settings className="w-4 h-4 text-gray-400 hover:text-gray-200" />
+          </button>
         )}
       </div>
     </header>
@@ -698,3 +484,4 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
 };
 
 export default TopNavigation;
+

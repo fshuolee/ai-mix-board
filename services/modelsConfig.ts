@@ -229,8 +229,35 @@ const DEFAULT_MODELS: ModelInfo[] = [
       isRecommended: false,
     },
   },
+  {
+    id: 'gemini-2.5-flash-audio',
+    name: 'Gemini 2.5 Flash Audio (TTS / 語音合成)',
+    category: 'recommended',
+    description: 'Google 語音合成與多模態音訊生成模型，支援自然口語對話與文字轉語音。',
+    badge: '語音音訊',
+    tag: 'TTS 語音',
+    inputTokenLimit: 1048576,
+    outputTokenLimit: 65536,
+    version: '2.5',
+    supportedGenerationMethods: ['generateContent'],
+    capabilities: {
+      supportsImageOutput: false,
+      supportsImageInput: true,
+      supportsText: true,
+      isFast: true,
+      isPro: false,
+      isRecommended: true,
+    },
+  },
   ...DEFAULT_ATLAS_MODELS,
 ];
+
+export const DEFAULT_MODALITY_MODELS: Record<'text' | 'image' | 'video' | 'audio', string> = {
+  text: 'gemini-3.8-flash',
+  image: 'gemini-3.1-flash-image',
+  video: 'minimax/h3-fast/image-to-video',
+  audio: 'gemini-2.5-flash-audio',
+};
 
 type ModelsListener = (models: ModelInfo[]) => void;
 const listeners: Set<ModelsListener> = new Set();

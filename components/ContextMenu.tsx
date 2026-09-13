@@ -29,9 +29,11 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  Sliders,
 } from 'lucide-react';
 import { CanvasNode } from '../types';
 import { getDefaultNodeSize } from '../services/nodeSizingService';
+import { Locale, t } from '../services/i18n';
 
 export interface ContextMenuProps {
   isOpen: boolean;
@@ -68,11 +70,14 @@ export interface ContextMenuProps {
   onRescueAssets?: () => void;
   onRetryNode?: () => void;
   onShowInfo?: () => void;
+  onToggleInspector?: () => void;
+  locale?: Locale;
 }
 
 const ContextMenu: React.FC<ContextMenuProps> = ({
   isOpen,
   position,
+  locale,
   targetType,
   selectedNodes,
   onClose,
@@ -105,6 +110,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onRescueAssets,
   onRetryNode,
   onShowInfo,
+  onToggleInspector,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const defaultSize = getDefaultNodeSize();
@@ -156,14 +162,14 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
         <>
           {/* Header indicator */}
           <div className="px-3 py-1.5 border-b border-gray-800/80 flex items-center justify-between text-[11px] text-gray-400 font-medium">
-            <span>{count > 1 ? `${count} 個物件` : (selectedNodes[0]?.type === 'image' ? '圖片物件' : '文字物件')}</span>
-            <span className="text-[10px] text-gray-500 font-mono">選單</span>
+            <span>{count > 1 ? `${count} ${t('selection.objects', locale)}` : (selectedNodes[0]?.type === 'image' ? t('context.imageNode', locale) : t('context.textNode', locale))}</span>
+            <span className="text-[10px] text-gray-500 font-mono">{t('context.menu', locale)}</span>
           </div>
 
           {/* Alignment & Arrangement */}
           <div className="py-1">
             <div className="px-2.5 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-              排版
+              {t('context.layout', locale)}
             </div>
             <button
               onClick={() => {
@@ -174,7 +180,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <LayoutGrid className="w-4 h-4 text-blue-400" />
-                <span>網格排列</span>
+                <span>{t('selection.grid', locale)}</span>
               </div>
               <span className="text-[10px] text-gray-500 font-mono">Alt+G</span>
             </button>
@@ -188,10 +194,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                       onClose();
                     }}
                     className="flex-1 px-2 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800 text-[11px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                    title="向右水平排列一列"
+                    title={t('selection.row', locale)}
                   >
                     <AlignHorizontalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-                    <span>水平</span>
+                    <span>{t('selection.row', locale)}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -199,16 +205,16 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                       onClose();
                     }}
                     className="flex-1 px-2 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800 text-[11px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                    title="向下垂直排列一行"
+                    title={t('selection.column', locale)}
                   >
                     <AlignVerticalDistributeCenter className="w-3.5 h-3.5 text-blue-400" />
-                    <span>垂直</span>
+                    <span>{t('selection.column', locale)}</span>
                   </button>
                 </div>
 
                 {onAlign && (
                   <div className="pt-1 border-t border-gray-800/60">
-                    <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">對齊</div>
+                    <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">{t('selection.align', locale)}</div>
                     <div className="grid grid-cols-3 gap-1 px-1">
                       <button
                         onClick={() => {
@@ -216,10 +222,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                        title="靠左對齊"
+                        title={t('selection.alignLeft', locale)}
                       >
                         <AlignLeft className="w-3 h-3 text-blue-400" />
-                        <span>靠左</span>
+                        <span>{t('selection.alignLeft', locale)}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -227,10 +233,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                        title="水平置中"
+                        title={t('selection.alignCenter', locale)}
                       >
                         <AlignCenter className="w-3 h-3 text-blue-400" />
-                        <span>置中</span>
+                        <span>{t('selection.alignCenter', locale)}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -238,10 +244,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                        title="靠右對齊"
+                        title={t('selection.alignRight', locale)}
                       >
                         <AlignRight className="w-3 h-3 text-blue-400" />
-                        <span>靠右</span>
+                        <span>{t('selection.alignRight', locale)}</span>
                       </button>
                     </div>
                     <div className="grid grid-cols-3 gap-1 px-1 pt-1">
@@ -251,9 +257,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center transition-colors"
-                        title="靠頂對齊"
+                        title={t('selection.alignTop', locale)}
                       >
-                        <span>靠頂</span>
+                        <span>{t('selection.alignTop', locale)}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -261,9 +267,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center transition-colors"
-                        title="垂直置中"
+                        title={t('selection.alignMiddle', locale)}
                       >
-                        <span>垂直中</span>
+                        <span>{t('selection.alignMiddle', locale)}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -271,9 +277,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center transition-colors"
-                        title="靠底對齊"
+                        title={t('selection.alignBottom', locale)}
                       >
-                        <span>靠底</span>
+                        <span>{t('selection.alignBottom', locale)}</span>
                       </button>
                     </div>
                   </div>
@@ -281,7 +287,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
 
                 {onDistribute && count > 2 && (
                   <div className="pt-1 border-t border-gray-800/60">
-                    <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">等距分佈</div>
+                    <div className="px-1 pb-1 text-[10px] text-gray-400 font-medium">{t('selection.distribute', locale)}</div>
                     <div className="flex items-center gap-1 px-1">
                       <button
                         onClick={() => {
@@ -289,10 +295,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="flex-1 px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                        title="水平等距分佈"
+                        title={t('selection.distributeH', locale)}
                       >
                         <AlignHorizontalDistributeCenter className="w-3 h-3 text-blue-400" />
-                        <span>水平等距</span>
+                        <span>{t('selection.distributeH', locale)}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -300,10 +306,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                           onClose();
                         }}
                         className="flex-1 px-1.5 py-1 rounded bg-gray-800/60 hover:bg-gray-800 text-[10px] text-gray-300 hover:text-white flex items-center justify-center gap-1 transition-colors"
-                        title="垂直等距分佈"
+                        title={t('selection.distributeV', locale)}
                       >
                         <AlignVerticalDistributeCenter className="w-3 h-3 text-blue-400" />
-                        <span>垂直等距</span>
+                        <span>{t('selection.distributeV', locale)}</span>
                       </button>
                     </div>
                   </div>
@@ -317,7 +323,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
           {/* Size & Aspect Ratio */}
           <div className="py-1">
             <div className="px-2.5 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-              尺寸
+              {t('context.dimensions', locale)}
             </div>
 
             {hasImageSelected && (
@@ -330,7 +336,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Maximize2 className="w-4 h-4 text-emerald-400" />
-                  <span>原圖比例</span>
+                  <span>{t('selection.resetAspect', locale)}</span>
                 </div>
                 <span className="text-[10px] text-emerald-400/80 font-mono">Aspect</span>
               </button>
@@ -345,7 +351,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Ruler className="w-4 h-4 text-purple-400" />
-                <span>套用預設尺寸</span>
+                <span>{t('selection.applyOptimalSize', locale)}</span>
               </div>
               <span className="text-[10px] text-gray-400 font-mono">{defaultSize.width}×{defaultSize.height}</span>
             </button>
@@ -360,7 +366,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Bookmark className="w-4 h-4 text-amber-400" />
-                  <span>設為預設尺寸</span>
+                  <span>{t('selection.setAsDefaultSize', locale)}</span>
                 </div>
                 <span className="text-[10px] text-amber-400 font-mono">
                   {Math.round(selectedNodes[0].width)}×{Math.round(selectedNodes[0].height)}
@@ -382,7 +388,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <ArrowUp className="w-4 h-4 text-gray-400" />
-                <span>移至頂層</span>
+                <span>{t('context.bringToFront', locale)}</span>
               </div>
             </button>
             <button
@@ -394,7 +400,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <ArrowDown className="w-4 h-4 text-gray-400" />
-                <span>移至底層</span>
+                <span>{t('context.sendToBack', locale)}</span>
               </div>
             </button>
           </div>
@@ -416,9 +422,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                   <span>
                     {count === 1
                       ? selectedNodes[0]?.type === 'image'
-                        ? '下載圖片'
-                        : '下載文字 (.txt)'
-                      : `下載所選 (${count})`}
+                        ? t('context.downloadImage', locale)
+                        : t('context.downloadText', locale)
+                      : `${t('selection.download', locale)} (${count})`}
                   </span>
                 </div>
                 <span className="text-[10px] text-emerald-400/80 font-mono">Download</span>
@@ -435,9 +441,25 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Info className="w-4 h-4 text-blue-400" />
-                  <span>檢視詳細資訊</span>
+                  <span>{t('context.info', locale)}</span>
                 </div>
                 <span className="text-[10px] text-gray-400 font-mono">Info</span>
+              </button>
+            )}
+
+            {onToggleInspector && (
+              <button
+                onClick={() => {
+                  onToggleInspector();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-purple-600/20 hover:text-purple-300 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-purple-400" />
+                  <span>{t('context.inspector', locale)}</span>
+                </div>
+                <span className="text-[10px] text-purple-400/80 font-mono">⌘I</span>
               </button>
             )}
 
@@ -451,7 +473,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Scissors className="w-4 h-4 text-blue-400" />
-                  <span>剪下物件</span>
+                  <span>{t('selection.cut', locale)}</span>
                 </div>
                 <span className="text-[10px] text-gray-400 font-mono">Cmd+X</span>
               </button>
@@ -469,9 +491,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                 <span>
                   {count === 1
                     ? selectedNodes[0]?.type === 'image'
-                      ? '複製圖片'
-                      : '複製文字'
-                    : '複製物件'}
+                      ? t('context.copyImage', locale)
+                      : t('context.copyText', locale)
+                    : t('context.copyObjects', locale)}
                 </span>
               </div>
               <span className="text-[10px] text-gray-400 font-mono">Ctrl+C</span>
@@ -486,7 +508,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Copy className="w-4 h-4 text-gray-400" />
-                <span>製作複本</span>
+                <span>{t('selection.duplicate', locale)}</span>
               </div>
               <span className="text-[10px] text-gray-500 font-mono">Ctrl+D</span>
             </button>
@@ -500,7 +522,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-400" />
-                <span>Gemini 生成</span>
+                <span>{t('context.generate', locale)}</span>
               </div>
               <span className="text-[10px] text-amber-400 font-mono">Shift+Enter</span>
             </button>
@@ -515,10 +537,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <RotateCw className="w-4 h-4 text-blue-400" />
-                  <span>重試失敗節點</span>
+                  <span>{t('context.retryFailed', locale)}</span>
                 </div>
                 <span className="text-[10px] text-blue-400 font-mono">
-                  {selectedNodes.filter(n => n.status === 'error').length} 個失敗
+                  {selectedNodes.filter(n => n.status === 'error').length}
                 </span>
               </button>
             )}
@@ -532,7 +554,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Trash2 className="w-4 h-4" />
-                <span>刪除</span>
+                <span>{t('selection.delete', locale)}</span>
               </div>
               <span className="text-[10px] text-gray-500 font-mono">Delete</span>
             </button>
@@ -542,7 +564,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
         <>
           {/* Canvas context menu */}
           <div className="px-3 py-1.5 border-b border-gray-800/80 flex items-center justify-between text-[11px] text-gray-400 font-medium">
-            <span>畫布</span>
+            <span>{t('context.canvas', locale)}</span>
             <span className="text-[10px] text-gray-500 font-mono">AI Mix</span>
           </div>
 
@@ -562,7 +584,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Undo2 className="w-4 h-4 text-blue-400" />
-                  <span>復原</span>
+                  <span>{t('context.undo', locale)}</span>
                 </div>
                 <span className="text-[10px] text-gray-500 font-mono">⌘Z</span>
               </button>
@@ -583,7 +605,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Redo2 className="w-4 h-4 text-blue-400" />
-                  <span>重做</span>
+                  <span>{t('context.redo', locale)}</span>
                 </div>
                 <span className="text-[10px] text-gray-500 font-mono">⌘⇧Z</span>
               </button>
@@ -599,7 +621,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Clipboard className="w-4 h-4 text-blue-400" />
-                  <span>貼上</span>
+                  <span>{t('context.paste', locale)}</span>
                 </div>
                 <span className="text-[10px] text-gray-400 font-mono">Ctrl+V</span>
               </button>
@@ -614,9 +636,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Type className="w-4 h-4 text-blue-400" />
-                <span>新增文字</span>
+                <span>{t('context.addText', locale)}</span>
               </div>
-              <span className="text-[10px] text-gray-500 font-mono">雙擊畫布</span>
+              <span className="text-[10px] text-gray-500 font-mono">{t('context.doubleClickHint', locale)}</span>
             </button>
 
             <button
@@ -628,9 +650,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <ImageIcon className="w-4 h-4 text-purple-400" />
-                <span>上傳圖片</span>
+                <span>{t('context.uploadImage', locale)}</span>
               </div>
-              <span className="text-[10px] text-gray-500 font-mono">拖放亦可</span>
+              <span className="text-[10px] text-gray-500 font-mono">{t('context.dragDropHint', locale)}</span>
             </button>
           </div>
 
@@ -646,7 +668,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-gray-400" />
-                <span>全選物件</span>
+                <span>{t('context.selectAll', locale)}</span>
               </div>
               <span className="text-[10px] text-gray-500 font-mono">Ctrl+A</span>
             </button>
@@ -660,10 +682,26 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Focus className="w-4 h-4 text-cyan-400" />
-                <span>最適視角</span>
+                <span>{t('context.fitView', locale)}</span>
               </div>
               <span className="text-[10px] text-gray-500 font-mono">Shift+1</span>
             </button>
+
+            {onToggleInspector && (
+              <button
+                onClick={() => {
+                  onToggleInspector();
+                  onClose();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-purple-600/20 hover:text-purple-300 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-purple-400" />
+                  <span>{t('context.inspector', locale)}</span>
+                </div>
+                <span className="text-[10px] text-purple-400/80 font-mono">⌘I</span>
+              </button>
+            )}
           </div>
 
           <div className="h-px bg-gray-800/80 my-1" />
@@ -680,7 +718,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Download className="w-4 h-4 text-cyan-400" />
-                  <span>匯出畫布 (PNG)</span>
+                  <span>{t('context.exportBoard', locale)}</span>
                 </div>
                 <span className="text-[10px] text-cyan-400/80 font-mono">Export</span>
               </button>
@@ -696,7 +734,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <ImageIcon className="w-4 h-4 text-cyan-400" />
-                  <span>下載所有圖片</span>
+                  <span>{t('context.downloadAllImages', locale)}</span>
                 </div>
               </button>
             )}
@@ -715,7 +753,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-indigo-400" />
-                  <span>救回遺失圖片資源</span>
+                  <span>{t('context.rescueAssets', locale)}</span>
                 </div>
               </button>
             )}
@@ -729,7 +767,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Eraser className="w-4 h-4" />
-                <span>清空畫布</span>
+                <span>{t('context.clearCanvas', locale)}</span>
               </div>
             </button>
           </div>

@@ -21,6 +21,7 @@ interface NodeInfoModalProps {
   onClose: () => void;
   onRetryNode?: (nodeId: string) => void;
   onSelectSources?: (sourceIds: string[]) => void;
+  onApplyNodeParams?: (params: Record<string, any>) => void;
 }
 
 export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
@@ -301,6 +302,37 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
                       來源 ID: {node.generationSourceIds.join(', ')}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Generation Parameters Used */}
+              {node.generationParams && Object.keys(node.generationParams).length > 0 && (
+                <div className="space-y-1.5 pt-1 border-t border-gray-800/80">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-gray-400 flex items-center gap-1">
+                      <Sliders className="w-3 h-3 text-purple-400" />
+                      <span>使用之生成參數 ({Object.keys(node.generationParams).length} 項)</span>
+                    </span>
+                    {onApplyNodeParams && (
+                      <button
+                        onClick={() => {
+                          onApplyNodeParams(node.generationParams!);
+                          onClose();
+                        }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300 font-medium hover:underline"
+                      >
+                        套用至 Inspector
+                      </button>
+                    )}
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-gray-900/80 border border-gray-800 text-[11px] font-mono max-h-32 overflow-y-auto space-y-1">
+                    {Object.entries(node.generationParams).map(([k, v]) => (
+                      <div key={k} className="flex justify-between items-center text-gray-300">
+                        <span className="text-gray-400">{k}:</span>
+                        <span className="text-purple-300">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

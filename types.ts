@@ -25,6 +25,7 @@ export interface BaseNode {
   generationModelId?: string;
   generationSourceIds?: string[];
   generationSourceDetails?: SourceDetail[];
+  generationParams?: Record<string, any>;
 }
 
 export interface TextNode extends BaseNode {
@@ -151,4 +152,59 @@ export interface ModelInfo {
   supportedGenerationMethods?: string[];
   version?: string;
   thinking?: boolean;
+}
+
+export type ParamFieldType =
+  | 'slider'
+  | 'number'
+  | 'text'
+  | 'textarea'
+  | 'select'
+  | 'aspect_ratio'
+  | 'segmented'
+  | 'boolean'
+  | 'seed'
+  | 'json';
+
+export interface ParamOption {
+  label: string;
+  value: any;
+  description?: string;
+  badge?: string;
+  icon?: string;
+}
+
+export type ModalityType = 'text' | 'image' | 'video' | 'audio' | 'model';
+
+export interface ModelParamField {
+  id: string;
+  label: string;
+  description: string;
+  type: ParamFieldType;
+  defaultValue: any;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  placeholder?: string;
+  options?: ParamOption[];
+  group: 'basic' | 'dimensions' | 'sampling' | 'creative' | 'video' | 'audio' | 'advanced';
+  dependsOn?: (params: Record<string, any>, model: ModelInfo) => boolean;
+}
+
+export interface ModelParamGroup {
+  id: 'basic' | 'dimensions' | 'sampling' | 'creative' | 'video' | 'audio' | 'advanced';
+  title: string;
+  icon: string;
+  description?: string;
+  defaultExpanded?: boolean;
+}
+
+export interface ModelParamPreset {
+  id: string;
+  name: string;
+  description: string;
+  badge?: string;
+  modality: 'image' | 'video' | 'text' | 'audio' | 'all';
+  params: Record<string, any>;
 }

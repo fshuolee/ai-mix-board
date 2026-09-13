@@ -22,12 +22,14 @@ import {
   fetchModelsFromApi,
 } from '../services/modelsConfig';
 import { ModelInfo } from '../types';
+import { Locale, t } from '../services/i18n';
 
 interface ModelSelectorModalProps {
   isOpen: boolean;
   onClose: () => void;
   selectedModelId: string;
   onSelectModel: (modelId: string) => void;
+  locale?: Locale;
 }
 
 const CategoryIcon: React.FC<{ categoryId: string; className?: string }> = ({
@@ -69,6 +71,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
   onClose,
   selectedModelId,
   onSelectModel,
+  locale,
 }) => {
   const [activeTab, setActiveTab] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -102,10 +105,10 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
     setSyncMessage(null);
     try {
       const updated = await fetchModelsFromApi();
-      setSyncMessage(`已成功同步 ${updated.length} 個 API 模型！`);
+      setSyncMessage(locale === 'en' ? `Successfully synced ${updated.length} API models!` : `已成功同步 ${updated.length} 個 API 模型！`);
       setTimeout(() => setSyncMessage(null), 3000);
     } catch (err: any) {
-      setSyncMessage('同步失敗，請檢查 API Key');
+      setSyncMessage(locale === 'en' ? 'Sync failed. Please check your API key.' : '同步失敗，請檢查 API Key');
       setTimeout(() => setSyncMessage(null), 3000);
     } finally {
       setIsSyncing(false);
@@ -180,13 +183,13 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
             </div>
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                選擇 AI 模型
+                {t('model.title', locale)}
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  動態 API 資訊 ({models.length} 個模型)
+                  {t('model.dynamicInfo', locale).replace('{count}', String(models.length))}
                 </span>
               </h2>
               <p className="text-xs text-gray-400">
-                以 Google Gemini 與 Atlas Cloud API 最新完整資訊為準，即時支援多模態生圖、思考推理與高速運算
+                {t('model.subtitle', locale)}
               </p>
             </div>
           </div>
@@ -195,10 +198,10 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
               onClick={handleSyncClick}
               disabled={isSyncing}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg border border-gray-700 transition-colors shadow-sm disabled:opacity-50"
-              title="從 Google Gemini API 重新同步最新模型清單"
+              title={t('model.syncApi', locale)}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-400' : ''}`} />
-              <span>{isSyncing ? '同步中...' : '同步 API 模型'}</span>
+              <span>{isSyncing ? t('model.syncing', locale) : t('model.syncApi', locale)}</span>
             </button>
             <button
               onClick={onClose}
@@ -225,7 +228,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="搜尋模型名稱、ID (例如: 3.8-flash, 3.1-pro, 3.1-image, flash, thinking...)"
+              placeholder={t('model.searchPlaceholder', locale)}
               className="w-full pl-9 pr-4 py-2 bg-gray-950 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all font-mono"
             />
             {searchQuery && (
@@ -233,7 +236,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                 onClick={() => setSearchQuery('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs"
               >
-                清除
+                {t('model.clear', locale)}
               </button>
             )}
           </div>
@@ -249,7 +252,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>全部模型 ({models.length})</span>
+              <span>{t('model.allModels', locale)} ({models.length})</span>
             </button>
             {MODEL_CATEGORIES.map(cat => {
               const count = models.filter(m => {
@@ -274,6 +277,16 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                 return m.category === cat.id;
               }).length;
 
+              const catKeyMap: Record<string, string> = {
+                recommended: 'model.catRecommended',
+                video: 'model.catVideo',
+                image: 'model.catImage',
+                fast: 'model.catFast',
+                reasoning: 'model.catReasoning',
+                atlascloud: 'model.catAtlasCloud',
+              };
+              const label = catKeyMap[cat.id] ? t(catKeyMap[cat.id], locale) : (cat.shortTitle || cat.title);
+
               return (
                 <button
                   key={cat.id}
@@ -285,7 +298,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                   }`}
                 >
                   <CategoryIcon categoryId={cat.id} className="w-3.5 h-3.5" />
-                  <span>{cat.shortTitle || cat.title.split(' ')[1] || cat.title} ({count})</span>
+                  <span>{label} ({count})</span>
                 </button>
               );
             })}
@@ -297,9 +310,9 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
           {filteredModels.length === 0 ? (
             <div className="text-center py-12 text-gray-400 space-y-2">
               <Cpu className="w-8 h-8 mx-auto text-gray-500 opacity-60" />
-              <div className="text-sm font-medium">找不到相符的模型</div>
+              <div className="text-sm font-medium">{t('model.noMatch', locale)}</div>
               <p className="text-xs text-gray-500">
-                請嘗試不同的關鍵字，或點擊上方「同步 API 模型」重新整理。
+                {t('model.noMatchHint', locale)}
               </p>
             </div>
           ) : (
@@ -352,7 +365,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
 
                           {model.thinking && (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                              🧠 思考模式
+                              🧠 {t('model.thinking', locale)}
                             </span>
                           )}
                         </div>
@@ -378,7 +391,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                         <span className="truncate max-w-[200px] text-gray-300">{model.id}</span>
                         {inputTokenStr && (
                           <span className="text-emerald-400 text-[10px] bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/40">
-                            上下文: {inputTokenStr}
+                            {t('model.context', locale)}: {inputTokenStr}
                           </span>
                         )}
                       </div>
@@ -392,22 +405,22 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
                         )}
                         {model.capabilities.supportsVideoOutput && (
                           <span className="px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-800/50">
-                            🎬 支援影片輸出
+                            🎬 {t('model.videoOutput', locale)}
                           </span>
                         )}
                         {model.capabilities.supportsImageOutput && (
                           <span className="px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50">
-                            支援圖像輸出
+                            {t('model.imageOutput', locale)}
                           </span>
                         )}
                         {model.capabilities.supportsImageInput && (
                           <span className="px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50">
-                            支援圖片輸入
+                            {t('model.imageInput', locale)}
                           </span>
                         )}
                         {outputTokenStr && (
                           <span className="px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-300">
-                            輸出上限: {outputTokenStr}
+                            {t('model.outputLimit', locale)}: {outputTokenStr}
                           </span>
                         )}
                         {model.version && (
@@ -429,7 +442,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-blue-400 shrink-0" />
             <span className="truncate">
-              目前畫布預設：
+              {t('model.default', locale)}
               <span className="text-white font-medium ml-1">{currentModel.name}</span>
               <span className="text-gray-500 ml-1 font-mono text-[11px]">({currentModel.id})</span>
             </span>
@@ -438,7 +451,7 @@ const ModelSelectorModal: React.FC<ModelSelectorModalProps> = ({
             onClick={onClose}
             className="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-medium transition-colors shrink-0"
           >
-            確定
+            {t('model.confirm', locale)}
           </button>
         </div>
       </div>
