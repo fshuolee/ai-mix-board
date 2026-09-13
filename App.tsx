@@ -588,16 +588,17 @@ const App: React.FC = () => {
   }, []);
 
   const userEmail = user?.email;
+  const userToken = user?.isExpired ? null : user?.accessToken;
 
   useEffect(() => {
-    if (userEmail) {
+    if (userEmail && userToken) {
       loadProjects();
-    } else {
+    } else if (!userEmail) {
       setProjects([]);
       setCurrentProject(null);
       setSyncStatus('offline');
     }
-  }, [userEmail, loadProjects]);
+  }, [userEmail, userToken, loadProjects, retryProjectLoadTrigger]);
 
   // Persist last used project to localStorage
   useEffect(() => {
@@ -2767,7 +2768,7 @@ const App: React.FC = () => {
         const defaultSize = getDefaultNodeSize();
 
         try {
-          const retryParams = (nodeToRetry as any)?.generationParams || getModelParams(targetModelId);
+          const retryParams = (targetNode as any)?.generationParams || getModelParams(targetModelId);
           const result = await generateFromNodes(sourceNodes, targetModelId, retryParams);
 
           if (result.type === 'video') {
