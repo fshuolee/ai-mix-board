@@ -41,6 +41,7 @@ import {
   syncUnuploadedImageNodes,
   healProjectImageNodes,
 } from './services/googleDriveService';
+import { fetchImageBlob } from './services/atlasCloudService';
 import {
   saveGraphToSheet,
   loadGraphFromSheet,
@@ -2465,6 +2466,8 @@ const App: React.FC = () => {
           } else if (result.url) {
             const targetUrl = result.url;
             nodeObjectUrlCache.set(jobId, targetUrl);
+
+            // Immediate update so user sees the video straight away
             updateNodesAndSave(prev => {
               const exists = prev.some(n => n.id === jobId);
               if (!exists) return prev;
@@ -2485,6 +2488,71 @@ const App: React.FC = () => {
                 };
               });
             });
+
+            // Asynchronously fetch blob via CORS proxy and upload to Google Drive
+            (async () => {
+              try {
+                const fetchedBlob = await fetchImageBlob(targetUrl);
+                if (!fetchedBlob) return;
+
+                const videoBlob = fetchedBlob.type?.includes('video')
+                  ? fetchedBlob
+                  : new Blob([fetchedBlob], { type: 'video/mp4' });
+
+                await storeImage(jobId, videoBlob);
+                const objectUrl = URL.createObjectURL(videoBlob);
+                nodeObjectUrlCache.set(jobId, objectUrl);
+
+                const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+                const targetProj = currentProjectRef.current || currentProject;
+                const projFolderId =
+                  targetProj?.folderId ||
+                  (activeToken && targetProj?.spreadsheetId
+                    ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                    : null);
+
+                let driveFileId = jobId;
+                let driveViewLink = targetUrl;
+
+                if (activeToken && projFolderId) {
+                  const assetsFolderId =
+                    targetProj?.assetsFolderId ||
+                    (await ensureAssetsFolder(activeToken, projFolderId));
+                  const uploaded = await uploadAssetToDrive(
+                    activeToken,
+                    assetsFolderId,
+                    videoBlob,
+                    `video_gen_${jobId}.mp4`
+                  );
+                  driveFileId = uploaded.fileId;
+                  driveViewLink = uploaded.webViewLink || targetUrl;
+
+                  if (driveFileId !== jobId) {
+                    await storeImage(driveFileId, videoBlob, undefined, true);
+                    await storeImage(jobId, videoBlob, undefined, true);
+                    nodeObjectUrlCache.set(driveFileId, objectUrl);
+                  }
+                }
+
+                updateNodesAndSave(prev => {
+                  const exists = prev.some(n => n.id === jobId);
+                  if (!exists) return prev;
+                  return prev.map(node => {
+                    if (node.id !== jobId) return node;
+                    return {
+                      ...node,
+                      type: 'video',
+                      content: driveFileId,
+                      driveFileId: driveFileId !== jobId ? driveFileId : undefined,
+                      driveViewLink,
+                      updatedAt: Date.now(),
+                    };
+                  });
+                });
+              } catch (driveErr) {
+                console.warn('Background video fetch/upload to Drive failed:', driveErr);
+              }
+            })();
           }
         } else if (result.type === 'image') {
           if (result.blob) {
@@ -2859,6 +2927,70 @@ const App: React.FC = () => {
                 });
               });
               showToast('影片節點重試生成成功！');
+
+              (async () => {
+                try {
+                  const fetchedBlob = await fetchImageBlob(targetUrl);
+                  if (!fetchedBlob) return;
+
+                  const videoBlob = fetchedBlob.type?.includes('video')
+                    ? fetchedBlob
+                    : new Blob([fetchedBlob], { type: 'video/mp4' });
+
+                  await storeImage(nodeId, videoBlob);
+                  const objectUrl = URL.createObjectURL(videoBlob);
+                  nodeObjectUrlCache.set(nodeId, objectUrl);
+
+                  const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
+                  const targetProj = currentProjectRef.current || currentProject;
+                  const projFolderId =
+                    targetProj?.folderId ||
+                    (activeToken && targetProj?.spreadsheetId
+                      ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
+                      : null);
+
+                  let driveFileId = nodeId;
+                  let driveViewLink = targetUrl;
+
+                  if (activeToken && projFolderId) {
+                    const assetsFolderId =
+                      targetProj?.assetsFolderId ||
+                      (await ensureAssetsFolder(activeToken, projFolderId));
+                    const uploaded = await uploadAssetToDrive(
+                      activeToken,
+                      assetsFolderId,
+                      videoBlob,
+                      `video_gen_${nodeId}.mp4`
+                    );
+                    driveFileId = uploaded.fileId;
+                    driveViewLink = uploaded.webViewLink || targetUrl;
+
+                    if (driveFileId !== nodeId) {
+                      await storeImage(driveFileId, videoBlob, undefined, true);
+                      await storeImage(nodeId, videoBlob, undefined, true);
+                      nodeObjectUrlCache.set(driveFileId, objectUrl);
+                    }
+                  }
+
+                  updateNodesAndSave(prev => {
+                    const exists = prev.some(n => n.id === nodeId);
+                    if (!exists) return prev;
+                    return prev.map(node => {
+                      if (node.id !== nodeId) return node;
+                      return {
+                        ...node,
+                        type: 'video',
+                        content: driveFileId,
+                        driveFileId: driveFileId !== nodeId ? driveFileId : undefined,
+                        driveViewLink,
+                        updatedAt: Date.now(),
+                      };
+                    });
+                  });
+                } catch (driveErr) {
+                  console.warn('Background retry video fetch/upload to Drive failed:', driveErr);
+                }
+              })();
             }
           } else if (result.type === 'image') {
             if (result.blob) {

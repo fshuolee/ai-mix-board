@@ -4,6 +4,7 @@ import type { CanvasNode, TextNode, ImageNode, VideoNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
 import { getAccessToken } from '../services/googleAuthService';
+import { fetchImageBlob } from '../services/atlasCloudService';
 
 interface NodeRendererProps {
   node: CanvasNode;
@@ -52,6 +53,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   const targetFileId = isMedia ? (mediaNode?.driveFileId || mediaNode?.content || node.id) : null;
   const [imageUrl, setImageUrl] = useState<string | null>(targetFileId ? nodeObjectUrlCache.get(targetFileId) || null : null);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
+  const [videoLoadError, setVideoLoadError] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
@@ -533,7 +535,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               <Loader2 className="w-6 h-6 animate-spin text-rose-400" />
               <span className="text-[11px]">載入影片資源...</span>
             </div>
-          ) : imageUrl ? (
+          ) : imageUrl && !videoLoadError ? (
             <video
               src={imageUrl}
               controls
@@ -541,8 +543,30 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               loop
               muted
               playsInline
-              referrerPolicy="no-referrer"
               className="w-full h-full object-contain rounded-xl"
+              onError={async () => {
+                console.warn('Video failed to play with URL:', imageUrl);
+                // If it was a direct external URL, attempt to proxy/fetch blob once
+                const directUrl =
+                  (mediaNode?.content && mediaNode.content.startsWith('http') ? mediaNode.content : null) ||
+                  (mediaNode?.driveViewLink && mediaNode.driveViewLink.startsWith('http') ? mediaNode.driveViewLink : null);
+                if (directUrl && !imageUrl.startsWith('blob:')) {
+                  try {
+                    const b = await fetchImageBlob(directUrl);
+                    if (b) {
+                      const vBlob = b.type?.includes('video') ? b : new Blob([b], { type: 'video/mp4' });
+                      const objUrl = URL.createObjectURL(vBlob);
+                      if (targetFileId) nodeObjectUrlCache.set(targetFileId, objUrl);
+                      setImageUrl(objUrl);
+                      setVideoLoadError(false);
+                      return;
+                    }
+                  } catch {
+                    // Fall through to error UI
+                  }
+                }
+                setVideoLoadError(true);
+              }}
               onPointerDown={e => {
                 // Only stop propagation if clicking in the native bottom control bar area (~44px from bottom)
                 // This preserves playback scrubbing/volume while allowing the entire upper video body to drag/select the node!
@@ -554,36 +578,68 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             />
           ) : (
             <div className="text-gray-500 text-xs text-center p-3 flex flex-col items-center justify-center gap-2">
-              <span className="font-medium text-gray-400">無法載入影片資源</span>
+              <Film className="w-8 h-8 text-gray-500" />
+              <span className="font-medium text-gray-400">無法預覽影片</span>
               {mediaNode?.originalFileName && (
-                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[180px]" title={mediaNode.originalFileName}>
+                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[200px]" title={mediaNode.originalFileName}>
                   {mediaNode.originalFileName}
                 </span>
               )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (targetFileId) nodeObjectUrlCache.delete(targetFileId);
-                  setIsLoadingImage(true);
-                  const token = getAccessToken();
-                  if (token && mediaNode?.driveFileId) {
-                    getAssetBlobFromDrive(token, mediaNode.driveFileId)
-                      .then((b) => {
+              <div className="flex items-center gap-2 mt-1">
+                {(mediaNode?.driveViewLink || (mediaNode?.content && mediaNode.content.startsWith('http'))) && (
+                  <a
+                    href={mediaNode.driveViewLink || mediaNode.content}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900/80 text-[11px] text-rose-300 border border-rose-800/60 transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    開啟原始影片
+                  </a>
+                )}
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (targetFileId) nodeObjectUrlCache.delete(targetFileId);
+                    setVideoLoadError(false);
+                    setIsLoadingImage(true);
+                    try {
+                      // 1. Try Drive blob
+                      const token = getAccessToken();
+                      if (token && mediaNode?.driveFileId) {
+                        const b = await getAssetBlobFromDrive(token, mediaNode.driveFileId);
                         if (b) {
                           const url = URL.createObjectURL(b);
-                          nodeObjectUrlCache.set(targetFileId, url);
+                          if (targetFileId) nodeObjectUrlCache.set(targetFileId, url);
                           setImageUrl(url);
+                          return;
                         }
-                      })
-                      .finally(() => setIsLoadingImage(false));
-                  } else {
-                    setIsLoadingImage(false);
-                  }
-                }}
-                className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-[11px] text-gray-300 transition-colors border border-gray-700"
-              >
-                重試載入
-              </button>
+                      }
+                      // 2. Try fetching direct URL via CORS proxy
+                      const direct =
+                        (mediaNode?.content && mediaNode.content.startsWith('http') ? mediaNode.content : null) ||
+                        (mediaNode?.driveViewLink && mediaNode.driveViewLink.startsWith('http') ? mediaNode.driveViewLink : null);
+                      if (direct) {
+                        const b = await fetchImageBlob(direct);
+                        if (b) {
+                          const vBlob = b.type?.includes('video') ? b : new Blob([b], { type: 'video/mp4' });
+                          const url = URL.createObjectURL(vBlob);
+                          if (targetFileId) nodeObjectUrlCache.set(targetFileId, url);
+                          setImageUrl(url);
+                          return;
+                        }
+                      }
+                    } catch (err) {
+                      console.warn('Retry video loading failed:', err);
+                    } finally {
+                      setIsLoadingImage(false);
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-[11px] text-gray-300 transition-colors border border-gray-700"
+                >
+                  重試載入
+                </button>
+              </div>
             </div>
           )}
 
@@ -601,6 +657,18 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               <span className="text-[9px] text-gray-300/80 bg-black/50 px-1.5 py-0.5 rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity select-none pointer-events-none">
                 按住此處可拖曳
               </span>
+              {(mediaNode?.driveViewLink || (mediaNode?.content && mediaNode.content.startsWith('http'))) && (
+                <a
+                  href={mediaNode.driveViewLink || mediaNode.content}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  onClick={e => e.stopPropagation()}
+                  className="p-1 rounded bg-black/60 hover:bg-black/90 backdrop-blur-sm border border-gray-700 text-gray-300 hover:text-white transition-all opacity-0 group-hover:opacity-100 shadow-md"
+                  title="在新分頁開啟原始影片"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
               {onDownloadNode && (
                 <button
                   onClick={e => {

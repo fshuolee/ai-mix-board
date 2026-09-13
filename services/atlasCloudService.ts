@@ -840,6 +840,27 @@ export async function fetchImageBlob(targetUrl: string): Promise<Blob | null> {
     }
   }
 
+  // 4. Try public CORS proxies as automatic fallback (corsproxy.io, allorigins)
+  const publicProxies = [
+    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyFn of publicProxies) {
+    try {
+      const pUrl = proxyFn(targetUrl);
+      const res = await fetch(pUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 0) {
+          return blob;
+        }
+      }
+    } catch {
+      // Continue to next proxy
+    }
+  }
+
   return null;
 }
 
