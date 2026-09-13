@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Map, X, Maximize2, ZoomIn, ZoomOut, ChevronDown } from 'lucide-react';
+import { Map, X, Maximize2, ZoomIn, ZoomOut, ChevronDown, ChevronUp } from 'lucide-react';
 import { CanvasNode, ViewportState } from '../types';
 
 export interface MinimapProps {
@@ -164,7 +164,7 @@ export const Minimap: React.FC<MinimapProps> = ({
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 right-4 z-30 p-2.5 bg-gray-900/90 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700/80 rounded-xl shadow-xl backdrop-blur-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 text-xs font-medium"
+        className="fixed top-16 right-4 z-20 p-2.5 bg-gray-900/90 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700/80 rounded-xl shadow-xl backdrop-blur-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 text-xs font-medium"
         title="開啟畫布小地圖 (Minimap)"
       >
         <Map className="w-4 h-4 text-blue-400" />
@@ -177,7 +177,7 @@ export const Minimap: React.FC<MinimapProps> = ({
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-30 bg-gray-950/92 border border-gray-800/90 rounded-2xl shadow-2xl backdrop-blur-xl select-none animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+      className="fixed top-16 right-4 z-20 bg-gray-950/92 border border-gray-800/90 rounded-2xl shadow-2xl backdrop-blur-xl select-none animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
       onPointerDown={e => e.stopPropagation()}
     >
       {/* Header Bar */}
@@ -193,10 +193,10 @@ export const Minimap: React.FC<MinimapProps> = ({
           </span>
           <button
             onClick={() => setIsOpen(false)}
-            className="p-1 rounded-md text-gray-400 hover:text-white hover:bg-gray-800/80 transition-colors"
+            className="p-1 rounded-md text-gray-400 hover:text-white hover:bg-gray-800/80 transition-colors cursor-pointer"
             title="收合小地圖"
           >
-            <ChevronDown className="w-3.5 h-3.5" />
+            <ChevronUp className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
