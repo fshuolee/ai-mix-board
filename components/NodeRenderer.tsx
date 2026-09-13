@@ -51,9 +51,32 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   const isMedia = node.type === 'image' || node.type === 'video';
   const mediaNode = isMedia ? (node as ImageNode | VideoNode) : null;
   const targetFileId = isMedia ? (mediaNode?.driveFileId || mediaNode?.content || node.id) : null;
-  const [imageUrl, setImageUrl] = useState<string | null>(targetFileId ? nodeObjectUrlCache.get(targetFileId) || null : null);
+  const [imageUrl, setImageUrl] = useState<string | null>(() => {
+    if (!targetFileId) return null;
+    return (
+      nodeObjectUrlCache.get(targetFileId) ||
+      (mediaNode?.content && nodeObjectUrlCache.get(mediaNode.content)) ||
+      (node.id && nodeObjectUrlCache.get(node.id)) ||
+      (targetFileId.startsWith('http://') || targetFileId.startsWith('https://') || targetFileId.startsWith('data:') ? targetFileId : null) ||
+      null
+    );
+  });
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [videoLoadError, setVideoLoadError] = useState(false);
+
+  useEffect(() => {
+    setVideoLoadError(false);
+    if (targetFileId) {
+      const cached =
+        nodeObjectUrlCache.get(targetFileId) ||
+        (mediaNode?.content && nodeObjectUrlCache.get(mediaNode.content)) ||
+        (node.id && nodeObjectUrlCache.get(node.id));
+      if (cached) {
+        setImageUrl(cached);
+        return;
+      }
+    }
+  }, [targetFileId, node.id, mediaNode?.content]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -61,8 +84,12 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
     if (isMedia && node.status !== 'generating' && node.status !== 'error') {
       if (!targetFileId) return;
 
-      if (nodeObjectUrlCache.has(targetFileId)) {
-        setImageUrl(nodeObjectUrlCache.get(targetFileId)!);
+      const cached =
+        nodeObjectUrlCache.get(targetFileId) ||
+        (mediaNode?.content && nodeObjectUrlCache.get(mediaNode.content)) ||
+        (node.id && nodeObjectUrlCache.get(node.id));
+      if (cached) {
+        setImageUrl(cached);
         return;
       }
 
