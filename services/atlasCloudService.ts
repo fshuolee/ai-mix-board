@@ -9,6 +9,7 @@ const STORAGE_KEY_ATLAS_API_KEY = 'ai_mix_board_atlascloud_api_key';
 const STORAGE_KEY_CACHED_ATLAS_MODELS = 'ai_mix_board_cached_atlas_models';
 
 const STORAGE_KEY_CORS_PROXY = 'ai_mix_board_cors_proxy';
+const DEFAULT_CORS_PROXY_URL = 'https://soft-poetry-46b6.farlasonao.workers.dev/?url=';
 
 export function getDefaultCorsProxy(): string {
   const envValue =
@@ -16,7 +17,7 @@ export function getDefaultCorsProxy(): string {
     (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_CORS_PROXY_URL) ||
     '';
 
-  return envValue.trim();
+  return (envValue || DEFAULT_CORS_PROXY_URL).trim();
 }
 
 export function resolveCorsProxyUrl(targetUrl?: string): string | null {
