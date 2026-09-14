@@ -34,6 +34,11 @@ jobs:
         run: npm ci
 
       - name: Build project
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ATLAS_CLOUD_API_KEY: ${{ secrets.ATLAS_CLOUD_API_KEY }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com' }}
+          VITE_CORS_PROXY_URL: ${{ secrets.VITE_CORS_PROXY_URL }}
         run: npm run build
 
       - name: Deploy to gh-pages branch

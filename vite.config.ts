@@ -70,6 +70,14 @@ export default defineConfig(({ mode }) => {
           // Proxy endpoint to bypass CORS when downloading generated images (e.g. Aliyun OSS, Atlas Cloud)
           server.middlewares.use('/api/proxy-image', async (req, res) => {
             try {
+              if (req.method === 'OPTIONS') {
+                res.statusCode = 204;
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+                res.setHeader('Access-Control-Allow-Headers', '*');
+                return res.end();
+              }
+
               const urlObj = new URL(req.url || '', 'http://localhost:3000');
               const targetUrl = urlObj.searchParams.get('url');
               if (!targetUrl) {
@@ -78,18 +86,27 @@ export default defineConfig(({ mode }) => {
                 return res.end(JSON.stringify({ error: 'Missing url parameter' }));
               }
 
-              const remoteRes = await fetch(targetUrl);
+              const rangeHeader = req.headers.range || undefined;
+              const remoteRes = await fetch(targetUrl, {
+                headers: rangeHeader ? { Range: rangeHeader, 'User-Agent': 'Mozilla/5.0 (compatible; AIMixBoardProxy/1.0)' } : { 'User-Agent': 'Mozilla/5.0 (compatible; AIMixBoardProxy/1.0)' },
+              });
               if (!remoteRes.ok) {
                 res.statusCode = remoteRes.status;
-                return res.end(`Failed to fetch image: ${remoteRes.statusText}`);
+                return res.end(`Failed to fetch media: ${remoteRes.statusText}`);
               }
 
-              const contentType = remoteRes.headers.get('content-type') || 'image/png';
-              res.statusCode = 200;
-              res.setHeader('Content-Type', contentType);
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-              res.setHeader('Cache-Control', 'public, max-age=86400');
+              const contentType = remoteRes.headers.get('content-type') || 'application/octet-stream';
+              const responseHeaders = new Headers(remoteRes.headers);
+              responseHeaders.set('Access-Control-Allow-Origin', '*');
+              responseHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+              responseHeaders.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Content-Type, Accept-Ranges');
+              responseHeaders.set('Content-Disposition', 'inline');
+              responseHeaders.delete('x-oss-force-download');
+
+              res.statusCode = remoteRes.status;
+              for (const [key, value] of responseHeaders.entries()) {
+                if (value) res.setHeader(key, value);
+              }
 
               const arrayBuffer = await remoteRes.arrayBuffer();
               res.end(Buffer.from(arrayBuffer));
@@ -106,6 +123,8 @@ export default defineConfig(({ mode }) => {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
       'process.env.ATLAS_CLOUD_API_KEY': JSON.stringify(env.ATLAS_CLOUD_API_KEY || ''),
+      'process.env.VITE_CORS_PROXY_URL': JSON.stringify(env.VITE_CORS_PROXY_URL || ''),
+      'import.meta.env.VITE_CORS_PROXY_URL': JSON.stringify(env.VITE_CORS_PROXY_URL || ''),
       'process.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com'),
       'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || '244200756201-evcta7f45agj41ei70cnal8jr7ur1q17.apps.googleusercontent.com'),
     },

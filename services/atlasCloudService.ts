@@ -10,6 +10,26 @@ const STORAGE_KEY_CACHED_ATLAS_MODELS = 'ai_mix_board_cached_atlas_models';
 
 const STORAGE_KEY_CORS_PROXY = 'ai_mix_board_cors_proxy';
 
+export function getDefaultCorsProxy(): string {
+  const envValue =
+    (typeof process !== 'undefined' && (process.env as any)?.VITE_CORS_PROXY_URL) ||
+    (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_CORS_PROXY_URL) ||
+    '';
+
+  return envValue.trim();
+}
+
+export function resolveCorsProxyUrl(targetUrl?: string): string | null {
+  const configured = getCorsProxy();
+  if (!configured) return null;
+
+  const base = configured.trim().replace(/[?&]url=.*$/i, '').replace(/[?&]$/, '');
+  if (!targetUrl) return base || null;
+
+  const separator = base.includes('?') ? '&' : '?';
+  return `${base}${separator}url=${encodeURIComponent(targetUrl)}`;
+}
+
 export function getAtlasCloudApiKey(): string {
   if (typeof localStorage !== 'undefined') {
     const stored = localStorage.getItem(STORAGE_KEY_ATLAS_API_KEY);
@@ -37,7 +57,7 @@ export function getCorsProxy(): string {
     const stored = localStorage.getItem(STORAGE_KEY_CORS_PROXY);
     if (stored && stored.trim()) return stored.trim();
   }
-  return '';
+  return getDefaultCorsProxy();
 }
 
 export function setCustomCorsProxy(proxyUrl: string): void {
@@ -823,15 +843,11 @@ export async function fetchImageBlob(targetUrl: string): Promise<Blob | null> {
     // Dev proxy failed or on production GitHub Pages (404)
   }
 
-  // 3. Try custom CORS proxy configured by user
-  const customProxy = getCorsProxy();
-  if (customProxy) {
+  // 3. Try custom or env-configured CORS proxy
+  const customProxyUrl = resolveCorsProxyUrl(targetUrl);
+  if (customProxyUrl) {
     try {
-      const p = customProxy.trim();
-      const pUrl = p.includes('?')
-        ? `${p}&url=${encodeURIComponent(targetUrl)}`
-        : `${p}${p.endsWith('/') ? '' : '/'}?url=${encodeURIComponent(targetUrl)}`;
-      const res = await fetch(pUrl);
+      const res = await fetch(customProxyUrl);
       if (res.ok) {
         return await res.blob();
       }

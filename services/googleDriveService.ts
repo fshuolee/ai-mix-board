@@ -406,11 +406,7 @@ export async function syncUnuploadedImageNodes(
       (n.type === 'image' || n.type === 'video') &&
       n.status !== 'generating' &&
       n.status !== 'error' &&
-      (!n.driveFileId || !isDriveFileId(n.driveFileId)) &&
-      !(
-        (n.content && (n.content.startsWith('http://') || n.content.startsWith('https://'))) ||
-        (n.driveViewLink && (n.driveViewLink.startsWith('http://') || n.driveViewLink.startsWith('https://')))
-      )
+      (!n.driveFileId || !isDriveFileId(n.driveFileId))
   ) as (ImageNode | VideoNode)[];
 
   const resolvedAssetsFolderId = assetsFolderId || (await ensureAssetsFolder(token, projectFolderId));

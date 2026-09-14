@@ -367,11 +367,7 @@ const App: React.FC = () => {
         (n.type === 'image' || n.type === 'video') &&
         n.status !== 'generating' &&
         n.status !== 'error' &&
-        (!n.driveFileId || !isDriveFileId(n.driveFileId)) &&
-        !(
-          (n.content && (n.content.startsWith('http://') || n.content.startsWith('https://'))) ||
-          (n.driveViewLink && (n.driveViewLink.startsWith('http://') || n.driveViewLink.startsWith('https://')))
-        )
+        (!n.driveFileId || !isDriveFileId(n.driveFileId))
     ).length;
   }, [allNodes, isLoadingProjectData]);
 
@@ -971,11 +967,7 @@ const App: React.FC = () => {
         (n.type === 'image' || n.type === 'video') &&
         n.status !== 'generating' &&
         n.status !== 'error' &&
-        (!n.driveFileId || !isDriveFileId(n.driveFileId)) &&
-        !(
-          (n.content && (n.content.startsWith('http://') || n.content.startsWith('https://'))) ||
-          (n.driveViewLink && (n.driveViewLink.startsWith('http://') || n.driveViewLink.startsWith('https://')))
-        )
+        (!n.driveFileId || !isDriveFileId(n.driveFileId))
     ).length;
 
     if (pendingCount === 0) {
@@ -2893,7 +2885,7 @@ const App: React.FC = () => {
                     width: 480,
                     height: 270,
                     content: driveFileId,
-                    driveFileId,
+                    driveFileId: driveFileId !== nodeId ? driveFileId : undefined,
                     originalFileName: `video_${nodeId}.mp4`,
                     driveViewLink,
                     status: 'idle',
@@ -2983,6 +2975,8 @@ const App: React.FC = () => {
                         content: driveFileId,
                         driveFileId: driveFileId !== nodeId ? driveFileId : undefined,
                         driveViewLink,
+                        status: 'idle',
+                        errorMessage: undefined,
                         updatedAt: Date.now(),
                       };
                     });
