@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Lock, Unlock, Eye, EyeOff, KeyRound, AlertCircle, X } from 'lucide-react';
+import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton } from './ui/Modal';
 
 export interface CensoredLockedIndicatorProps {
   onOpenUnlockModal: () => void;
@@ -85,23 +86,8 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
       setInputPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      const timer = setTimeout(() => {
-        inputRef.current?.focus();
-      }, 100);
-      return () => clearTimeout(timer);
     }
   }, [isOpen, projectPassword]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -146,16 +132,8 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none bg-black/60 backdrop-blur-sm animate-fadeIn"
-      onPointerDown={onClose}
-    >
-      {/* Floating Modal Card */}
-      <div
-        className="relative w-full max-w-md bg-gray-900/98 border border-gray-700/90 rounded-2xl shadow-2xl p-6 flex flex-col items-center text-center animate-scaleIn border-t-amber-500/50"
-        onPointerDown={e => e.stopPropagation()}
-        onClick={e => e.stopPropagation()}
-      >
+    <Modal isOpen={isOpen} onClose={onClose} size="md" busy={isSubmitting} initialFocusRef={inputRef} className="select-none">
+      <div className="relative p-6 flex flex-col items-center text-center">
         {/* Close Button */}
         <button
           type="button"
@@ -308,7 +286,7 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
           <span className="text-gray-500">本輪解鎖後免重複輸入</span>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };
 
@@ -367,22 +345,15 @@ export const PasswordManageModal: React.FC<PasswordManageModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm select-none"
-      onPointerDown={e => e.stopPropagation()}
-    >
-      <div className="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 text-white animate-fadeIn">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-            <KeyRound className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold">專案機敏保護密碼</h3>
-            <p className="text-[11px] text-gray-400">存於 Google Sheet (Settings)，套用於此專案所有機敏畫布</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-3.5">
+    <Modal isOpen={isOpen} onClose={onClose} size="sm" busy={isSaving} className="select-none">
+      <ModalHeader
+        icon={<KeyRound />}
+        tone="amber"
+        title="專案機敏保護密碼"
+        subtitle="存於 Google Sheet (Settings)，套用於此專案所有機敏畫布"
+      />
+      <form onSubmit={handleSubmit} className="contents">
+        <ModalBody className="p-6 space-y-3.5">
           <div>
             <label className="block text-xs text-gray-300 mb-1 font-medium">
               {currentPassword ? '新密碼' : '設定保護密碼'}
@@ -425,24 +396,16 @@ export const PasswordManageModal: React.FC<PasswordManageModalProps> = ({
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 cursor-pointer"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white shadow-md shadow-amber-600/20 cursor-pointer"
-            >
-              {isSaving ? '儲存中...' : '儲存密碼'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </ModalBody>
+        <ModalFooter>
+          <ModalButton variant="ghost" onClick={onClose} disabled={isSaving}>
+            取消
+          </ModalButton>
+          <ModalButton type="submit" disabled={isSaving} variant="warning">
+            {isSaving ? '儲存中...' : '儲存密碼'}
+          </ModalButton>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 };

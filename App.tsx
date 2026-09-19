@@ -61,7 +61,12 @@ import {
 import { getLocale, toggleLocale, subscribeLocale, Locale, t } from './services/i18n';
 import type { ModalityType } from './types';
 
+/** Outcome of the orphan-asset dialog: keep files in Drive, trash them, or abort the whole delete. */
+type OrphanAssetChoice = 'keep' | 'trash' | null;
+
 import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
+import { ConfirmDialog, useConfirm } from './components/ui/ConfirmDialog';
+import { isAnyModalOpen as isAnySharedModalOpen } from './components/ui/Modal';
 import TopNavigation from './components/TopNavigation';
 import BoardTabs from './components/BoardTabs';
 import { CensoredUnlockModal, CensoredLockedIndicator, PasswordManageModal } from './components/CensoredOverlay';
@@ -322,15 +327,14 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Orphan Asset Deletion Confirmation Modal state
+  // Orphan-asset step of node deletion: null when idle. `deletingIndex` is null while
+  // waiting for a choice and the current file index while trashing in Drive.
   const [orphanAssetModal, setOrphanAssetModal] = useState<{
-    isOpen: boolean;
     orphanFiles: { fileId: string; fileName: string }[];
-    isDeleting?: boolean;
-    deletingIndex?: number;
-    onConfirmDelete: () => void;
-    onKeepInDrive: () => void;
+    deletingIndex: number | null;
+    onChoose: (choice: OrphanAssetChoice) => void;
   } | null>(null);
+  const confirm = useConfirm();
   const [deletingNodeIds, setDeletingNodeIds] = useState<Set<string>>(new Set());
 
   // Sync & Generation state
@@ -1333,12 +1337,21 @@ const App: React.FC = () => {
         }));
 
         setOrphanAssetModal({
-          isOpen: true,
           orphanFiles: orphanList,
-          isDeleting: false,
-          deletingIndex: -1,
-          onConfirmDelete: async () => {
-            setOrphanAssetModal(prev => (prev ? { ...prev, isDeleting: true, deletingIndex: 0 } : null));
+          deletingIndex: null,
+          onChoose: async choice => {
+            if (choice === null) {
+              // Abort: nothing leaves the canvas or Drive.
+              setOrphanAssetModal(null);
+              setDeletingNodeIds(new Set());
+              return;
+            }
+            if (choice === 'keep') {
+              setOrphanAssetModal(null);
+              executeCanvasDelete();
+              showToast(`已自畫布移除 ${nodeIdsToDelete.length} 個節點 (保留雲端檔案)`);
+              return;
+            }
             if (token) {
               for (let i = 0; i < orphanList.length; i++) {
                 setOrphanAssetModal(prev => (prev ? { ...prev, deletingIndex: i } : null));
@@ -1351,11 +1364,6 @@ const App: React.FC = () => {
             }
             setOrphanAssetModal(null);
             executeCanvasDelete(orphanList.length);
-          },
-          onKeepInDrive: () => {
-            setOrphanAssetModal(null);
-            executeCanvasDelete();
-            showToast(`已自畫布移除 ${nodeIdsToDelete.length} 個節點 (保留雲端檔案)`);
           },
         });
       } else {
@@ -1371,6 +1379,18 @@ const App: React.FC = () => {
     },
     [handleDeleteNodes]
   );
+
+  // Shared by the toolbar and the canvas context menu.
+  const confirmClearCanvas = useCallback(async () => {
+    const count = currentBoardNodes.length;
+    const choice = await confirm({
+      title: t('canvas.clearConfirmTitle', locale),
+      message: t('canvas.clearConfirmMessage', locale).replace('{count}', String(count)),
+      confirmLabel: t('canvas.clearConfirmAction', locale),
+      destructive: true,
+    });
+    if (choice) handleDeleteNodes(currentBoardNodes.map(n => n.id));
+  }, [confirm, currentBoardNodes, handleDeleteNodes, locale]);
 
   // Canvas View & Interactions (Marquee Box Selection & Multi-Node Dragging)
   const rafIdRef = useRef<number | null>(null);
@@ -3382,7 +3402,10 @@ const App: React.FC = () => {
         isRescueModalOpen ||
         isPasswordModalOpen ||
         Boolean(infoModalNode) ||
-        Boolean(orphanAssetModal?.isOpen);
+        Boolean(orphanAssetModal) ||
+        isAnySharedModalOpen();
+      // Dialogs own the keyboard while open (Modal handles Escape / Tab itself).
+      if (isAnyModalOpen) return;
 
       // Toggle Censored Lock / Unlock with Alt+L or Cmd+Shift+L
       if (
@@ -3416,7 +3439,7 @@ const App: React.FC = () => {
       }
 
       // Space key for panning cursor - completely enter pan mode
-      if (e.code === 'Space' && !isInputActive && !isAnyModalOpen) {
+      if (e.code === 'Space' && !isInputActive) {
         e.preventDefault();
         if (!isSpacePressedRef.current) {
           isSpacePressedRef.current = true;
@@ -3427,7 +3450,7 @@ const App: React.FC = () => {
 
       // Undo with Cmd+Z / Ctrl+Z (without Shift)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
-        if (!isInputActive && !isAnyModalOpen) {
+        if (!isInputActive) {
           e.preventDefault();
           handleUndo();
           return;
@@ -3439,7 +3462,7 @@ const App: React.FC = () => {
         ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'z') ||
         (!e.metaKey && e.ctrlKey && e.key.toLowerCase() === 'y')
       ) {
-        if (!isInputActive && !isAnyModalOpen) {
+        if (!isInputActive) {
           e.preventDefault();
           handleRedo();
           return;
@@ -3448,7 +3471,7 @@ const App: React.FC = () => {
 
       // Toggle Inspector with Cmd+I / Ctrl+I
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
-        if (!isInputActive && !isAnyModalOpen) {
+        if (!isInputActive) {
           e.preventDefault();
           handleToggleInspector();
           return;
@@ -3542,14 +3565,6 @@ const App: React.FC = () => {
 
       // Escape to Close Modals / Context Menu / Deselect All & Cancel Cut
       if (e.key === 'Escape') {
-        if (infoModalNode) {
-          setInfoModalNode(null);
-          return;
-        }
-        if (orphanAssetModal?.isOpen) {
-          orphanAssetModal.onKeepInDrive();
-          return;
-        }
         if (contextMenu.isOpen) {
           setContextMenu(prev => ({ ...prev, isOpen: false }));
           return;
@@ -4018,9 +4033,7 @@ const App: React.FC = () => {
             showToast('目前畫布已無任何節點');
             return;
           }
-          if (window.confirm(`確定要清空目前畫布上的所有 ${currentBoardNodes.length} 個節點嗎？`)) {
-            handleDeleteNodes(currentBoardNodes.map(n => n.id));
-          }
+          confirmClearCanvas();
         }}
         onExportBoardImage={isCurrentBoardLocked ? undefined : handleExportBoardImage}
         onDownloadAllImages={isCurrentBoardLocked ? undefined : handleDownloadAllBoardImages}
@@ -4373,79 +4386,26 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Orphan Asset Deletion Confirmation Modal */}
-      {orphanAssetModal?.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-gray-900 border border-gray-700/80 rounded-2xl p-6 max-w-md w-full shadow-2xl text-gray-100 flex flex-col gap-4">
-            <div className="flex items-center gap-3 text-amber-400">
-              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                <Trash2 className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-white">移至 Google Drive 垃圾桶</h3>
-                <p className="text-xs text-gray-400">檢測到無引用的圖片資產</p>
-              </div>
-            </div>
-
-            <p className="text-sm text-gray-300 leading-relaxed">
-              您刪除的節點包含 <span className="font-semibold text-white">{orphanAssetModal.orphanFiles.length}</span> 個在所有畫布中已無任何其他節點引用的圖片檔案。是否要將這些檔案移至 Google Drive 垃圾桶？（檔案將移至雲端垃圾桶，可隨時在 Google Drive 中還原）
-            </p>
-
-            <div className="max-h-32 overflow-y-auto bg-gray-950/60 p-2.5 rounded-xl border border-gray-800 space-y-1 text-xs font-mono text-gray-400">
-              {orphanAssetModal.orphanFiles.map((f, i) => (
-                <div key={i} className="truncate flex items-center gap-1.5">
-                  <span className="text-gray-600">•</span>
-                  <span className="text-gray-300">{f.fileName}</span>
-                  <span className="text-gray-500 text-[10px]">({f.fileId.slice(0, 8)}...)</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-800">
-              {orphanAssetModal.isDeleting ? (
-                <div className="flex items-center gap-2 text-xs text-amber-300 font-medium animate-pulse">
-                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                  <span>
-                    正在移至垃圾桶 ({((orphanAssetModal.deletingIndex ?? 0) + 1)} / {orphanAssetModal.orphanFiles.length})...
-                  </span>
-                </div>
-              ) : (
-                <div className="text-xs text-gray-500 font-mono">
-                  共 {orphanAssetModal.orphanFiles.length} 個檔案
-                </div>
-              )}
-
-              <div className="flex items-center gap-2.5">
-                <button
-                  onClick={orphanAssetModal.onKeepInDrive}
-                  disabled={orphanAssetModal.isDeleting}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-lg shadow-blue-600/30 disabled:opacity-50 cursor-pointer"
-                >
-                  保留在 Drive (建議)
-                </button>
-                <button
-                  onClick={orphanAssetModal.onConfirmDelete}
-                  disabled={orphanAssetModal.isDeleting}
-                  className="px-3.5 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs font-medium rounded-xl transition-colors border border-gray-700 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  {orphanAssetModal.isDeleting ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>移動中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5 text-gray-400" />
-                      <span>移至雲端垃圾桶</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Orphan-asset step of node deletion: cancel keeps everything, or remove nodes with / without trashing files */}
+      {orphanAssetModal && (
+        <ConfirmDialog
+          isOpen
+          title={t('asset.orphanTitle', locale)}
+          icon={<Trash2 />}
+          tone="amber"
+          message={t('asset.orphanMessage', locale).replace('{count}', String(orphanAssetModal.orphanFiles.length))}
+          details={orphanAssetModal.orphanFiles.map(f => f.fileName)}
+          actions={[
+            { key: 'keep', label: t('asset.keepInDrive', locale), variant: 'primary' },
+            { key: 'trash', label: t('asset.trashInDrive', locale), variant: 'destructive', icon: <Trash2 /> },
+          ]}
+          busy={orphanAssetModal.deletingIndex !== null}
+          busyLabel={t('asset.trashing', locale)
+            .replace('{current}', String((orphanAssetModal.deletingIndex ?? 0) + 1))
+            .replace('{total}', String(orphanAssetModal.orphanFiles.length))}
+          onChoose={key => orphanAssetModal.onChoose(key as OrphanAssetChoice)}
+        />
       )}
-
 
       {/* Context Menu (Right Click) */}
       <ContextMenu
@@ -4510,9 +4470,7 @@ const App: React.FC = () => {
             showToast('目前畫布已無任何節點');
             return;
           }
-          if (window.confirm(`確定要清空目前畫布上的所有 ${currentBoardNodes.length} 個節點嗎？`)) {
-            handleDeleteNodes(currentBoardNodes.map(n => n.id));
-          }
+          confirmClearCanvas();
         }}
         onDownloadNode={handleDownloadSelectedNodes}
         onExportBoardImage={handleExportBoardImage}

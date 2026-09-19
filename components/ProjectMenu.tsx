@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ProjectMetadata, GoogleUserProfile } from '../types';
 import { t, Locale, formatRelativeTime } from '../services/i18n';
+import { useConfirm } from './ui/ConfirmDialog';
 
 /** Layout constants shared by the menu and its per-row options popover. */
 const MENU_WIDTH = 320;
@@ -133,6 +134,7 @@ const ProjectMenu: React.FC<ProjectMenuProps> = ({
   projectPassword,
   onOpenPasswordModal,
 }) => {
+  const confirm = useConfirm();
   const menuRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -191,7 +193,13 @@ const ProjectMenu: React.FC<ProjectMenuProps> = ({
   const confirmDelete = async (project: ProjectMetadata) => {
     setOptions(null);
     if (!onDeleteProject) return;
-    if (!window.confirm(t('nav.deleteProjectConfirm', locale).replace('{name}', project.name))) return;
+    const choice = await confirm({
+      title: t('nav.deleteProject', locale),
+      message: t('nav.deleteProjectConfirm', locale).replace('{name}', project.name),
+      confirmLabel: t('nav.deleteProject', locale),
+      destructive: true,
+    });
+    if (!choice) return;
     setBusyId(project.id);
     try {
       await onDeleteProject(project);

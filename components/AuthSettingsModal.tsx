@@ -3,7 +3,6 @@ import {
   Key,
   HardDrive,
   FileSpreadsheet,
-  X,
   Check,
   LogOut,
   LogIn,
@@ -44,6 +43,8 @@ import {
 } from '../services/atlasCloudService';
 import { GoogleUserProfile } from '../types';
 import { Locale } from '../services/i18n';
+import { useConfirm } from './ui/ConfirmDialog';
+import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton } from './ui/Modal';
 
 interface AuthSettingsModalProps {
   isOpen: boolean;
@@ -79,6 +80,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [cacheStats, setCacheStats] = useState<LocalCacheStats>({ count: 0, totalBytes: 0 });
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const confirm = useConfirm();
   const [cacheClearedSuccess, setCacheClearedSuccess] = useState(false);
 
   const loadCacheStats = async () => {
@@ -100,15 +102,7 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
       setAtlasTestResult(null);
       loadCacheStats();
     }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen && !isSigningIn && !isRefreshing) {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSigningIn, isRefreshing, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -150,7 +144,13 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   };
 
   const handleClearCache = async () => {
-    if (window.confirm('確定要清除所有本機快取的圖片嗎？（若尚未同步至 Google Drive，這些圖片將永久遺失）')) {
+    const choice = await confirm({
+      title: '清除本機快取',
+      message: '確定要清除所有本機快取的圖片嗎？若尚未同步至 Google Drive，這些圖片將永久遺失。',
+      confirmLabel: '清除快取',
+      destructive: true,
+    });
+    if (choice) {
       setIsClearingCache(true);
       try {
         await clearAllLocalImages();
@@ -286,537 +286,510 @@ const AuthSettingsModal: React.FC<AuthSettingsModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
-      onClick={onClose}
-    >
-      <div
-        className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gray-950/60">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-xl shadow-lg">
-              <ShieldCheck className="w-6 h-6" />
+    <Modal isOpen={isOpen} onClose={onClose} size="2xl" tall busy={isSigningIn || isRefreshing}>
+      <ModalHeader
+        icon={<ShieldCheck />}
+        tone="blue"
+        title="Google 帳號與 API 金鑰設定"
+        subtitle="連接 Google Drive / Sheets 雲端存取與 Gemini / Atlas Cloud AI 核心金鑰"
+      />
+
+      <ModalBody className="p-6 space-y-5">
+        {error && (
+          <div className="p-3.5 bg-red-950/70 border border-red-700 rounded-xl text-red-200 text-xs space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+              <span className="leading-relaxed whitespace-pre-wrap">{error}</span>
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Google 帳號與 API 金鑰設定</h2>
-              <p className="text-xs text-gray-400">
-                連接 Google Drive / Sheets 雲端存取與 Gemini / Atlas Cloud AI 核心金鑰
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
-          {error && (
-            <div className="p-3.5 bg-red-950/70 border border-red-700 rounded-xl text-red-200 text-xs space-y-2">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
-                <span className="leading-relaxed whitespace-pre-wrap">{error}</span>
-              </div>
-              {error.includes('--enable-gdrive-access') && (
-                <div className="flex items-center justify-between bg-black/50 p-2 rounded-lg border border-red-800/80 font-mono text-[11px] text-gray-200">
-                  <span>gcloud auth login --enable-gdrive-access</span>
-                  <button
-                    onClick={handleCopyGcloudCmd}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-gray-800 hover:bg-gray-700 text-white rounded text-[10px]"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>{copiedCmd ? '已複製！' : '複製指令'}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Section 1: Google Account Connection Status */}
-          <div className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <HardDrive className="w-5 h-5 text-emerald-400" />
-                <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-sm font-semibold text-white">Google 雲端硬碟 & 試算表連線</h3>
-              </div>
-              {user ? (
-                user.isExpired ? (
-                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                    連線已逾期 (需重新驗證)
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    已連線 Google Drive (自動維持中)
-                  </span>
-                )
-              ) : (
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
-                  尚未連線 (離線暫存模式)
-                </span>
-              )}
-            </div>
-
-            {user ? (
-              <div className="p-3 bg-gray-900/80 rounded-lg border border-gray-700 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      {user.picture ? (
-                        <img
-                          src={user.picture}
-                          alt={user.name}
-                          className={`w-10 h-10 rounded-full border ${user.isExpired ? 'border-amber-400' : 'border-gray-600'}`}
-                        />
-                      ) : (
-                        <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm ${
-                            user.isExpired ? 'bg-amber-600' : 'bg-blue-600'
-                          }`}
-                        >
-                          {user.name.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      {user.isExpired && (
-                        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-400 ring-2 ring-gray-900 animate-pulse" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-semibold text-sm text-white flex items-center gap-2">
-                        <span>{user.name}</span>
-                        {user.isExpired && (
-                          <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-medium border border-amber-500/30">
-                            憑證已過期
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-400 font-mono">{user.email}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {user.isExpired ? (
-                      <button
-                        onClick={handleRefreshToken}
-                        disabled={isRefreshing || isSigningIn}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium transition-colors shadow-sm"
-                      >
-                        {isRefreshing ? (
-                          <Sparkles className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <LogIn className="w-3.5 h-3.5" />
-                        )}
-                        <span>{isRefreshing ? '重新整理中...' : '立即重新連線'}</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleRefreshToken}
-                        disabled={isRefreshing}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-colors"
-                        title="手動刷新 Access Token"
-                      >
-                        <Sparkles className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                        <span>{isRefreshing ? '刷新中...' : '刷新 Token'}</span>
-                      </button>
-                    )}
-                    <button
-                      onClick={handleSignOut}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-700/60 text-red-300 rounded-lg text-xs transition-colors"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>中斷連線</span>
-                    </button>
-                  </div>
-                </div>
-                {user.isExpired && (
-                  <p className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-800/60 rounded px-2.5 py-1.5 leading-relaxed">
-                    Google 存取憑證已過期。畫布本機內容已為您保留，請點擊「立即重新連線」以繼續自動同步 Google Drive 與 Google Sheets。
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-xs text-gray-300 leading-relaxed">
-                  登入 Google 帳號後，系統將在您的 Google Drive 建立{' '}
-                  <code className="text-emerald-300 font-mono">My Drive / ai-mix-board /</code> 並將畫布節點即時雙向儲存至 Google Sheet。
-                </p>
-
-                {/* Google OAuth Client ID Input & Guidance */}
-                <div className="p-3.5 bg-gray-950/70 border border-gray-800 rounded-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor="googleClientIdField" className="text-xs font-semibold text-white flex items-center gap-1.5">
-                      <Globe className="w-4 h-4 text-blue-400" />
-                      <span>Google OAuth 2.0 Web Client ID</span>
-                    </label>
-                    <a
-                      href="https://console.cloud.google.com/apis/credentials?project=deemo-reborn-90033034"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
-                    >
-                      <span>前往 GCP 控制台建立 / 取得 Client ID</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-
-                  <input
-                    id="googleClientIdField"
-                    name="googleClientId"
-                    type="text"
-                    value={clientId}
-                    onChange={e => setClientId(e.target.value)}
-                    placeholder="例如: 244200756201-xxxx.apps.googleusercontent.com"
-                    autoComplete="off"
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500"
-                  />
-
-                  {/* GCP URI Helper */}
-                  <div className="p-2.5 bg-gray-900/90 rounded-lg border border-gray-800 text-[11px] text-gray-300 space-y-1.5">
-                    <div className="font-medium text-gray-200">GCP 憑證需填寫的設定值（點擊複製）：</div>
-                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] bg-black/40 px-2 py-1 rounded">
-                      <span className="text-gray-400">已授權的 JavaScript 來源：</span>
-                      <span className="text-blue-300 truncate max-w-[260px]">{originUrl}</span>
-                      <button onClick={handleCopyOrigin} className="text-blue-400 hover:text-blue-300 shrink-0">
-                        {copiedOrigin ? '✓ 已複製' : '複製'}
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] bg-black/40 px-2 py-1 rounded">
-                      <span className="text-gray-400">已授權的重新導向 URI：</span>
-                      <span className="text-blue-300 truncate max-w-[260px]">{redirectUri}</span>
-                      <button onClick={handleCopyRedirect} className="text-blue-400 hover:text-blue-300 shrink-0">
-                        {copiedRedirect ? '✓ 已複製' : '複製'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* OAuth Action Buttons */}
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      onClick={handleGooglePopupSignIn}
-                      disabled={isSigningIn}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
-                    >
-                      <LogIn className="w-4 h-4" />
-                      <span>{isSigningIn ? '連線中...' : 'Google 快速彈窗登入 (GIS)'}</span>
-                    </button>
-
-                    <button
-                      onClick={handleOAuthPKCESignIn}
-                      disabled={isSigningIn}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
-                    >
-                      <ArrowRight className="w-4 h-4" />
-                      <span>OAuth 2.0 PKCE 重新導向登入</span>
-                    </button>
-
-                    <button
-                      onClick={handleOAuthImplicitSignIn}
-                      disabled={isSigningIn}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs font-medium rounded-lg border border-gray-700 transition-all"
-                    >
-                      <span>網址 Token 登入 (備用)</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* gcloud helper prompt (Only shown in local dev) */}
-                {isLocalEnvironment() && (
-                  <div className="p-3 bg-gray-950/60 border border-gray-800 rounded-lg space-y-2">
-                    <div className="flex items-center justify-between text-xs text-gray-300">
-                      <span className="font-semibold flex items-center gap-1.5 text-emerald-400">
-                        <Terminal className="w-4 h-4" />
-                        使用本機 gcloud 授權 (本地開發推薦)
-                      </span>
-                      <button
-                        onClick={handleCopyGcloudCmd}
-                        className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
-                      >
-                        <Copy className="w-3 h-3" />
-                        <span>{copiedCmd ? '已複製！' : '複製指令'}</span>
-                      </button>
-                    </div>
-                    <div className="p-2 bg-black/60 rounded border border-gray-800 font-mono text-[11px] text-emerald-300">
-                      gcloud auth login --enable-gdrive-access
-                    </div>
-                    <div className="flex items-center justify-between pt-1">
-                      <p className="text-[11px] text-gray-400">
-                        執行授權後點擊右側按鈕自動讀取：
-                      </p>
-                      <button
-                        onClick={handleFetchLocalGcloud}
-                        disabled={gcloudLoading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
-                      >
-                        <Terminal className="w-3.5 h-3.5" />
-                        <span>{gcloudLoading ? '檢測中...' : '讀取本機 gcloud Token'}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {error.includes('--enable-gdrive-access') && (
+              <div className="flex items-center justify-between bg-black/50 p-2 rounded-lg border border-red-800/80 font-mono text-[11px] text-gray-200">
+                <span>gcloud auth login --enable-gdrive-access</span>
+                <button
+                  onClick={handleCopyGcloudCmd}
+                  className="flex items-center gap-1 px-2 py-0.5 bg-gray-800 hover:bg-gray-700 text-white rounded text-[10px]"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{copiedCmd ? '已複製！' : '複製指令'}</span>
+                </button>
               </div>
             )}
           </div>
+        )}
 
-          {/* Section 2: Gemini & Atlas Cloud AI API Keys */}
-          <form onSubmit={handleSaveKeys} className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-4">
-            <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
-            
-            {/* Gemini API Key */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Key className="w-5 h-5 text-amber-400" />
-                  <h3 className="text-sm font-semibold text-white">Gemini API Key 設定</h3>
-                </div>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
-                >
-                  <span>取得免費 API Key</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-
-              <div>
-                <label htmlFor="geminiApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
-                  GEMINI_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 檔案填寫或在此貼上)
-                </label>
-                <input
-                  id="geminiApiKeyInput"
-                  name="geminiApiKey"
-                  type="password"
-                  value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  autoComplete="current-password"
-                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
+        {/* Section 1: Google Account Connection Status */}
+        <div className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-emerald-400" />
+              <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+              <h3 className="text-sm font-semibold text-white">Google 雲端硬碟 & 試算表連線</h3>
             </div>
+            {user ? (
+              user.isExpired ? (
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  連線已逾期 (需重新驗證)
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  已連線 Google Drive (自動維持中)
+                </span>
+              )
+            ) : (
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
+                尚未連線 (離線暫存模式)
+              </span>
+            )}
+          </div>
 
-            {/* Atlas Cloud API Key */}
-            <div className="border-t border-gray-700/60 pt-3 space-y-2">
+          {user ? (
+            <div className="p-3 bg-gray-900/80 rounded-lg border border-gray-700 space-y-3">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Cloud className="w-5 h-5 text-sky-400" />
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    {user.picture ? (
+                      <img
+                        src={user.picture}
+                        alt={user.name}
+                        className={`w-10 h-10 rounded-full border ${user.isExpired ? 'border-amber-400' : 'border-gray-600'}`}
+                      />
+                    ) : (
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm ${
+                          user.isExpired ? 'bg-amber-600' : 'bg-blue-600'
+                        }`}
+                      >
+                        {user.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    {user.isExpired && (
+                      <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-400 ring-2 ring-gray-900 animate-pulse" />
+                    )}
+                  </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                      Atlas Cloud API Key 設定
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                        400+ 開源與旗艦端點
-                      </span>
-                    </h3>
+                    <div className="font-semibold text-sm text-white flex items-center gap-2">
+                      <span>{user.name}</span>
+                      {user.isExpired && (
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-medium border border-amber-500/30">
+                          憑證已過期
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono">{user.email}</div>
                   </div>
                 </div>
-                <a
-                  href="https://www.atlascloud.ai/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
-                >
-                  <span>前往 Atlas Cloud 官網</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-
-              <div>
-                <label htmlFor="atlasApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
-                  ATLAS_CLOUD_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 填寫或在此貼上，解鎖 DeepSeek V3/R1、FLUX、Seedream、Qwen 等模型)
-                </label>
-                <input
-                  id="atlasApiKeyInput"
-                  name="atlasApiKey"
-                  type="password"
-                  value={atlasApiKey}
-                  onChange={e => {
-                    setAtlasApiKey(e.target.value);
-                    setAtlasTestResult(null);
-                  }}
-                  placeholder="例如: apikey-xxxxxxxxxxxx"
-                  autoComplete="current-password"
-                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              {/* Atlas test status & actions */}
-              <div className="flex items-center justify-between pt-1">
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleTestAtlas}
-                    disabled={testingAtlas || !atlasApiKey.trim()}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 hover:bg-gray-700 disabled:opacity-50 text-sky-300 border border-sky-800/50 rounded-lg text-xs transition-colors"
-                  >
-                    <Cloud className={`w-3.5 h-3.5 ${testingAtlas ? 'animate-pulse' : ''}`} />
-                    <span>{testingAtlas ? '測試連線中...' : '測試 Atlas 連線'}</span>
-                  </button>
-
-                  {atlasTestResult && (
-                    <span
-                      className={`text-xs ${
-                        atlasTestResult.success ? 'text-emerald-400' : 'text-red-400'
-                      }`}
+                  {user.isExpired ? (
+                    <button
+                      onClick={handleRefreshToken}
+                      disabled={isRefreshing || isSigningIn}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium transition-colors shadow-sm"
                     >
-                      {atlasTestResult.success ? '✓ ' : '✕ '}
-                      {atlasTestResult.message}
-                    </span>
+                      {isRefreshing ? (
+                        <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <LogIn className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isRefreshing ? '重新整理中...' : '立即重新連線'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleRefreshToken}
+                      disabled={isRefreshing}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-colors"
+                      title="手動刷新 Access Token"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                      <span>{isRefreshing ? '刷新中...' : '刷新 Token'}</span>
+                    </button>
                   )}
+                  <button
+                    onClick={handleSignOut}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-700/60 text-red-300 rounded-lg text-xs transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>中斷連線</span>
+                  </button>
                 </div>
               </div>
-
-              {/* CORS Proxy Input for GitHub Pages */}
-              <div className="pt-2.5 border-t border-gray-800/80">
-                <label htmlFor="corsProxyInput" className="block text-xs text-gray-400 mb-1">
-                  自訂 CORS 代理 URL（選填，供 GitHub Pages 靜態站自動同步 Atlas Cloud 影像至 Google Drive）
-                </label>
-                <input
-                  id="corsProxyInput"
-                  name="corsProxy"
-                  type="text"
-                  value={corsProxy}
-                  onChange={e => setCorsProxy(e.target.value)}
-                  placeholder="例如: https://my-cors-worker.workers.dev/?url="
-                  className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-sky-500"
-                />
-                <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
-                  本機環境 (<code className="text-gray-400">localhost:3000</code>) 已自動內建代理；若在 GitHub Pages 上運作，可部署免費 Cloudflare Worker 代理，確保影像即時上傳到 Google Drive。
+              {user.isExpired && (
+                <p className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-800/60 rounded px-2.5 py-1.5 leading-relaxed">
+                  Google 存取憑證已過期。畫布本機內容已為您保留，請點擊「立即重新連線」以繼續自動同步 Google Drive 與 Google Sheets。
                 </p>
-              </div>
+              )}
             </div>
-
-            {/* Submit Bar */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-700/60">
-              <span className="text-xs text-emerald-400">
-                {saveSuccess && '✓ AI 金鑰設定已成功儲存並生效！'}
-              </span>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5 ml-auto"
-              >
-                <Check className="w-4 h-4" />
-                <span>儲存金鑰設定</span>
-              </button>
-            </div>
-          </form>
-
-          {/* Section 3: Direct Access Token (Optional Advanced Fallback) */}
-          <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-2">
-            <label htmlFor="manualTokenInput" className="block text-xs font-semibold text-gray-400">
-              進階：手動貼上 OAuth Access Token (含 Drive 權限)
-            </label>
-            <form onSubmit={handleManualTokenSubmit} className="flex gap-2">
-              <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
-              <input
-                id="manualTokenInput"
-                name="manualToken"
-                type="password"
-                value={manualToken}
-                onChange={e => setManualToken(e.target.value)}
-                placeholder="ya29.a0..."
-                autoComplete="current-password"
-                className="flex-1 px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500"
-              />
-              <button
-                type="submit"
-                disabled={!manualToken.trim()}
-                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors shrink-0"
-              >
-                套用 Token
-              </button>
-            </form>
-          </div>
-
-          {/* Section 4: Local Cache Management */}
-          <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database className="w-5 h-5 text-purple-400" />
-                <h3 className="text-sm font-semibold text-white">本機快取管理</h3>
-              </div>
-              <span className="text-xs text-gray-400">
-                目前使用量: {cacheStats.count} 張圖片 ({(cacheStats.totalBytes / (1024 * 1024)).toFixed(2)} MB)
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-gray-400 max-w-sm">
-                清除本機快取可釋放瀏覽器儲存空間。清除前請確認重要圖片已成功備份至 Google Drive，或者您已不再需要它們。
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-gray-300 leading-relaxed">
+                登入 Google 帳號後，系統將在您的 Google Drive 建立{' '}
+                <code className="text-emerald-300 font-mono">My Drive / ai-mix-board /</code> 並將畫布節點即時雙向儲存至 Google Sheet。
               </p>
-              <div className="flex flex-col items-end gap-1">
-                <button
-                  onClick={handleClearCache}
-                  disabled={isClearingCache || cacheStats.count === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/60 hover:bg-red-900 border border-red-800/60 disabled:opacity-50 text-red-300 text-xs font-medium rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>{isClearingCache ? '清除中...' : '清除所有快取'}</span>
-                </button>
-                {cacheClearedSuccess && (
-                  <span className="text-[10px] text-emerald-400">✓ 清除成功</span>
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* Section 5: Interface Language */}
-          {onToggleLocale && (
-            <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Languages className="w-5 h-5 text-blue-400" />
-                  <h3 className="text-sm font-semibold text-white">介面語言 / Language</h3>
+              {/* Google OAuth Client ID Input & Guidance */}
+              <div className="p-3.5 bg-gray-950/70 border border-gray-800 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="googleClientIdField" className="text-xs font-semibold text-white flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-blue-400" />
+                    <span>Google OAuth 2.0 Web Client ID</span>
+                  </label>
+                  <a
+                    href="https://console.cloud.google.com/apis/credentials?project=deemo-reborn-90033034"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
+                  >
+                    <span>前往 GCP 控制台建立 / 取得 Client ID</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
                 </div>
-                <div className="flex items-center gap-1.5 p-1 bg-gray-900/80 border border-gray-700/80 rounded-xl">
+
+                <input
+                  id="googleClientIdField"
+                  name="googleClientId"
+                  type="text"
+                  value={clientId}
+                  onChange={e => setClientId(e.target.value)}
+                  placeholder="例如: 244200756201-xxxx.apps.googleusercontent.com"
+                  autoComplete="off"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+
+                {/* GCP URI Helper */}
+                <div className="p-2.5 bg-gray-900/90 rounded-lg border border-gray-800 text-[11px] text-gray-300 space-y-1.5">
+                  <div className="font-medium text-gray-200">GCP 憑證需填寫的設定值（點擊複製）：</div>
+                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] bg-black/40 px-2 py-1 rounded">
+                    <span className="text-gray-400">已授權的 JavaScript 來源：</span>
+                    <span className="text-blue-300 truncate max-w-[260px]">{originUrl}</span>
+                    <button onClick={handleCopyOrigin} className="text-blue-400 hover:text-blue-300 shrink-0">
+                      {copiedOrigin ? '✓ 已複製' : '複製'}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] bg-black/40 px-2 py-1 rounded">
+                    <span className="text-gray-400">已授權的重新導向 URI：</span>
+                    <span className="text-blue-300 truncate max-w-[260px]">{redirectUri}</span>
+                    <button onClick={handleCopyRedirect} className="text-blue-400 hover:text-blue-300 shrink-0">
+                      {copiedRedirect ? '✓ 已複製' : '複製'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* OAuth Action Buttons */}
+                <div className="flex flex-wrap gap-2 pt-1">
                   <button
-                    type="button"
-                    onClick={locale !== 'zh-TW' ? onToggleLocale : undefined}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                      locale === 'zh-TW'
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 cursor-pointer'
-                    }`}
+                    onClick={handleGooglePopupSignIn}
+                    disabled={isSigningIn}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
                   >
-                    正體中文 (繁體)
+                    <LogIn className="w-4 h-4" />
+                    <span>{isSigningIn ? '連線中...' : 'Google 快速彈窗登入 (GIS)'}</span>
                   </button>
+
                   <button
-                    type="button"
-                    onClick={locale !== 'en' ? onToggleLocale : undefined}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                      locale === 'en'
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 cursor-pointer'
-                    }`}
+                    onClick={handleOAuthPKCESignIn}
+                    disabled={isSigningIn}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
                   >
-                    English
+                    <ArrowRight className="w-4 h-4" />
+                    <span>OAuth 2.0 PKCE 重新導向登入</span>
+                  </button>
+
+                  <button
+                    onClick={handleOAuthImplicitSignIn}
+                    disabled={isSigningIn}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs font-medium rounded-lg border border-gray-700 transition-all"
+                  >
+                    <span>網址 Token 登入 (備用)</span>
                   </button>
                 </div>
               </div>
-              <p className="text-xs text-gray-400">
-                切換整套畫布、導航列與 Inspector 參數面板的顯示語言。目前僅支援正體中文與英文。
-              </p>
+
+              {/* gcloud helper prompt (Only shown in local dev) */}
+              {isLocalEnvironment() && (
+                <div className="p-3 bg-gray-950/60 border border-gray-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-xs text-gray-300">
+                    <span className="font-semibold flex items-center gap-1.5 text-emerald-400">
+                      <Terminal className="w-4 h-4" />
+                      使用本機 gcloud 授權 (本地開發推薦)
+                    </span>
+                    <button
+                      onClick={handleCopyGcloudCmd}
+                      className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{copiedCmd ? '已複製！' : '複製指令'}</span>
+                    </button>
+                  </div>
+                  <div className="p-2 bg-black/60 rounded border border-gray-800 font-mono text-[11px] text-emerald-300">
+                    gcloud auth login --enable-gdrive-access
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-[11px] text-gray-400">
+                      執行授權後點擊右側按鈕自動讀取：
+                    </p>
+                    <button
+                      onClick={handleFetchLocalGcloud}
+                      disabled={gcloudLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>{gcloudLoading ? '檢測中...' : '讀取本機 gcloud Token'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3 border-t border-gray-800 bg-gray-950/60 flex items-center justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-medium transition-colors"
-          >
-            關閉
-          </button>
+        {/* Section 2: Gemini & Atlas Cloud AI API Keys */}
+        <form onSubmit={handleSaveKeys} className="p-4 bg-gray-800/60 border border-gray-700/80 rounded-xl space-y-4">
+          <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
+          
+          {/* Gemini API Key */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-semibold text-white">Gemini API Key 設定</h3>
+              </div>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+              >
+                <span>取得免費 API Key</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div>
+              <label htmlFor="geminiApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
+                GEMINI_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 檔案填寫或在此貼上)
+              </label>
+              <input
+                id="geminiApiKeyInput"
+                name="geminiApiKey"
+                type="password"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                autoComplete="current-password"
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Atlas Cloud API Key */}
+          <div className="border-t border-gray-700/60 pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-sky-400" />
+                <div>
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    Atlas Cloud API Key 設定
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                      400+ 開源與旗艦端點
+                    </span>
+                  </h3>
+                </div>
+              </div>
+              <a
+                href="https://www.atlascloud.ai/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+              >
+                <span>前往 Atlas Cloud 官網</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div>
+              <label htmlFor="atlasApiKeyInput" className="block text-xs text-gray-400 mb-1.5">
+                ATLAS_CLOUD_API_KEY (可直接在專案 <code className="text-gray-300">.env</code> 填寫或在此貼上，解鎖 DeepSeek V3/R1、FLUX、Seedream、Qwen 等模型)
+              </label>
+              <input
+                id="atlasApiKeyInput"
+                name="atlasApiKey"
+                type="password"
+                value={atlasApiKey}
+                onChange={e => {
+                  setAtlasApiKey(e.target.value);
+                  setAtlasTestResult(null);
+                }}
+                placeholder="例如: apikey-xxxxxxxxxxxx"
+                autoComplete="current-password"
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-600 focus:outline-none focus:border-sky-500"
+              />
+            </div>
+
+            {/* Atlas test status & actions */}
+            <div className="flex items-center justify-between pt-1">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestAtlas}
+                  disabled={testingAtlas || !atlasApiKey.trim()}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 hover:bg-gray-700 disabled:opacity-50 text-sky-300 border border-sky-800/50 rounded-lg text-xs transition-colors"
+                >
+                  <Cloud className={`w-3.5 h-3.5 ${testingAtlas ? 'animate-pulse' : ''}`} />
+                  <span>{testingAtlas ? '測試連線中...' : '測試 Atlas 連線'}</span>
+                </button>
+
+                {atlasTestResult && (
+                  <span
+                    className={`text-xs ${
+                      atlasTestResult.success ? 'text-emerald-400' : 'text-red-400'
+                    }`}
+                  >
+                    {atlasTestResult.success ? '✓ ' : '✕ '}
+                    {atlasTestResult.message}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* CORS Proxy Input for GitHub Pages */}
+            <div className="pt-2.5 border-t border-gray-800/80">
+              <label htmlFor="corsProxyInput" className="block text-xs text-gray-400 mb-1">
+                自訂 CORS 代理 URL（選填，供 GitHub Pages 靜態站自動同步 Atlas Cloud 影像至 Google Drive）
+              </label>
+              <input
+                id="corsProxyInput"
+                name="corsProxy"
+                type="text"
+                value={corsProxy}
+                onChange={e => setCorsProxy(e.target.value)}
+                placeholder="例如: https://my-cors-worker.workers.dev/?url="
+                className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-sky-500"
+              />
+              <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                本機環境 (<code className="text-gray-400">localhost:3000</code>) 已自動內建代理；若在 GitHub Pages 上運作，可部署免費 Cloudflare Worker 代理，確保影像即時上傳到 Google Drive。
+              </p>
+            </div>
+          </div>
+
+          {/* Submit Bar */}
+          <div className="flex items-center justify-between pt-2 border-t border-gray-700/60">
+            <span className="text-xs text-emerald-400">
+              {saveSuccess && '✓ AI 金鑰設定已成功儲存並生效！'}
+            </span>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-md transition-all flex items-center gap-1.5 ml-auto"
+            >
+              <Check className="w-4 h-4" />
+              <span>儲存金鑰設定</span>
+            </button>
+          </div>
+        </form>
+
+        {/* Section 3: Direct Access Token (Optional Advanced Fallback) */}
+        <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-2">
+          <label htmlFor="manualTokenInput" className="block text-xs font-semibold text-gray-400">
+            進階：手動貼上 OAuth Access Token (含 Drive 權限)
+          </label>
+          <form onSubmit={handleManualTokenSubmit} className="flex gap-2">
+            <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} tabIndex={-1} aria-hidden="true" defaultValue="google-user" />
+            <input
+              id="manualTokenInput"
+              name="manualToken"
+              type="password"
+              value={manualToken}
+              onChange={e => setManualToken(e.target.value)}
+              placeholder="ya29.a0..."
+              autoComplete="current-password"
+              className="flex-1 px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-lg text-white font-mono text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              type="submit"
+              disabled={!manualToken.trim()}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors shrink-0"
+            >
+              套用 Token
+            </button>
+          </form>
         </div>
-      </div>
-    </div>
+
+        {/* Section 4: Local Cache Management */}
+        <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Database className="w-5 h-5 text-purple-400" />
+              <h3 className="text-sm font-semibold text-white">本機快取管理</h3>
+            </div>
+            <span className="text-xs text-gray-400">
+              目前使用量: {cacheStats.count} 張圖片 ({(cacheStats.totalBytes / (1024 * 1024)).toFixed(2)} MB)
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400 max-w-sm">
+              清除本機快取可釋放瀏覽器儲存空間。清除前請確認重要圖片已成功備份至 Google Drive，或者您已不再需要它們。
+            </p>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                onClick={handleClearCache}
+                disabled={isClearingCache || cacheStats.count === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-950/60 hover:bg-red-900 border border-red-800/60 disabled:opacity-50 text-red-300 text-xs font-medium rounded-lg transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isClearingCache ? '清除中...' : '清除所有快取'}</span>
+              </button>
+              {cacheClearedSuccess && (
+                <span className="text-[10px] text-emerald-400">✓ 清除成功</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Section 5: Interface Language */}
+        {onToggleLocale && (
+          <div className="p-4 bg-gray-800/40 border border-gray-800 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Languages className="w-5 h-5 text-blue-400" />
+                <h3 className="text-sm font-semibold text-white">介面語言 / Language</h3>
+              </div>
+              <div className="flex items-center gap-1.5 p-1 bg-gray-900/80 border border-gray-700/80 rounded-xl">
+                <button
+                  type="button"
+                  onClick={locale !== 'zh-TW' ? onToggleLocale : undefined}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    locale === 'zh-TW'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 cursor-pointer'
+                  }`}
+                >
+                  正體中文 (繁體)
+                </button>
+                <button
+                  type="button"
+                  onClick={locale !== 'en' ? onToggleLocale : undefined}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    locale === 'en'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 cursor-pointer'
+                  }`}
+                >
+                  English
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400">
+              切換整套畫布、導航列與 Inspector 參數面板的顯示語言。目前僅支援正體中文與英文。
+            </p>
+          </div>
+        )}
+      </ModalBody>
+
+      <ModalFooter>
+        <ModalButton variant="secondary" onClick={onClose}>
+          關閉
+        </ModalButton>
+      </ModalFooter>
+    </Modal>
   );
 };
 
