@@ -34,6 +34,8 @@ import {
 import {
   listProjects,
   createProject,
+  renameProject,
+  deleteProject,
   uploadAssetToDrive,
   deleteAssetFromDrive,
   ensureAssetsFolder,
@@ -56,7 +58,7 @@ import {
   getModelById,
   migrateOldModelId,
 } from './services/modelsConfig';
-import { getLocale, toggleLocale, subscribeLocale, Locale } from './services/i18n';
+import { getLocale, toggleLocale, subscribeLocale, Locale, t } from './services/i18n';
 import type { ModalityType } from './types';
 
 import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
@@ -598,20 +600,20 @@ const App: React.FC = () => {
     }
   }, [userEmail, userToken, loadProjects, retryProjectLoadTrigger]);
 
-  // Persist last used project to localStorage
+  // Persist the active project (per account and globally) so the next launch restores it.
+  // Every handler that changes currentProject relies on this instead of writing localStorage itself.
   useEffect(() => {
-    if (currentProject) {
-      try {
-        const email = user?.email || getCurrentUser()?.email;
-        if (email) {
-          localStorage.setItem(`ai_mix_board_last_project_${email}`, currentProject.id);
-          localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(currentProject));
-        }
-        localStorage.setItem('ai_mix_board_last_project', currentProject.id);
-        localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(currentProject));
-      } catch (e) {
-        console.warn('Failed to persist last project to localStorage:', e);
+    if (!currentProject) return;
+    try {
+      const email = user?.email || getCurrentUser()?.email;
+      if (email) {
+        localStorage.setItem(`ai_mix_board_last_project_${email}`, currentProject.id);
+        localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(currentProject));
       }
+      localStorage.setItem('ai_mix_board_last_project', currentProject.id);
+      localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(currentProject));
+    } catch (e) {
+      console.warn('Failed to persist last project to localStorage:', e);
     }
   }, [currentProject, user?.email]);
 
@@ -3608,32 +3610,45 @@ const App: React.FC = () => {
     const created = await createProject(token, name);
     setProjects(prev => [created, ...prev]);
     setCurrentProject(created);
-    try {
-      const email = user?.email || getCurrentUser()?.email;
-      if (email) {
-        localStorage.setItem(`ai_mix_board_last_project_${email}`, created.id);
-        localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(created));
-      }
-      localStorage.setItem('ai_mix_board_last_project', created.id);
-      localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(created));
-    } catch {}
   };
 
   const handleSelectProject = useCallback((p: ProjectMetadata) => {
     if (currentProject?.id === p.id) return;
     setCurrentProject(p);
+  }, [currentProject?.id]);
+
+  const handleRenameProject = useCallback(async (p: ProjectMetadata, name: string) => {
+    const token = getAccessToken();
+    if (!token) return;
     try {
-      const email = user?.email || getCurrentUser()?.email;
-      if (email) {
-        localStorage.setItem(`ai_mix_board_last_project_${email}`, p.id);
-        localStorage.setItem(`ai_mix_board_last_project_meta_${email}`, JSON.stringify(p));
-      }
-      localStorage.setItem('ai_mix_board_last_project', p.id);
-      localStorage.setItem('ai_mix_board_last_project_meta', JSON.stringify(p));
-    } catch (e) {
-      console.warn('Failed to save selected project to localStorage:', e);
+      await renameProject(token, p.folderId, name, p.spreadsheetId);
+    } catch (err: any) {
+      showToast(t('nav.renameFailed', locale).replace('{error}', err?.message || String(err)));
+      return;
     }
-  }, [currentProject?.id, user?.email]);
+    const updatedAt = new Date().toISOString();
+    setProjects(prev => prev.map(item => (item.id === p.id ? { ...item, name, updatedAt } : item)));
+    setCurrentProject(prev => (prev?.id === p.id ? { ...prev, name, updatedAt } : prev));
+  }, [locale, showToast]);
+
+  // Trashes the Drive folder; if the active project goes, fall through to the next one
+  // (or let loadProjects recreate the default when nothing is left).
+  const handleDeleteProject = useCallback(async (p: ProjectMetadata) => {
+    const token = getAccessToken();
+    if (!token) return;
+    try {
+      await deleteProject(token, p.folderId);
+    } catch (err: any) {
+      showToast(t('nav.deleteFailed', locale).replace('{error}', err?.message || String(err)));
+      return;
+    }
+    const remaining = projects.filter(item => item.id !== p.id);
+    setProjects(remaining);
+    if (currentProject?.id === p.id) {
+      setCurrentProject(remaining[0] ?? null);
+      if (remaining.length === 0) loadProjects();
+    }
+  }, [projects, currentProject?.id, locale, showToast, loadProjects]);
 
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -3932,6 +3947,8 @@ const App: React.FC = () => {
         projects={projects}
         currentProject={currentProject}
         onSelectProject={handleSelectProject}
+        onRenameProject={handleRenameProject}
+        onDeleteProject={handleDeleteProject}
         onOpenProjectModal={() => setIsProjectModalOpen(true)}
         onOpenModelModal={() => setIsModelModalOpen(true)}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}

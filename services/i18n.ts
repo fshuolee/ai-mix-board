@@ -56,6 +56,21 @@ export const translations = {
     'nav.params': '參數',
     'nav.lang': 'EN',
     'nav.langTip': '切換為 English',
+    'nav.projectMenuTitle': '專案',
+    'nav.searchProjects': '搜尋專案...',
+    'nav.noMatchProjects': '無相符專案',
+    'nav.currentProject': '目前專案',
+    'nav.projectOptions': '專案選項',
+    'nav.renameProject': '重新命名',
+    'nav.deleteProject': '刪除專案',
+    'nav.deleteProjectConfirm': '確定要刪除專案「{name}」嗎？專案資料夾會移到 Google Drive 垃圾桶。',
+    'nav.deleteLastProjectTip': '至少需保留一個專案',
+    'nav.renameFailed': '重新命名失敗：{error}',
+    'nav.deleteFailed': '刪除專案失敗：{error}',
+    'nav.loginToUseProjects': '登入 Google 後即可建立與同步專案',
+    'nav.noProjectsYet': '還沒有專案，建立第一個吧',
+    'nav.updatedAt': '{time}更新',
+    'time.justNow': '剛剛',
 
     // Board Tabs
     'board.boards': '畫布',
@@ -358,6 +373,21 @@ export const translations = {
     'nav.params': 'Params',
     'nav.lang': '繁',
     'nav.langTip': 'Switch to 正體中文',
+    'nav.projectMenuTitle': 'Projects',
+    'nav.searchProjects': 'Search projects...',
+    'nav.noMatchProjects': 'No matching projects',
+    'nav.currentProject': 'Current project',
+    'nav.projectOptions': 'Project options',
+    'nav.renameProject': 'Rename',
+    'nav.deleteProject': 'Delete project',
+    'nav.deleteProjectConfirm': 'Delete project "{name}"? Its folder will be moved to the Google Drive trash.',
+    'nav.deleteLastProjectTip': 'Keep at least one project',
+    'nav.renameFailed': 'Rename failed: {error}',
+    'nav.deleteFailed': 'Delete failed: {error}',
+    'nav.loginToUseProjects': 'Sign in to Google to create and sync projects',
+    'nav.noProjectsYet': 'No projects yet. Create your first one.',
+    'nav.updatedAt': 'Updated {time}',
+    'time.justNow': 'just now',
 
     // Board Tabs
     'board.boards': 'Boards',
@@ -650,4 +680,30 @@ export function t(key: TranslationKey | string, locale?: Locale): string {
   const activeLang = locale || currentLocale;
   const dict = translations[activeLang] || translations['zh-TW'];
   return (dict as Record<string, string>)[key] || (translations['zh-TW'] as Record<string, string>)[key] || key;
+}
+
+/**
+ * Format an ISO timestamp as a locale-aware relative phrase ("3 天前" / "3 days ago").
+ * Returns an empty string for missing or unparsable input.
+ */
+export function formatRelativeTime(iso: string | undefined, locale?: Locale): string {
+  if (!iso) return '';
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return '';
+  const diffSec = Math.round((ms - Date.now()) / 1000);
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['year', 60 * 60 * 24 * 365],
+    ['month', 60 * 60 * 24 * 30],
+    ['week', 60 * 60 * 24 * 7],
+    ['day', 60 * 60 * 24],
+    ['hour', 60 * 60],
+    ['minute', 60],
+  ];
+  const rtf = new Intl.RelativeTimeFormat(locale || currentLocale, { numeric: 'auto' });
+  for (const [unit, secondsPerUnit] of units) {
+    if (Math.abs(diffSec) >= secondsPerUnit) {
+      return rtf.format(Math.round(diffSec / secondsPerUnit), unit);
+    }
+  }
+  return t('time.justNow', locale);
 }
