@@ -62,6 +62,7 @@ export const PARAM_GROUPS: ModelParamGroup[] = [
  * Visual aspect ratio options
  */
 export const ASPECT_RATIO_OPTIONS = [
+  { label: '依照原圖 (Auto)', value: 'auto', description: '自動符合選取之參考圖片長寬比 (無參考圖時預設 1:1)', icon: 'auto' },
   { label: '1:1 正方形', value: '1:1', description: '社群頭像、經典方格 (1024x1024)', icon: 'square' },
   { label: '16:9 橫向寬螢幕', value: '16:9', description: '電腦桌布、YouTube 封面 (1280x720)', icon: 'ratio_16_9' },
   { label: '9:16 直向短影音', value: '9:16', description: '手機桌布、IG Reels、TikTok (720x1280)', icon: 'ratio_9_16' },
@@ -82,7 +83,7 @@ export const BUILTIN_PRESETS: ModelParamPreset[] = [
     badge: '預設推薦',
     modality: 'image',
     params: {
-      aspectRatio: '1:1',
+      aspectRatio: 'auto',
       steps: 28,
       cfgScale: 7.0,
       negativePrompt: 'blurry, low quality, distorted, extra limbs',
@@ -300,6 +301,7 @@ export function getModelParamSchema(modelInfo: ModelInfo): {
         defaultValue: '16:9',
         group: 'dimensions',
         options: [
+          { label: '依照原圖 (Auto)', value: 'auto', description: '自動符合輸入參考圖之比例' },
           { label: '16:9 橫向寬螢幕', value: '16:9', description: '電腦、電視、YouTube 常用規格' },
           { label: '9:16 直向直式', value: '9:16', description: '手機直式、Shorts、TikTok 專用' },
           { label: '1:1 正方形', value: '1:1', description: '社群經典正方形影片' },
@@ -387,9 +389,9 @@ export function getModelParamSchema(modelInfo: ModelInfo): {
       {
         id: 'aspectRatio',
         label: '畫面比例 (Aspect Ratio)',
-        description: '設定畫布輸出影像之長寬比例',
+        description: '設定畫布輸出影像之長寬比例 (預設「依照原圖」將自動符合參考圖)',
         type: 'aspect_ratio',
-        defaultValue: '1:1',
+        defaultValue: 'auto',
         group: 'dimensions',
         options: ASPECT_RATIO_OPTIONS,
       }
@@ -758,3 +760,37 @@ export function parseRawPayload(raw: string | undefined): Record<string, any> {
     return {};
   }
 }
+
+/**
+ * Find the closest matching aspect ratio from a set of supported ratios.
+ * Uses logarithmic distance to treat reciprocal ratios (e.g. 16:9 and 9:16) symmetrically.
+ */
+export function findClosestAspectRatio(
+  width: number,
+  height: number,
+  allowedRatios: string[] = ['1:1', '4:3', '3:4', '16:9', '9:16', '21:9', '2:3', '3:2']
+): string {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return '1:1';
+  }
+
+  const targetRatio = width / height;
+  const logTarget = Math.log(targetRatio);
+
+  let bestRatio = '1:1';
+  let minDiff = Infinity;
+
+  for (const ratioStr of allowedRatios) {
+    const parts = ratioStr.split(':').map(Number);
+    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1]) || parts[1] === 0) continue;
+    const rVal = parts[0] / parts[1];
+    const diff = Math.abs(logTarget - Math.log(rVal));
+    if (diff < minDiff) {
+      minDiff = diff;
+      bestRatio = ratioStr;
+    }
+  }
+
+  return bestRatio;
+}
+

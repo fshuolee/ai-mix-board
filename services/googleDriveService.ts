@@ -393,6 +393,17 @@ export async function getFileParentFolderId(token: string, fileId: string): Prom
  * (i.e. having local IDs like timestamp or gen_*), retrieve their blobs from IndexedDB,
  * upload them to the project's Google Drive assets folder, and return the updated nodes.
  */
+function getDriveSyncFailureMessage(error: any): string {
+  const message = error?.message || String(error || '');
+  if (/storage quota|quota has been exceeded/i.test(message)) {
+    return 'Google Drive 儲存空間已滿，請先清理雲端空間或切換到另一個 Google 帳號再重試。';
+  }
+  if (/permission|forbidden|insufficient.*permission|access.*denied|not have permission/i.test(message)) {
+    return 'Google Drive 權限不足，請重新登入並確認此專案資料夾與 Google Sheet 可被存取。';
+  }
+  return message || 'Google Drive 同步失敗，請確認 Google Drive 權限與可用空間。';
+}
+
 export async function syncUnuploadedImageNodes(
   token: string,
   projectFolderId: string,
@@ -415,7 +426,7 @@ export async function syncUnuploadedImageNodes(
     return { updatedNodes: nodes, syncedCount: 0, resolvedAssetsFolderId };
   }
 
-  const replacements = new Map<string, { driveFileId?: string; driveViewLink?: string; status?: 'error' }>();
+  const replacements = new Map<string, { driveFileId?: string; driveViewLink?: string; status?: 'error'; errorMessage?: string }>();
   let synced = 0;
 
   for (const mediaNode of pendingNodes) {
@@ -461,7 +472,12 @@ export async function syncUnuploadedImageNodes(
         onProgress(synced, pendingNodes.length);
       }
     } catch (uploadErr) {
+      const message = getDriveSyncFailureMessage(uploadErr);
       console.warn(`[Drive Sync] Failed to sync node ${mediaNode.id} to Drive:`, uploadErr);
+      replacements.set(mediaNode.id, {
+        status: 'error',
+        errorMessage: message,
+      });
     }
   }
 
@@ -476,6 +492,7 @@ export async function syncUnuploadedImageNodes(
         return {
           ...n,
           status: 'error',
+          errorMessage: rep.errorMessage || n.errorMessage,
           updatedAt: Date.now(),
         } as CanvasNode;
       }
@@ -484,7 +501,8 @@ export async function syncUnuploadedImageNodes(
         content: rep.driveFileId,
         driveFileId: rep.driveFileId,
         driveViewLink: rep.driveViewLink,
-        status: 'idle', // Reset any error status upon successful upload
+        status: 'idle',
+        errorMessage: undefined,
         updatedAt: Date.now(),
       } as CanvasNode;
     }

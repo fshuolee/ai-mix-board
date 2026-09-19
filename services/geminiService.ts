@@ -6,7 +6,7 @@ import { getModelById, DEFAULT_MODEL_ID, fetchModelsFromApi } from './modelsConf
 import { getAssetBlobFromDrive } from './googleDriveService';
 import { getAccessToken } from './googleAuthService';
 import { generateWithAtlasCloud, isAtlasCloudModel } from './atlasCloudService';
-import { parseRawPayload } from './modelParamsService';
+import { parseRawPayload, findClosestAspectRatio } from './modelParamsService';
 
 function getApiKey(): string {
   return (
@@ -84,10 +84,13 @@ export const generateFromNodes = async (
   const token = getAccessToken();
 
   // Robustly load images from IndexedDB, Drive, or memory
+  let refWidth: number | undefined;
+  let refHeight: number | undefined;
+
   const imageNodeParts = await Promise.all(
     nodes
       .filter(node => node.type === 'image')
-      .map(async node => {
+      .map(async (node, index) => {
         try {
           const imageNode = node as ImageNode;
           const candidateIds = [imageNode.driveFileId, imageNode.content, node.id].filter(Boolean) as string[];
@@ -111,6 +114,24 @@ export const generateFromNodes = async (
           if (!blob) {
             console.warn(`Could not load image blob for node ${node.id} across candidate IDs:`, candidateIds);
             return null;
+          }
+
+          // Extract dimensions from primary reference image for aspect ratio auto-matching
+          if (index === 0 || !refWidth) {
+            if (typeof createImageBitmap === 'function') {
+              try {
+                const bmp = await createImageBitmap(blob);
+                refWidth = bmp.width;
+                refHeight = bmp.height;
+                bmp.close();
+              } catch {
+                refWidth = imageNode.width;
+                refHeight = imageNode.height;
+              }
+            } else if (imageNode.width && imageNode.height) {
+              refWidth = imageNode.width;
+              refHeight = imageNode.height;
+            }
           }
 
           const base64 = await blobToBase64(blob);
@@ -145,6 +166,20 @@ export const generateFromNodes = async (
   // Parse raw JSON payload if user specified custom fields
   const customRawPayload = parseRawPayload(params?.rawPayload);
 
+  // Compute effective aspect ratio:
+  // If 'auto' (or omitted): match reference image ratio if available, otherwise default to '1:1'.
+  const requestedRatio = params?.aspectRatio || 'auto';
+  let effectiveRatio: string;
+  if (requestedRatio === 'auto') {
+    if (refWidth && refHeight && refWidth > 0 && refHeight > 0) {
+      effectiveRatio = findClosestAspectRatio(refWidth, refHeight, ['1:1', '3:4', '4:3', '9:16', '16:9']);
+    } else {
+      effectiveRatio = '1:1';
+    }
+  } else {
+    effectiveRatio = requestedRatio;
+  }
+
   // Handle Imagen 3 Dedicated Image Model
   if (effectiveModelId.startsWith('imagen-3')) {
     const promptText = textParts.map(t => t.text).join(' \n');
@@ -156,7 +191,7 @@ export const generateFromNodes = async (
       const imagenConfig: any = {
         numberOfImages: 1,
         outputMimeType: 'image/png',
-        aspectRatio: params?.aspectRatio || '1:1',
+        aspectRatio: effectiveRatio,
       };
       if (params?.personGeneration) {
         imagenConfig.personGeneration = params.personGeneration;
@@ -195,13 +230,10 @@ export const generateFromNodes = async (
 
     const imageGenerationConfig: any = {
       responseModalities: [Modality.IMAGE],
+      imageConfig: {
+        aspectRatio: effectiveRatio,
+      },
     };
-
-    if (params?.aspectRatio) {
-      imageGenerationConfig.imageConfig = {
-        aspectRatio: params.aspectRatio,
-      };
-    }
 
     Object.assign(imageGenerationConfig, customRawPayload);
 

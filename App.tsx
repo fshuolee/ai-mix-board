@@ -76,6 +76,7 @@ import {
   setInspectorOpenState,
   countModifiedParams,
   getModelModality,
+  findClosestAspectRatio,
 } from './services/modelParamsService';
 import ContextMenu from './components/ContextMenu';
 import MultiSelectionBar from './components/MultiSelectionBar';
@@ -2322,10 +2323,51 @@ const App: React.FC = () => {
       promptSnippet = promptSnippet.slice(0, 77) + '...';
     }
 
+    const capturedParams = { ...modelParamsRef.current };
+
     // 3. Determine open position for the placeholder node
     const defaultSize = getDefaultNodeSize();
-    const placeholderWidth = isTargetVideo ? 480 : (defaultSize.width || 384);
-    const placeholderHeight = isTargetVideo ? 270 : (defaultSize.height || 384);
+    let placeholderWidth = isTargetVideo ? 480 : (defaultSize.width || 384);
+    let placeholderHeight = isTargetVideo ? 270 : (defaultSize.height || 384);
+
+    const reqRatio = capturedParams?.aspectRatio || (isTargetVideo ? '16:9' : 'auto');
+    let effectiveRatioStr = reqRatio;
+
+    const refImageNode = capturedSelectedNodes.find(n => n.type === 'image' || n.type === 'video');
+    if (effectiveRatioStr === 'auto') {
+      if (refImageNode && refImageNode.width > 0 && refImageNode.height > 0) {
+        effectiveRatioStr = isTargetVideo
+          ? findClosestAspectRatio(refImageNode.width, refImageNode.height, ['16:9', '9:16', '1:1', '4:3'])
+          : findClosestAspectRatio(refImageNode.width, refImageNode.height, ['1:1', '3:4', '4:3', '9:16', '16:9']);
+      } else {
+        effectiveRatioStr = isTargetVideo ? '16:9' : '1:1';
+      }
+    }
+
+    if (effectiveRatioStr && effectiveRatioStr.includes(':')) {
+      const [rw, rh] = effectiveRatioStr.split(':').map(Number);
+      if (rw > 0 && rh > 0) {
+        const ratioVal = rw / rh;
+        if (isTargetVideo) {
+          if (ratioVal >= 1) {
+            placeholderWidth = 480;
+            placeholderHeight = Math.round(480 / ratioVal);
+          } else {
+            placeholderHeight = 480;
+            placeholderWidth = Math.round(480 * ratioVal);
+          }
+        } else {
+          const maxDim = defaultSize.width || 384;
+          if (ratioVal >= 1) {
+            placeholderWidth = maxDim;
+            placeholderHeight = Math.round(maxDim / ratioVal);
+          } else {
+            placeholderHeight = maxDim;
+            placeholderWidth = Math.round(maxDim * ratioVal);
+          }
+        }
+      }
+    }
 
     const initialCoords = getCanvasCoords(window.innerWidth / 2, window.innerHeight / 2);
     let anchorX = initialCoords.x;
@@ -2356,8 +2398,6 @@ const App: React.FC = () => {
       driveFileId: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).driveFileId || n.content : undefined,
       originalFileName: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).originalFileName : undefined,
     }));
-
-    const capturedParams = { ...modelParamsRef.current };
 
     // 4. Create and place the placeholder node immediately
     const placeholderNode: CanvasNode = {
@@ -2443,8 +2483,8 @@ const App: React.FC = () => {
                 return {
                   ...node,
                   type: 'video',
-                  width: 480,
-                  height: 270,
+                  width: node.width || 480,
+                  height: node.height || 270,
                   content: driveFileId,
                   driveFileId,
                   originalFileName: `video_${jobId}.mp4`,
@@ -2468,8 +2508,8 @@ const App: React.FC = () => {
                 return {
                   ...node,
                   type: 'video',
-                  width: 480,
-                  height: 270,
+                  width: node.width || 480,
+                  height: node.height || 270,
                   content: targetUrl,
                   driveFileId: undefined,
                   originalFileName: `video_${jobId}.mp4`,

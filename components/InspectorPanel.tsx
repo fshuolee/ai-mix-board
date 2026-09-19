@@ -598,22 +598,28 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                         }`}
                                         title={opt.description}
                                       >
-                                        <div
-                                          className={`mb-1 border border-current rounded-sm ${
-                                            opt.value === '1:1'
-                                              ? 'w-4 h-4'
-                                              : opt.value === '16:9'
-                                              ? 'w-5 h-3'
-                                              : opt.value === '9:16'
-                                              ? 'w-3 h-5'
-                                              : opt.value === '4:3'
-                                              ? 'w-4 h-3'
-                                              : opt.value === '3:4'
-                                              ? 'w-3 h-4'
-                                              : 'w-6 h-2.5'
-                                          }`}
-                                        />
-                                        <span className="font-mono text-[11px]">{opt.value}</span>
+                                         {opt.value === 'auto' ? (
+                                           <Sparkles className="w-4 h-4 mb-1 text-current opacity-85" />
+                                         ) : (
+                                           <div
+                                             className={`mb-1 border border-current rounded-sm ${
+                                               opt.value === '1:1'
+                                                 ? 'w-4 h-4'
+                                                 : opt.value === '16:9'
+                                                 ? 'w-5 h-3'
+                                                 : opt.value === '9:16'
+                                                 ? 'w-3 h-5'
+                                                 : opt.value === '4:3'
+                                                 ? 'w-4 h-3'
+                                                 : opt.value === '3:4'
+                                                 ? 'w-3 h-4'
+                                                 : 'w-6 h-2.5'
+                                             }`}
+                                           />
+                                         )}
+                                         <span className="font-mono text-[11px] truncate max-w-full">
+                                           {opt.value === 'auto' ? '原圖 (Auto)' : opt.value}
+                                         </span>
                                       </button>
                                     );
                                   })}

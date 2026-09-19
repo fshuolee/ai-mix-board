@@ -7,7 +7,7 @@ import {
 } from './atlasCloudService';
 
 export interface ModelCategoryConfig {
-  id: 'recommended' | 'image' | 'fast' | 'reasoning' | 'atlascloud';
+  id: 'recommended' | 'image' | 'video' | 'fast' | 'reasoning' | 'atlascloud';
   title: string;
   shortTitle?: string;
   subtitle: string;

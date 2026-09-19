@@ -3,7 +3,8 @@ import { getImage } from './dbService';
 import { blobToBase64 } from '../utils/canvasUtils';
 import { getAccessToken } from './googleAuthService';
 import { getAssetBlobFromDrive } from './googleDriveService';
-import { parseRawPayload } from './modelParamsService';
+import { parseRawPayload, findClosestAspectRatio } from './modelParamsService';
+import { getModelById } from './modelsConfig';
 
 const STORAGE_KEY_ATLAS_API_KEY = 'ai_mix_board_atlascloud_api_key';
 const STORAGE_KEY_CACHED_ATLAS_MODELS = 'ai_mix_board_cached_atlas_models';
@@ -1248,10 +1249,21 @@ export async function generateWithAtlasCloud(
 
     const customRawPayload = parseRawPayload(params?.rawPayload);
 
+    const requestedRatio = params?.aspectRatio || 'auto';
+    let effectiveVideoRatio = requestedRatio;
+    if (requestedRatio === 'auto') {
+      const refNode = imageNodes[0];
+      if (refNode && refNode.width && refNode.height) {
+        effectiveVideoRatio = findClosestAspectRatio(refNode.width, refNode.height, ['16:9', '9:16', '1:1', '4:3']);
+      } else {
+        effectiveVideoRatio = '16:9';
+      }
+    }
+
     const payload: any = {
       model: actualModelId,
       prompt: finalPrompt,
-      ratio: params?.aspectRatio || '16:9',
+      ratio: effectiveVideoRatio,
     };
 
     if (referenceImageUrls.length > 0) {
@@ -1414,19 +1426,31 @@ export async function generateWithAtlasCloud(
         prompt: finalPrompt,
       };
 
-      if (params?.aspectRatio) {
-        payload.ratio = params.aspectRatio;
-        const ratioMap: Record<string, string> = {
-          '1:1': '1024*1024',
-          '16:9': '1280*720',
-          '9:16': '720*1280',
-          '4:3': '1024*768',
-          '3:4': '768*1024',
-          '21:9': '1536*640',
-        };
-        if (ratioMap[params.aspectRatio]) {
-          payload.size = ratioMap[params.aspectRatio];
+      const ratioMap: Record<string, string> = {
+        '1:1': '1024*1024',
+        '16:9': '1280*720',
+        '9:16': '720*1280',
+        '4:3': '1024*768',
+        '3:4': '768*1024',
+        '21:9': '1536*640',
+      };
+
+      const requestedRatio = params?.aspectRatio || 'auto';
+      let effectiveRatio: string;
+      if (requestedRatio === 'auto') {
+        const refNode = imageNodes[0];
+        if (refNode && refNode.width && refNode.height) {
+          effectiveRatio = findClosestAspectRatio(refNode.width, refNode.height, ['1:1', '4:3', '3:4', '16:9', '9:16', '21:9']);
+        } else {
+          effectiveRatio = '1:1';
         }
+      } else {
+        effectiveRatio = requestedRatio;
+      }
+
+      payload.ratio = effectiveRatio;
+      if (ratioMap[effectiveRatio]) {
+        payload.size = ratioMap[effectiveRatio];
       }
 
       if (params?.negativePrompt) {
@@ -1456,8 +1480,8 @@ export async function generateWithAtlasCloud(
         payload.reference_image_urls = referenceImageUrls;
         payload.image = referenceImageUrls[0];
 
-        // Compute aspect-ratio matched dimensions (multiples of 32 between 512 and 2048) if ratio wasn't explicitly set
-        if (!payload.size) {
+        // Compute aspect-ratio matched dimensions (multiples of 32 between 512 and 2048) if ratio is auto or size wasn't set
+        if (requestedRatio === 'auto' || !payload.size) {
           const refNode = imageNodes[0];
           if (refNode && refNode.width && refNode.height) {
             const ratio = refNode.width / refNode.height;
