@@ -59,7 +59,7 @@ export async function convertToPngBlob(blob: Blob): Promise<Blob> {
   if (blob.type === 'image/png') {
     return blob;
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
@@ -69,17 +69,22 @@ export async function convertToPngBlob(blob: Blob): Promise<Blob> {
       canvas.height = img.naturalHeight || img.height;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        resolve(blob);
+        reject(new Error('Canvas context unavailable for PNG conversion'));
         return;
       }
-      ctx.drawImage(img, 0, 0);
-      canvas.toBlob(pngBlob => {
-        resolve(pngBlob || blob);
-      }, 'image/png');
+      try {
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(pngBlob => {
+          if (pngBlob) resolve(pngBlob);
+          else reject(new Error('PNG conversion failed'));
+        }, 'image/png');
+      } catch (error) {
+        reject(error);
+      }
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      resolve(blob);
+      reject(new Error('Image could not be decoded for PNG conversion'));
     };
     img.src = url;
   });
@@ -89,24 +94,24 @@ export async function convertToPngBlob(blob: Blob): Promise<Blob> {
  * Retrieve blob for an image node from IndexedDB, DOM element, or URL
  */
 export async function getImageBlobForNode(node: ImageNode): Promise<Blob | null> {
-  const fileId = node.driveFileId || node.content || node.id;
-
-  // 1. Try loading from IndexedDB cache
-  try {
-    const blob = await getImage(fileId);
-    if (blob) return blob;
-  } catch (err) {
-    console.warn('Error reading image from IndexedDB:', err);
+  // Match the renderer's cache keys: uploads may still be stored under a local node ID.
+  for (const fileId of new Set([node.driveFileId, node.content, node.id].filter(Boolean))) {
+    try {
+      const blob = await getImage(fileId);
+      if (blob) return blob;
+    } catch (err) {
+      console.warn('Error reading image from IndexedDB:', err);
+    }
   }
 
   // 2. Try fetching from DOM <img> element if already rendered
-  const imgEl = document.querySelector(`[data-node-id="${node.id}"] img`) as HTMLImageElement | null;
+  const imgEl = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"] img`) as HTMLImageElement | null;
   if (imgEl && imgEl.src) {
     try {
       if (imgEl.src.startsWith('blob:') || imgEl.src.startsWith('data:')) {
         const res = await fetch(imgEl.src);
         const blob = await res.blob();
-        if (blob) return blob;
+        if (res.ok && blob.size) return blob;
       }
     } catch {}
 
@@ -116,20 +121,21 @@ export async function getImageBlobForNode(node: ImageNode): Promise<Blob | null>
       canvas.width = imgEl.naturalWidth || imgEl.width;
       canvas.height = imgEl.naturalHeight || imgEl.height;
       const ctx = canvas.getContext('2d');
-      if (ctx && canvas.width > 0 && canvas.height > 0) {
+      if (ctx && imgEl.complete && imgEl.naturalWidth > 0 && canvas.width > 0 && canvas.height > 0) {
         ctx.drawImage(imgEl, 0, 0);
-        return new Promise(resolve => {
+        const blob = await new Promise<Blob | null>(resolve => {
           canvas.toBlob(blob => resolve(blob), 'image/png');
         });
+        if (blob) return blob;
       }
     } catch {}
   }
 
   // 3. Try fetching content directly if it's a URL or base64
-  if (node.content && (node.content.startsWith('http') || node.content.startsWith('data:'))) {
+  if (node.content && /^(https?:|data:|blob:)/.test(node.content)) {
     try {
       const res = await fetch(node.content);
-      return await res.blob();
+      if (res.ok) return await res.blob();
     } catch {}
   }
 
@@ -182,30 +188,38 @@ export async function copyNodesToClipboard(
   if (nodes.length === 1 && nodes[0].type === 'image') {
     const imageNode = nodes[0] as ImageNode;
     try {
-      const rawBlob = await getImageBlobForNode(imageNode);
-      if (rawBlob && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-        const pngBlob = await convertToPngBlob(rawBlob);
-        try {
-          await navigator.clipboard.write([
-            new ClipboardItem({
-              'image/png': pngBlob,
-              'text/plain': new Blob([markerString], { type: 'text/plain' }),
-            }),
-          ]);
-        } catch {
-          // Fallback: system may only allow 1 mime type
-          await navigator.clipboard.write([
-            new ClipboardItem({ 'image/png': pngBlob }),
-          ]);
-        }
-        return {
-          success: true,
-          message: payload.isCut ? '已剪下圖片到剪貼簿' : '已複製圖片到剪貼簿',
-          payload,
-        };
+      if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+        throw new Error('Image clipboard is unavailable');
       }
+      // Start writing before the first await to retain the click/keyboard gesture
+      // required by WebKit. ClipboardItem resolves the PNG after cache reads/conversion.
+      const pngBlob = getImageBlobForNode(imageNode).then(rawBlob => {
+        if (!rawBlob) throw new Error('Image data unavailable');
+        return convertToPngBlob(rawBlob);
+      });
+      // The platform may reject before consuming this promise (e.g. permission denied).
+      // Observe that rejection as well so a failed image read is never unhandled.
+      void pngBlob.catch(() => {});
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'image/png': pngBlob,
+          'text/plain': new Blob([markerString], { type: 'text/plain' }),
+        }),
+      ]);
+      return {
+        success: true,
+        message: payload.isCut ? '已剪下圖片到剪貼簿' : '已複製圖片到剪貼簿',
+        payload,
+      };
     } catch (err) {
       console.warn('Writing image to clipboard failed:', err);
+      // Keep internal paste available without replacing the user's system clipboard
+      // with marker text or claiming the image was copied successfully.
+      return {
+        success: false,
+        message: '圖片無法寫入系統剪貼簿，仍可在畫布內貼上；請確認圖片已載入及剪貼簿權限',
+        payload,
+      };
     }
   }
 

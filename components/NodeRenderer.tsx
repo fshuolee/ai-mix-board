@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Copy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info, Film } from 'lucide-react';
+import { Loader2, Copy, ClipboardCopy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info, Film } from 'lucide-react';
 import type { CanvasNode, TextNode, ImageNode, VideoNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
@@ -17,6 +17,7 @@ interface NodeRendererProps {
   onDuplicateNode?: (node: CanvasNode) => void;
   onDeleteNode?: (nodeId: string) => void;
   onDownloadNode?: (node: CanvasNode) => void;
+  onCopyNode?: (node: CanvasNode) => void;
   onRetryNode?: (nodeId: string) => void;
   onShowInfo?: (node: CanvasNode) => void;
   isDeleting?: boolean;
@@ -39,6 +40,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   onDuplicateNode,
   onDeleteNode,
   onDownloadNode,
+  onCopyNode,
   onRetryNode,
   onShowInfo,
   isDeleting = false,
@@ -566,7 +568,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
             <video
               src={imageUrl}
               controls
-              autoPlay
+              preload="metadata"
               loop
               muted
               playsInline
@@ -740,6 +742,17 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               title={node.type === 'video' ? '下載影片檔案 (.mp4)' : node.type === 'image' ? '下載原始圖片' : '下載文字內容 (.txt)'}
             >
               <Download className="w-3.5 h-3.5 text-emerald-400" />
+            </button>
+          )}
+
+          {node.type === 'image' && onCopyNode && (
+            <button
+              onClick={() => onCopyNode(node)}
+              className="p-1.5 text-gray-300 hover:text-blue-300 hover:bg-gray-800 rounded-lg transition-colors"
+              title="複製圖片到剪貼簿"
+              aria-label="複製圖片到剪貼簿"
+            >
+              <ClipboardCopy className="w-3.5 h-3.5 text-blue-400" />
             </button>
           )}
 

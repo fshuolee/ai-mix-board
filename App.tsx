@@ -427,6 +427,7 @@ const App: React.FC = () => {
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
   const [isCensoredUnlocked, setIsCensoredUnlocked] = useState<boolean>(false);
   const isCensoredUnlockedRef = useRef<boolean>(isCensoredUnlocked);
+  const censoredLockVersionRef = useRef(0);
   isCensoredUnlockedRef.current = isCensoredUnlocked;
   const isCurrentBoardLocked = isCurrentBoardCensored && !isCensoredUnlocked;
   const isCurrentBoardLockedRef = useRef(isCurrentBoardLocked);
@@ -706,12 +707,8 @@ const App: React.FC = () => {
         const pass = loadedData.projectPassword || '';
         setProjectPassword(pass);
         projectPasswordRef.current = pass;
-        try {
-          const unlocked = sessionStorage.getItem(`ai_mix_board_censored_unlocked_${currentProject.id}`) === 'true';
-          setIsCensoredUnlocked(unlocked);
-        } catch {
-          setIsCensoredUnlocked(false);
-        }
+        // Unlocking is valid only while this window retains focus; never restore it from storage.
+        setIsCensoredUnlocked(false);
         setActiveBoardId(initialBoardId);
         setAllNodes(loadedData.nodes);
         undoStackRef.current = [];
@@ -1186,15 +1183,10 @@ const App: React.FC = () => {
   };
 
   const handleUnlockCensored = useCallback((enteredPassword: string): boolean => {
+    if (document.hidden || !document.hasFocus()) return false;
     const curPassword = projectPasswordRef.current;
     if (!curPassword || enteredPassword.trim() === curPassword.trim()) {
       setIsCensoredUnlocked(true);
-      const projId = currentProjectRef.current?.id;
-      if (projId) {
-        try {
-          sessionStorage.setItem(`ai_mix_board_censored_unlocked_${projId}`, 'true');
-        } catch {}
-      }
       showToast('機敏畫布已解鎖', 'success');
       return true;
     }
@@ -1202,6 +1194,7 @@ const App: React.FC = () => {
   }, [showToast]);
 
   const handleSetProjectPassword = async (newPassword: string) => {
+    const lockVersion = censoredLockVersionRef.current;
     const trimmed = newPassword.trim();
     setProjectPassword(trimmed);
     projectPasswordRef.current = trimmed;
@@ -1210,34 +1203,46 @@ const App: React.FC = () => {
     if (token && proj?.spreadsheetId) {
       await saveProjectPasswordToSheet(token, proj.spreadsheetId, trimmed);
     }
-    setIsCensoredUnlocked(true);
-    if (proj?.id) {
-      try {
-        sessionStorage.setItem(`ai_mix_board_censored_unlocked_${proj.id}`, 'true');
-      } catch {}
-    }
-    showToast('專案保護密碼已儲存並解鎖', 'success');
+    // A save finishing after focus loss must not undo the automatic lock.
+    const canUnlock = lockVersion === censoredLockVersionRef.current &&
+      proj?.id === currentProjectRef.current?.id && !document.hidden && document.hasFocus();
+    setIsCensoredUnlocked(canUnlock);
+    showToast(canUnlock ? '專案保護密碼已儲存並解鎖' : '專案保護密碼已儲存，請重新解鎖', 'success');
   };
 
+  const lockCensoredSession = useCallback(() => {
+    censoredLockVersionRef.current += 1;
+    isCensoredUnlockedRef.current = false;
+    isCurrentBoardLockedRef.current = isCurrentBoardCensored;
+    setIsCensoredUnlocked(false);
+    setIsUnlockModalOpen(false);
+    setIsPasswordModalOpen(false);
+    setInfoModalNode(null);
+  }, [isCurrentBoardCensored]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) lockCensoredSession();
+    };
+    window.addEventListener('blur', lockCensoredSession);
+    window.addEventListener('pagehide', lockCensoredSession);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    if (document.hidden || !document.hasFocus()) lockCensoredSession();
+    return () => {
+      window.removeEventListener('blur', lockCensoredSession);
+      window.removeEventListener('pagehide', lockCensoredSession);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [lockCensoredSession]);
+
   const handleToggleLockSession = useCallback(() => {
-    setIsCensoredUnlocked(prev => {
-      const projId = currentProjectRef.current?.id;
-      if (prev) {
-        // Currently unlocked -> Instantly lock
-        if (projId) {
-          try {
-            sessionStorage.removeItem(`ai_mix_board_censored_unlocked_${projId}`);
-          } catch {}
-        }
-        showToast('機敏畫布已鎖定', 'info');
-        return false;
-      } else {
-        // Currently locked -> Open password prompt modal
-        setIsUnlockModalOpen(true);
-        return prev;
-      }
-    });
-  }, [showToast]);
+    if (isCensoredUnlockedRef.current) {
+      lockCensoredSession();
+      showToast('機敏畫布已鎖定', 'info');
+    } else {
+      setIsUnlockModalOpen(true);
+    }
+  }, [lockCensoredSession, showToast]);
 
   // Duplicate node: creates a new node pointing to the EXACT same asset without cloning file
   const handleDuplicateNode = useCallback(
@@ -2008,12 +2013,12 @@ const App: React.FC = () => {
     try {
       const res = await copyNodesToClipboard(selectedNodes, clipPayload);
       if (res?.message) {
-        showToast(res.message);
+        showToast(res.message, res.success ? 'success' : 'warning');
       } else {
         showToast(`已複製 ${selectedNodes.length} 個物件`);
       }
     } catch {
-      showToast(`已複製 ${selectedNodes.length} 個物件`);
+      showToast('系統剪貼簿寫入失敗，仍可在畫布內貼上', 'warning');
     }
   }, [selectedNodeIds, currentBoardNodes, currentProject?.id, currentProject?.spreadsheetId, showToast]);
 
@@ -4239,6 +4244,7 @@ const App: React.FC = () => {
               onDuplicateNode={handleDuplicateNode}
               onDeleteNode={handleDeleteNode}
               onDownloadNode={handleDownloadSingleNode}
+              onCopyNode={node => { void handleCopy([node.id]); }}
               onRetryNode={handleRetryNode}
               onShowInfo={setInfoModalNode}
               isDeleting={deletingNodeIds.has(node.id)}

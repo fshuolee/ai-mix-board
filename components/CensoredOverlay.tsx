@@ -72,7 +72,7 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
   const [inputPassword, setInputPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [isSettingPassword, setIsSettingPassword] = useState(!projectPassword);
+  const isSettingPassword = !projectPassword;
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -81,7 +81,6 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setIsSettingPassword(!projectPassword);
       setErrorMessage('');
       setInputPassword('');
       setNewPassword('');
@@ -122,7 +121,6 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
       setIsSubmitting(true);
       setErrorMessage('');
       await onSetProjectPassword(newPassword.trim());
-      onUnlock(newPassword.trim());
       onClose();
     } catch (err: any) {
       setErrorMessage(err.message || '密碼設定失敗');
@@ -138,6 +136,7 @@ export const CensoredUnlockModal: React.FC<CensoredUnlockModalProps> = ({
         <button
           type="button"
           onClick={onClose}
+          data-modal-close
           className="absolute top-4 right-4 p-1.5 rounded-xl text-gray-400 hover:text-white hover:bg-gray-800/80 transition-colors cursor-pointer"
           title="關閉 (Esc)"
         >
@@ -311,6 +310,7 @@ export const PasswordManageModal: React.FC<PasswordManageModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -345,7 +345,7 @@ export const PasswordManageModal: React.FC<PasswordManageModalProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="sm" busy={isSaving} className="select-none">
+    <Modal isOpen={isOpen} onClose={onClose} size="sm" busy={isSaving} initialFocusRef={inputRef} className="select-none">
       <ModalHeader
         icon={<KeyRound />}
         tone="amber"
@@ -359,6 +359,7 @@ export const PasswordManageModal: React.FC<PasswordManageModalProps> = ({
               {currentPassword ? '新密碼' : '設定保護密碼'}
             </label>
             <input
+              ref={inputRef}
               type={showPassword ? 'text' : 'password'}
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}

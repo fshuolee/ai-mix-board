@@ -107,15 +107,18 @@ export const Modal: React.FC<ModalProps> = ({
     if (!isOpen) return;
     previouslyFocused.current = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    const firstControl = panel
-      ? (Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) as HTMLElement[]).find(
-          el => !el.hasAttribute('data-modal-close')
-        )
-      : undefined;
-    const target =
-      initialFocusRef?.current ?? (panel?.querySelector('[autofocus]') as HTMLElement | null) ?? firstControl ?? panel;
-    // Defer so the portal content is in the DOM and animations have started.
-    const raf = requestAnimationFrame(() => target?.focus({ preventScroll: true }));
+    // Resolve the target after open-time state updates: they may replace an input
+    // (for example switching from password setup to unlock) before this frame.
+    const raf = requestAnimationFrame(() => {
+      const firstControl = panel
+        ? (Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) as HTMLElement[]).find(
+            el => !el.hasAttribute('data-modal-close')
+          )
+        : undefined;
+      const target =
+        initialFocusRef?.current ?? (panel?.querySelector('[autofocus]') as HTMLElement | null) ?? firstControl ?? panel;
+      target?.focus({ preventScroll: true });
+    });
     return () => {
       cancelAnimationFrame(raf);
       previouslyFocused.current?.focus?.({ preventScroll: true });
