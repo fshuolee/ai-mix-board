@@ -30,6 +30,7 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
   onClose,
   onRetryNode,
   onSelectSources,
+  onApplyNodeParams,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 

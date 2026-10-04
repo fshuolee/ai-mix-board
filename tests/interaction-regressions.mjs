@@ -163,6 +163,14 @@ try {
       });
     }
   });
+
+  await run('node details applies generation parameters to Inspector and closes', async page => {
+    await page.evaluate(() => window.renderNodeInfo());
+    await page.waitForSelector('[role="dialog"]');
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent.includes('套用至 Inspector')).click());
+    const result = await page.evaluate(() => ({ params: window.appliedNodeParams, closed: window.nodeInfoClosed }));
+    assert.deepEqual(result, { params: { seed: 42, aspect_ratio: '16:9' }, closed: true });
+  });
 } finally {
   await browser?.close();
   await server.close();

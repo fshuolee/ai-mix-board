@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node tests/interaction-regressions.mjs",
+    "typecheck": "tsc --noEmit",
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,6 +19,8 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.5.4",
     "postcss": "^8.5.26",

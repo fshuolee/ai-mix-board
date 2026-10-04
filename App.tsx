@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type {
   CanvasNode,
   ImageNode,
+  VideoNode,
   TextNode,
   SourceDetail,
   BoardMetadata,
@@ -189,6 +190,16 @@ const findOpenPosition = (
 
 const DEFAULT_BOARD_ID = 'board_main';
 
+const TOAST_CONFIG = {
+  durationMs: 2200,
+  toneClasses: {
+    info: 'border-blue-500/40 text-blue-200',
+    success: 'border-emerald-500/40 text-emerald-200',
+    warning: 'border-amber-500/40 text-amber-200',
+  },
+} as const;
+type ToastTone = keyof typeof TOAST_CONFIG.toneClasses;
+
 const App: React.FC = () => {
   // Auth state
   const [user, setUser] = useState<GoogleUserProfile | null>(getCurrentUser());
@@ -346,15 +357,15 @@ const App: React.FC = () => {
   const [copiedNodesClipboard, setCopiedNodesClipboard] = useState<CanvasNode[]>([]);
   const [cutNodeIds, setCutNodeIds] = useState<Set<string>>(new Set());
   const [clipboardMeta, setClipboardMeta] = useState<ClipboardPayload | null>(() => getInternalClipboardPayload());
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone: ToastTone } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback((message: string, tone: ToastTone = 'info') => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    setToastMessage(message);
+    setToast({ message, tone });
     toastTimerRef.current = window.setTimeout(() => {
-      setToastMessage(null);
-    }, 2200);
+      setToast(null);
+    }, TOAST_CONFIG.durationMs);
   }, []);
 
   // Modals state
@@ -383,6 +394,7 @@ const App: React.FC = () => {
     isOpen: boolean;
     position: { x: number; y: number };
     targetType: 'node' | 'canvas';
+    targetId?: string;
   }>({
     isOpen: false,
     position: { x: 0, y: 0 },
@@ -3686,6 +3698,7 @@ const App: React.FC = () => {
         isOpen: true,
         position: { x: e.clientX, y: e.clientY },
         targetType: 'node',
+        targetId: nodeId,
       });
     },
     []
@@ -4517,12 +4530,13 @@ const App: React.FC = () => {
       />
 
       {/* Floating Status / Toast notification */}
-      {toastMessage && (
+      {toast && (
         <div
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-gray-900/90 backdrop-blur-xl border border-blue-500/40 text-blue-200 text-xs font-medium rounded-full shadow-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none"
+          role={toast.tone === 'warning' ? 'alert' : 'status'}
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-gray-900/90 backdrop-blur-xl border text-xs font-medium rounded-full shadow-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none ${TOAST_CONFIG.toneClasses[toast.tone]}`}
         >
-          <ClipboardCheck className="w-4 h-4 text-blue-400 shrink-0" />
-          <span>{toastMessage}</span>
+          <ClipboardCheck className="w-4 h-4 shrink-0" />
+          <span>{toast.message}</span>
         </div>
       )}
 
