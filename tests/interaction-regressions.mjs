@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
 import { createServer } from 'vite';
 import puppeteer from 'puppeteer-core';
+import tailwindcss from '@tailwindcss/vite';
 
 const browserCandidates = [
   process.env.BROWSER_EXECUTABLE,
@@ -14,7 +15,7 @@ const executablePath = (await Promise.all(browserCandidates.map(async candidate 
 }))).find(Boolean);
 assert.ok(executablePath, 'Set BROWSER_EXECUTABLE to a Chrome/Chromium executable');
 
-const server = await createServer({ configFile: false, server: { host: '127.0.0.1', port: 0 }, esbuild: { jsx: 'automatic' }, optimizeDeps: { include: ['react', 'react-dom/client', 'react/jsx-dev-runtime', 'lucide-react', '@google/genai'] } });
+const server = await createServer({ configFile: false, plugins: [tailwindcss()], server: { host: '127.0.0.1', port: 0 }, esbuild: { jsx: 'automatic' }, optimizeDeps: { include: ['react', 'react-dom/client', 'react/jsx-dev-runtime', 'lucide-react', '@google/genai'] } });
 await server.listen();
 let browser;
 let failed = 0;
@@ -170,6 +171,78 @@ try {
     await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent.includes('套用至 Inspector')).click());
     const result = await page.evaluate(() => ({ params: window.appliedNodeParams, closed: window.nodeInfoClosed }));
     assert.deepEqual(result, { params: { seed: 42, aspect_ratio: '16:9' }, closed: true });
+  });
+
+  const tabScroller = '[data-board-tab-id]';
+  async function renderTabs(page) {
+    await page.setViewport({ width: 900, height: 700 });
+    await page.evaluate(() => window.renderBoardTabs());
+    await page.waitForSelector(tabScroller);
+    await page.waitForFunction(() => {
+      const scroller = document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto');
+      return scroller && scroller.scrollWidth > scroller.clientWidth;
+    });
+  }
+
+  await run('tab wheel scrolling follows every delta immediately and consumes the event', async page => {
+    await renderTabs(page);
+    const result = await page.evaluate(() => {
+      const el = document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto');
+      const start = el.scrollLeft;
+      const event = new WheelEvent('wheel', { deltaX: 80, bubbles: true, cancelable: true });
+      el.dispatchEvent(event);
+      const first = el.scrollLeft - start;
+      for (let index = 0; index < 5; index++) el.dispatchEvent(new WheelEvent('wheel', { deltaY: 20, bubbles: true, cancelable: true }));
+      return { first, total: el.scrollLeft - start, consumed: event.defaultPrevented };
+    });
+    assert.deepEqual(result, { first: 80, total: 180, consumed: true });
+  });
+
+  await run('tab scroller width stays stable when the left arrow becomes available', async page => {
+    await renderTabs(page);
+    const before = await page.evaluate(() => document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').clientWidth);
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto');
+      el.scrollTo({ left: 100, behavior: 'instant' });
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.title === '向左滾動畫布分頁' && !button.disabled));
+    const after = await page.evaluate(() => document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').clientWidth);
+    assert.equal(after, before);
+  });
+
+  await run('native horizontal wheel input moves tabs once without drifting back', async page => {
+    await renderTabs(page);
+    const position = await page.evaluate(() => {
+      const rect = document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    await page.mouse.move(position.x, position.y);
+    for (let index = 0; index < 3; index++) await page.mouse.wheel({ deltaX: 80 });
+    await page.waitForFunction(() => document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').scrollLeft >= 240);
+    const actual = await page.evaluate(async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').scrollLeft;
+    });
+    assert.equal(actual, 240);
+  });
+
+  await run('rapid tab arrow clicks accumulate and resizing keeps controls usable', async page => {
+    await renderTabs(page);
+    await page.waitForFunction(() => !document.querySelector('button[title="向右滾動畫布分頁"]').disabled);
+    const expected = await page.evaluate(() => {
+      const el = document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto');
+      const right = document.querySelector('button[title="向右滾動畫布分頁"]');
+      right.click(); right.click(); right.click();
+      return el.clientWidth * 0.8 * 3;
+    });
+    await page.waitForFunction(expected => Math.abs(document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').scrollLeft - expected) <= 2, {}, expected);
+    await page.setViewport({ width: 390, height: 700 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto');
+      return el.clientWidth > 0 && document.querySelector('button[title="向右滾動畫布分頁"]').getBoundingClientRect().right <= window.innerWidth;
+    });
+    await page.$eval('button[title="向左滾動畫布分頁"]', button => button.click());
+    await page.waitForFunction(expected => document.querySelector('[data-board-tab-id]').parentElement.closest('.overflow-x-auto').scrollLeft < expected - 2, {}, expected);
   });
 } finally {
   await browser?.close();

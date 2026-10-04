@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Layers,
@@ -21,6 +21,12 @@ import {
 import { BoardMetadata, CanvasNode } from '../types';
 import { t, Locale } from '../services/i18n';
 import { useConfirm } from './ui/ConfirmDialog';
+
+const TAB_SCROLL_CONFIG = {
+  edgeTolerance: 2,
+  buttonViewportFraction: 0.8,
+  normalLineHeightMultiplier: 1.2,
+} as const;
 
 interface BoardTabsProps {
   boards: BoardMetadata[];
@@ -66,6 +72,8 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const overviewRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const tabsContentRef = useRef<HTMLDivElement>(null);
+  const scrollTargetRef = useRef<number | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
@@ -77,31 +85,72 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
   }, [editingBoardId]);
 
   // Check scroll bounds
-  const updateScrollBounds = () => {
+  const updateScrollBounds = useCallback(() => {
     const el = scrollContainerRef.current;
     if (el) {
-      setCanScrollLeft(el.scrollLeft > 2);
-      setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+      const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+      setCanScrollLeft(el.scrollLeft > TAB_SCROLL_CONFIG.edgeTolerance);
+      setCanScrollRight(el.scrollLeft < maxScroll - TAB_SCROLL_CONFIG.edgeTolerance);
+      if (
+        scrollTargetRef.current !== null &&
+        Math.abs(el.scrollLeft - scrollTargetRef.current) <= TAB_SCROLL_CONFIG.edgeTolerance
+      ) {
+        scrollTargetRef.current = null;
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
     updateScrollBounds();
-    window.addEventListener('resize', updateScrollBounds);
-    return () => window.removeEventListener('resize', updateScrollBounds);
-  }, [boards]);
+    // Observe both the viewport and intrinsic tab width (rename, counts, resize).
+    const observer = new ResizeObserver(updateScrollBounds);
+    if (scrollContainerRef.current) observer.observe(scrollContainerRef.current);
+    if (tabsContentRef.current) observer.observe(tabsContentRef.current);
+    return () => observer.disconnect();
+  }, [updateScrollBounds]);
 
   // Auto-scroll active board into view
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (el) {
-      const activeElement = el.querySelector(`[data-board-tab-id="${activeBoardId}"]`) as HTMLElement;
+      const activeElement = el.querySelector(`[data-board-tab-id="${CSS.escape(activeBoardId)}"]`) as HTMLElement;
       if (activeElement) {
-        activeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        // Reveal only within this strip; scrollIntoView can also move its ancestors.
+        const viewport = el.getBoundingClientRect();
+        const tab = activeElement.getBoundingClientRect();
+        const delta = tab.left < viewport.left ? tab.left - viewport.left
+          : tab.right > viewport.right ? tab.right - viewport.right : 0;
+        if (delta) el.scrollBy({ left: delta, behavior: 'smooth' });
       }
     }
     updateScrollBounds();
-  }, [activeBoardId]);
+  }, [activeBoardId, updateScrollBounds]);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) return;
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (!delta) return;
+      // Consume the native event once. Instant movement preserves every trackpad
+      // delta instead of restarting a CSS smooth animation for every wheel event.
+      event.preventDefault();
+      event.stopPropagation();
+      scrollTargetRef.current = null;
+      let unit = 1;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+        const style = getComputedStyle(el);
+        unit = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * TAB_SCROLL_CONFIG.normalLineHeightMultiplier;
+      } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+        unit = el.clientWidth;
+      }
+      el.scrollBy({ left: delta * unit, behavior: 'instant' });
+    };
+    // React wheel listeners are passive, so cancellation must use a native listener.
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, []);
 
   const handleOpenMenu = (board: BoardMetadata, targetEl: HTMLElement) => {
     if (menuState?.board.id === board.id) {
@@ -158,22 +207,16 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
     };
   }, [menuState]);
 
-  const handleScroll = (delta: number) => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: delta, behavior: 'smooth' });
-      setTimeout(updateScrollBounds, 200);
-    }
-  };
-
-  const handleWheelScroll = (e: React.WheelEvent) => {
-    if (scrollContainerRef.current) {
-      if (Math.abs(e.deltaX) > 0) {
-        scrollContainerRef.current.scrollLeft += e.deltaX;
-      } else {
-        scrollContainerRef.current.scrollLeft += e.deltaY;
-      }
-      updateScrollBounds();
-    }
+  const handleScroll = (direction: number) => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    // Accumulate quick clicks against the intended destination, not the animation's
+    // intermediate position; each click advances by part of the current viewport.
+    const step = el.clientWidth * TAB_SCROLL_CONFIG.buttonViewportFraction;
+    const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth,
+      (scrollTargetRef.current ?? el.scrollLeft) + direction * step));
+    scrollTargetRef.current = target;
+    el.scrollTo({ left: target, behavior: 'smooth' });
   };
 
   const handleStartRename = (board: BoardMetadata) => {
@@ -212,12 +255,12 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
 
   return (
     <div
-      className={`absolute bottom-6 left-6 z-20 flex items-center max-w-[calc(100vw-360px)] select-none transition-opacity duration-200 ${
+      className={`absolute bottom-6 left-6 z-20 flex items-center min-w-0 max-w-[calc(100vw-360px)] max-sm:max-w-[calc(100vw-3rem)] select-none transition-opacity duration-200 ${
         disabled ? 'pointer-events-none opacity-40' : ''
       }`}
       onPointerDown={e => e.stopPropagation()}
     >
-      <div className="flex items-center gap-1.5 p-1.5 bg-gray-950/90 backdrop-blur-2xl border border-gray-800/90 rounded-2xl shadow-2xl relative max-w-full">
+      <div className="flex items-center gap-1.5 p-1.5 bg-gray-950/90 backdrop-blur-2xl border border-gray-800/90 rounded-2xl shadow-2xl relative min-w-0 max-w-full">
         {/* All Boards Overview Dropdown Trigger */}
         <div className="relative" ref={overviewRef}>
           <button
@@ -328,23 +371,22 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
         <div className="w-px h-5 bg-gray-800/80 mx-0.5 shrink-0" />
 
         {/* Scroll Left Button */}
-        {canScrollLeft && (
-          <button
-            onClick={() => handleScroll(-180)}
-            className="p-1 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0"
-            title={t('board.scrollLeft', locale)}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-        )}
+        <button
+          onClick={() => handleScroll(-1)}
+          disabled={!canScrollLeft}
+          className="p-1 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0 disabled:opacity-30 disabled:pointer-events-none"
+          title={t('board.scrollLeft', locale)}
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
 
         {/* Horizontal Scrollable Tabs */}
         <div
           ref={scrollContainerRef}
           onScroll={updateScrollBounds}
-          onWheel={handleWheelScroll}
-          className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-[calc(100vw-520px)] scroll-smooth py-0.5 px-0.5"
+          className="min-w-0 flex-1 overflow-x-auto overscroll-x-contain scrollbar-none py-0.5 px-0.5"
         >
+          <div ref={tabsContentRef} className="flex items-center gap-1 min-w-max">
           {boards.map((board) => {
             const isActive = board.id === activeBoardId;
             const isEditing = board.id === editingBoardId;
@@ -447,18 +489,18 @@ const BoardTabs: React.FC<BoardTabsProps> = ({
               </div>
             );
           })}
+          </div>
         </div>
 
         {/* Scroll Right Button */}
-        {canScrollRight && (
-          <button
-            onClick={() => handleScroll(180)}
-            className="p-1 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0"
-            title={t('board.scrollRight', locale)}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        )}
+        <button
+          onClick={() => handleScroll(1)}
+          disabled={!canScrollRight}
+          className="p-1 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0 disabled:opacity-30 disabled:pointer-events-none"
+          title={t('board.scrollRight', locale)}
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
 
         {/* Add New Board Button */}
         <button

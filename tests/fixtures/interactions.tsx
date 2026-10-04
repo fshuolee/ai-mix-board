@@ -7,6 +7,15 @@ import * as clipboard from '../../services/clipboardService';
 import { storeImage } from '../../services/dbService';
 import { ConfirmProvider } from '../../components/ui/ConfirmDialog';
 import { NodeInfoModal } from '../../components/NodeInfoModal';
+import BoardTabs from '../../components/BoardTabs';
+
+function BoardTabsFixture() {
+  const [boards, setBoards] = React.useState(() => Array.from({ length: 30 }, (_, index) => ({ id: `fixture-board-${index}`, name: `Board ${index + 1}`, createdAt: new Date().toISOString() })));
+  const [activeBoardId, setActiveBoardId] = React.useState(boards[0].id);
+  return <ConfirmProvider><BoardTabs boards={boards} activeBoardId={activeBoardId} onSelectBoard={setActiveBoardId}
+    onAddBoard={noop} onRenameBoard={(id, name) => setBoards(previous => previous.map(board => board.id === id ? { ...board, name } : board))}
+    onDeleteBoard={noop} allNodes={[]} /></ConfirmProvider>;
+}
 
 const root = createRoot(document.getElementById('root')!);
 const node = { id: 'fixture-node', x: 0, y: 0, width: 160, height: 120, rotation: 0, content: '', type: 'video' as const };
@@ -16,6 +25,10 @@ const noop = () => {};
 Object.assign(window, {
   clipboard,
   storeImage,
+  renderBoardTabs: async () => {
+    await import('../../index.css');
+    root.render(<BoardTabsFixture />);
+  },
   renderNodeInfo: () => root.render(
     <NodeInfoModal isOpen node={{ ...node, type: 'image', generationModel: 'Fixture Model', generationParams: { seed: 42, aspect_ratio: '16:9' } }}
       onClose={() => Object.assign(window, { nodeInfoClosed: true })}
