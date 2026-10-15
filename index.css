@@ -108,3 +108,12 @@ body.space-pan-dragging * {
 .canvas-space-pan.canvas-is-panning * {
   cursor: grabbing !important;
 }
+
+/* Transparent erasures remain visible in both the editor and saved board previews. */
+.image-transparency-grid {
+  --transparency-cell: 16px;
+  --transparency-light: #374151;
+  --transparency-dark: #1f2937;
+  background: conic-gradient(var(--transparency-light) 25%, var(--transparency-dark) 0 50%, var(--transparency-light) 0 75%, var(--transparency-dark) 0)
+    0 0 / var(--transparency-cell) var(--transparency-cell);
+}

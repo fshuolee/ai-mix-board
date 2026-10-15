@@ -1,10 +1,13 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Loader2, Copy, ClipboardCopy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info, Film } from 'lucide-react';
+import { Loader2, Copy, ClipboardCopy, Trash2, ExternalLink, HardDrive, Download, Sparkles, AlertCircle, X, RotateCw, Info, Film, Pencil } from 'lucide-react';
 import type { CanvasNode, TextNode, ImageNode, VideoNode } from '../types';
 import { getImage } from '../services/dbService';
 import { getAssetBlobFromDrive } from '../services/googleDriveService';
 import { getAccessToken } from '../services/googleAuthService';
 import { fetchImageBlob } from '../services/atlasCloudService';
+import { ImageEditorModal } from './ImageEditorModal';
+import { loadNodeImage } from '../services/imageInputService';
+import { hasImageEdits, renderEditedImage } from '../utils/imageEditing';
 
 interface NodeRendererProps {
   node: CanvasNode;
@@ -24,6 +27,7 @@ interface NodeRendererProps {
   isMultiSelecting?: boolean;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
   isSpacePressed?: boolean;
+  isLocked?: boolean;
 }
 
 // Session-level in-memory ObjectURL cache to prevent GC thrashing and image flicker
@@ -47,18 +51,24 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   isMultiSelecting,
   onContextMenu,
   isSpacePressed = false,
+  isLocked = false,
 }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isImageEditorOpen, setIsImageEditorOpen] = useState(false);
+  useEffect(() => { if (isLocked) setIsImageEditorOpen(false); }, [isLocked]);
+  const [editedPreview, setEditedPreview] = useState<{ source: string; edits: ImageNode['imageEdits']; url: string } | null>(null);
+  const [previewError, setPreviewError] = useState('');
   const isMedia = node.type === 'image' || node.type === 'video';
   const mediaNode = isMedia ? (node as ImageNode | VideoNode) : null;
   const targetFileId = isMedia ? (mediaNode?.driveFileId || mediaNode?.content || node.id) : null;
+  const assetNodeId = node.type === 'image' ? node.activeVariantId || node.id : node.id;
   const [imageUrl, setImageUrl] = useState<string | null>(() => {
     if (!targetFileId) return null;
     return (
       nodeObjectUrlCache.get(targetFileId) ||
       (mediaNode?.content && nodeObjectUrlCache.get(mediaNode.content)) ||
-      (node.id && nodeObjectUrlCache.get(node.id)) ||
+      (assetNodeId && nodeObjectUrlCache.get(assetNodeId)) ||
       (targetFileId.startsWith('http://') || targetFileId.startsWith('https://') || targetFileId.startsWith('data:') ? targetFileId : null) ||
       null
     );
@@ -72,13 +82,13 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
       const cached =
         nodeObjectUrlCache.get(targetFileId) ||
         (mediaNode?.content && nodeObjectUrlCache.get(mediaNode.content)) ||
-        (node.id && nodeObjectUrlCache.get(node.id));
+        (assetNodeId && nodeObjectUrlCache.get(assetNodeId));
       if (cached) {
         setImageUrl(cached);
         return;
       }
     }
-  }, [targetFileId, node.id, mediaNode?.content]);
+  }, [targetFileId, assetNodeId, mediaNode?.content]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -89,7 +99,7 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
       const cached =
         nodeObjectUrlCache.get(targetFileId) ||
         (mediaNode?.content && nodeObjectUrlCache.get(mediaNode.content)) ||
-        (node.id && nodeObjectUrlCache.get(node.id));
+        (assetNodeId && nodeObjectUrlCache.get(assetNodeId));
       if (cached) {
         setImageUrl(cached);
         return;
@@ -115,8 +125,8 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
           if (!blob && mediaNode?.content && mediaNode.content !== targetFileId) {
             blob = await getImage(mediaNode.content);
           }
-          if (!blob && node.id && node.id !== targetFileId) {
-            blob = await getImage(node.id);
+          if (!blob && assetNodeId && assetNodeId !== targetFileId) {
+            blob = await getImage(assetNodeId);
           }
 
           // 2. If not found locally, fetch from Google Drive
@@ -168,7 +178,31 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
         isCancelled = true;
       };
     }
-  }, [node.id, mediaNode?.driveFileId, mediaNode?.content, node.type, node.status, targetFileId, isMedia]);
+  }, [node.id, assetNodeId, mediaNode?.driveFileId, mediaNode?.content, node.type, node.status, targetFileId, isMedia]);
+
+  const imageEdits = node.type === 'image' ? node.imageEdits : undefined;
+  useEffect(() => {
+    let cancelled = false;
+    let previewUrl: string | undefined;
+    let releaseSource: (() => void) | undefined;
+    setPreviewError('');
+    if (!imageUrl || !hasImageEdits(imageEdits)) { setEditedPreview(null); return; }
+    loadNodeImage(node as ImageNode, imageUrl, fetchImageBlob).then(loaded => {
+      if (cancelled) { loaded.release(); return; }
+      releaseSource = loaded.release;
+      const rendered = renderEditedImage(loaded.image, imageEdits);
+      rendered.toBlob(blob => {
+        if (cancelled) return;
+        if (!blob) { setPreviewError('無法預覽修改後的圖片'); return; }
+        previewUrl = URL.createObjectURL(blob);
+        setEditedPreview({ source: imageUrl, edits: imageEdits, url: previewUrl });
+      }, 'image/png');
+    }).catch(error => { if (!cancelled) setPreviewError(error.message); });
+    return () => { cancelled = true; releaseSource?.(); if (previewUrl) URL.revokeObjectURL(previewUrl); };
+  }, [imageUrl, imageEdits]);
+  const displayImageUrl = hasImageEdits(imageEdits)
+    ? (editedPreview?.source === imageUrl && editedPreview.edits === imageEdits ? editedPreview.url : null)
+    : imageUrl;
 
   const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -204,9 +238,11 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
   };
 
   const handleDoubleClick = () => {
-    if (isSpacePressed) return;
+    if (isSpacePressed || isLocked) return;
     if (node.type === 'text') {
       setIsEditing(true);
+    } else if (node.type === 'image' && imageUrl && (!node.status || node.status === 'idle')) {
+      setIsImageEditorOpen(true);
     }
   };
 
@@ -498,13 +534,13 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               <span className="text-[11px]">載入 Drive 資源...</span>
             </div>
           ) : imageUrl ? (
-            <img
-              src={imageUrl}
+            displayImageUrl ? <img
+              src={displayImageUrl}
               alt={mediaNode?.originalFileName || 'Asset'}
-              className="w-full h-full object-contain rounded-xl"
+              className={`w-full h-full object-contain rounded-xl ${hasImageEdits(imageEdits) ? 'image-transparency-grid' : ''}`}
               draggable={false}
               referrerPolicy="no-referrer"
-            />
+            /> : <span className="text-xs text-gray-400">{previewError || '正在套用圖片修改...'}</span>
           ) : (
             <div className="text-gray-500 text-xs text-center p-3 flex flex-col items-center justify-center gap-2">
               <span className="font-medium text-gray-400">無法載入圖像資源</span>
@@ -539,6 +575,19 @@ const NodeRenderer: React.FC<NodeRendererProps> = ({
               </button>
             </div>
           )}
+
+          {imageUrl && <button type="button" disabled={isLocked} aria-label="編輯圖片" title="標注、擦除與裁切圖片"
+            onPointerDown={event => event.stopPropagation()}
+            onClick={event => { event.stopPropagation(); setIsImageEditorOpen(true); }}
+            className="absolute top-2 right-2 inline-flex items-center gap-1.5 rounded-lg border border-gray-600 bg-gray-900/90 px-2 py-1.5 text-xs text-gray-100 hover:bg-blue-700 shadow-md">
+            <Pencil className="w-3.5 h-3.5" />編輯
+          </button>}
+          {hasImageEdits(imageEdits) && <span className="absolute top-2 left-2 rounded bg-blue-950/90 px-2 py-1 text-[10px] text-blue-200 pointer-events-none">已修改</span>}
+          {isImageEditorOpen && !isLocked && imageUrl && <div onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()}
+            onDoubleClick={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
+            <ImageEditorModal sourceUrl={imageUrl} sourceNode={node} initialEdits={imageEdits} onClose={() => setIsImageEditorOpen(false)}
+              onSave={edits => { onNodeUpdate(node.id, { imageEdits: edits }); setIsImageEditorOpen(false); }} />
+          </div>}
 
           {/* Quick Download Hover Button for Images */}
           {onDownloadNode && (
@@ -845,6 +894,8 @@ export default React.memo(NodeRenderer, (prevProps, nextProps) => {
     prevProps.node.content === nextProps.node.content &&
     prevProps.node.status === nextProps.node.status &&
     prevProps.node.errorMessage === nextProps.node.errorMessage &&
+    (prevProps.node as ImageNode).activeVariantId === (nextProps.node as ImageNode).activeVariantId &&
+    (prevProps.node as ImageNode).imageEdits === (nextProps.node as ImageNode).imageEdits &&
     (prevProps.node as ImageNode).driveFileId === (nextProps.node as ImageNode).driveFileId &&
     (prevProps.node as ImageNode).originalFileName === (nextProps.node as ImageNode).originalFileName &&
     // Check if x/y changed by something OTHER than dragging (e.g. alignment or undo)
@@ -860,6 +911,7 @@ export default React.memo(NodeRenderer, (prevProps, nextProps) => {
     prevProps.isDeleting === nextProps.isDeleting &&
     prevProps.isMultiSelecting === nextProps.isMultiSelecting &&
     prevProps.isSpacePressed === nextProps.isSpacePressed &&
+    prevProps.isLocked === nextProps.isLocked &&
     prevProps.zoom === nextProps.zoom
   );
 });

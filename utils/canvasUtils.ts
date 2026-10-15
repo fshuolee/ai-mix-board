@@ -71,7 +71,10 @@ export async function getNodeBlob(
     // 1. Try local IndexedDB cache first
     let blob: Blob | null = null;
     try {
-      blob = await getImage(fileId);
+      for (const candidateId of new Set([fileId, imgNode.content, imgNode.activeVariantId || node.id].filter(Boolean))) {
+        blob = await getImage(candidateId);
+        if (blob) break;
+      }
     } catch (err) {
       console.warn('Failed to retrieve image from IndexedDB:', err);
     }
@@ -86,9 +89,10 @@ export async function getNodeBlob(
     }
 
     // 3. Try fetching from content URL if it is a data URL, blob URL, or web link
-    if (!blob && imgNode.content && (imgNode.content.startsWith('blob:') || imgNode.content.startsWith('data:') || imgNode.content.startsWith('http'))) {
+    const directUrl = [imgNode.content, imgNode.driveViewLink].find(url => url && /^(blob:|data:|https?:)/.test(url));
+    if (!blob && directUrl) {
       try {
-        const res = await fetch(imgNode.content);
+        const res = await fetch(directUrl);
         if (res.ok) {
           blob = await res.blob();
         }

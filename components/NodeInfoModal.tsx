@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Copy,
   Check,
@@ -13,6 +13,8 @@ import {
   RotateCw,
 } from 'lucide-react';
 import { CanvasNode, ImageNode, TextNode } from '../types';
+import { getImageVariants } from '../utils/imageVariants';
+import { ImageVariantPreview } from './ImageVariantPreview';
 import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton } from './ui/Modal';
 
 interface NodeInfoModalProps {
@@ -20,21 +22,32 @@ interface NodeInfoModalProps {
   node: CanvasNode | null;
   onClose: () => void;
   onRetryNode?: (nodeId: string) => void;
+  onRetryVariantSync?: (nodeId: string, variantId: string) => void;
+  onSelectVariant?: (nodeId: string, variantId: string) => void;
   onSelectSources?: (sourceIds: string[]) => void;
   onApplyNodeParams?: (params: Record<string, any>) => void;
 }
 
 export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
   isOpen,
-  node,
+  node: boardNode,
   onClose,
   onRetryNode,
   onSelectSources,
+  onSelectVariant,
+  onRetryVariantSync,
   onApplyNodeParams,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  if (!isOpen || !node) return null;
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  useEffect(() => { setPreviewId(null); }, [boardNode?.id, isOpen]);
+  if (!isOpen || !boardNode) return null;
+  const variants = boardNode.type === 'image' ? getImageVariants(boardNode) : [];
+  const activeId = boardNode.type === 'image' ? boardNode.activeVariantId || variants[0]?.id : undefined;
+  const preview = variants.find(variant => variant.id === (previewId || activeId)) || variants[0];
+  const node = preview ? { ...boardNode, ...preview, id: boardNode.id, createdAt: preview.createdAt } as CanvasNode : boardNode;
+  const isVariantGenerating = boardNode.type === 'image' && boardNode.variantStatus === 'generating';
 
   const isImage = node.type === 'image';
   const imageNode = isImage ? (node as ImageNode) : null;
@@ -90,6 +103,36 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
       />
 
       <ModalBody className="p-5 space-y-4">
+        {isImage && variants.length > 0 && <section className="bg-gray-950/60 rounded-xl p-3.5 border border-gray-800 space-y-3" aria-label="圖片 variants">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-gray-200">Variants ({variants.length})</span>
+            <span className="text-[11px] text-gray-400">生成會保留所有版本</span>
+          </div>
+          {preview && <div className="flex items-center justify-center h-48 rounded-lg bg-gray-900 overflow-hidden">
+            <ImageVariantPreview variant={preview} className="w-full h-full" />
+          </div>}
+          <div className="grid grid-cols-4 gap-2 max-h-48 overflow-auto">
+            {variants.map((variant, index) => <button key={variant.id} type="button" data-variant-id={variant.id}
+              data-variant-representative={variant.id === activeId} aria-label={`預覽版本 ${index + 1}`} aria-pressed={variant.id === preview?.id}
+              onClick={() => setPreviewId(variant.id)} className={`rounded-lg border overflow-hidden text-left ${variant.id === preview?.id ? 'border-blue-400 bg-blue-950/40' : 'border-gray-700 bg-gray-900'}`}>
+              <div className="h-16 flex items-center justify-center overflow-hidden"><ImageVariantPreview variant={variant} className="w-full h-full" /></div>
+              <div className="px-2 py-1 text-[10px] text-gray-300">{variant.id === activeId ? '代表圖片' : `版本 ${index + 1}`}</div>
+            </button>)}
+          </div>
+          {preview?.syncError && <div className="text-xs text-amber-300 space-y-2" role="alert">
+            <p>{preview.syncError}</p>
+            {onRetryVariantSync && <button type="button" className="underline" onClick={() => onRetryVariantSync(boardNode.id, preview.id)}>重試此版本同步</button>}
+          </div>}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] text-gray-400">{preview ? formatDate(preview.createdAt) : ''}</span>
+            {onSelectVariant && preview && <button type="button" disabled={preview.id === activeId} onClick={() => onSelectVariant(boardNode.id, preview.id)}
+              className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500">
+              {preview.id === activeId ? '目前代表圖片' : '設為代表圖片'}
+            </button>}
+          </div>
+        </section>}
+        {isVariantGenerating && <p role="status" className="text-xs text-blue-300">正在生成新的 variant，目前代表圖片會保留。</p>}
+        {boardNode.type === 'image' && boardNode.variantError && <p role="alert" className="text-xs text-red-300">{boardNode.variantError}</p>}
         {/* 1. Basic Properties */}
         <div className="bg-gray-950/60 rounded-xl p-3.5 border border-gray-800 space-y-2.5">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-300">
@@ -329,10 +372,9 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
             <ModalButton
               variant="primary"
               icon={<RotateCw />}
-              onClick={() => {
-                onRetryNode(node.id);
-                onClose();
-              }}
+              data-regenerate-image
+              disabled={isVariantGenerating || boardNode.status === 'generating'}
+              onClick={() => { onRetryNode(boardNode.id); }}
             >
               重新生成
             </ModalButton>

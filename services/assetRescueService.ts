@@ -1,3 +1,4 @@
+import { expandImageVariantNodes } from '../utils/imageVariants';
 import { CanvasNode, ImageNode } from '../types';
 import { getAllLocalImages, storeImage, isDriveFileId } from './dbService';
 import {
@@ -35,7 +36,7 @@ export async function scanForLostAssets(
 ): Promise<RescuableAsset[]> {
   // 1. Collect all IDs and Drive File IDs currently in use on canvas
   const usedIdentifiers = new Set<string>();
-  currentNodes.forEach(node => {
+  expandImageVariantNodes(currentNodes).forEach(node => {
     if (node.type === 'image') {
       const img = node as ImageNode;
       if (img.id) usedIdentifiers.add(img.id);

@@ -1,11 +1,26 @@
 export type NodeType = 'text' | 'image' | 'video';
 
+/** Coordinates and stroke widths are relative to the original image, not its board size. */
+export interface ImagePoint { x: number; y: number }
+export interface ImageCrop extends ImagePoint { width: number; height: number }
+export interface ImageStroke {
+  tool: 'pen' | 'eraser';
+  color: string;
+  width: number; // Fraction of the original image's shorter side
+  points: ImagePoint[];
+}
+export interface ImageEdits {
+  strokes: ImageStroke[];
+  crop?: ImageCrop;
+}
+
 export interface SourceDetail {
   id: string;
   type: 'text' | 'image' | 'video';
   content?: string;
   driveFileId?: string;
   originalFileName?: string;
+  imageEdits?: ImageEdits;
 }
 
 export interface BaseNode {
@@ -40,6 +55,22 @@ export interface ImageNode extends BaseNode {
   originalFileName?: string;
   mimeType?: string;
   driveViewLink?: string;
+  imageEdits?: ImageEdits; // Non-destructive overlay; content/driveFileId always reference the original.
+  variants?: ImageVariant[];
+  activeVariantId?: string;
+  variantStatus?: 'generating';
+  variantError?: string;
+}
+
+/** Every successful generation owns immutable asset IDs and its own editable overlay and recipe. */
+export interface ImageVariant extends Pick<ImageNode,
+  'content' | 'driveFileId' | 'originalFileName' | 'mimeType' | 'driveViewLink' | 'imageEdits' |
+  'generationPrompt' | 'generationModel' | 'generationModelId' | 'generationParams' | 'generationSourceIds' | 'generationSourceDetails'> {
+  id: string;
+  width: number;
+  height: number;
+  createdAt: number;
+  syncError?: string;
 }
 
 export interface VideoNode extends BaseNode {

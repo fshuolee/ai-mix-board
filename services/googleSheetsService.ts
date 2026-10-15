@@ -1,6 +1,33 @@
 import { BoardMetadata, CanvasNode, ImageNode, VideoNode, SourceDetail, TextNode, ViewportState } from '../types';
 import { refreshGoogleToken } from './googleAuthService';
 import { isDriveFileId } from './dbService';
+import { getImageVariants, parseImageVariants, expandImageVariantNodes } from '../utils/imageVariants';
+import { parseImageEdits } from '../utils/imageEditing';
+
+// Snapshots from several edited references may exceed Sheets' 50,000-character cell limit.
+// Keep legacy SourceDetails in S, image edits in T, and continue snapshots across U onward.
+const NODE_BASE_COLUMN_COUNT = 20;
+const SHEET_JSON_CHUNK_SIZE = 45000;
+const SHEET_JSON_CONTINUATION_PREFIX = 'json:';
+const nodeSheetColumnCounts = new Map<string, number>();
+function sheetColumnName(count: number): string {
+  let name = '';
+  for (; count > 0; count = Math.floor((count - 1) / 26)) name = String.fromCharCode(65 + (count - 1) % 26) + name;
+  return name;
+}
+function splitSheetJson(value: unknown): string[] {
+  const serialized = value ? JSON.stringify(value) : '';
+  const chunks: string[] = [];
+  for (let index = 0; index < serialized.length;) {
+    let end = Math.min(index + SHEET_JSON_CHUNK_SIZE, serialized.length);
+    // Never split a surrogate pair, and prefix continuations so USER_ENTERED cannot interpret formulas/numbers.
+    const lastCodeUnit = serialized.charCodeAt(end - 1);
+    if (end < serialized.length && lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF) end--;
+    chunks.push((index ? SHEET_JSON_CONTINUATION_PREFIX : '') + serialized.slice(index, end));
+    index = end;
+  }
+  return chunks.length ? chunks : [''];
+}
 
 let rateLimitCooldownUntil = 0;
 
@@ -103,7 +130,7 @@ export async function createProjectSpreadsheet(
         properties: {
           sheetId: 1,
           title: 'Nodes',
-          gridProperties: { rowCount: 200, columnCount: 14, frozenRowCount: 1 },
+          gridProperties: { rowCount: 200, columnCount: 20, frozenRowCount: 1 },
         },
       },
       {
@@ -198,6 +225,7 @@ async function initializeSheetHeaders(
     'Status',
     'ErrorMessage',
     'SourceDetails',
+    'ImageEdits',
   ];
 
   const viewportHeaders = ['BoardId', 'PanX', 'PanY', 'Zoom', 'SelectedModel', 'UpdatedAt'];
@@ -228,7 +256,7 @@ async function initializeSheetHeaders(
             values: boardRows,
           },
           {
-            range: 'Nodes!A1:S1',
+            range: 'Nodes!A1:T1',
             values: [nodeHeaders],
           },
           {
@@ -269,9 +297,9 @@ const previousSheetRowCounts = new Map<string, SheetRowCounts>();
 /**
  * Ensure all required sheets ('Boards', 'Nodes', 'Viewport', 'AssetReferences') exist
  */
-async function ensureSheetsStructure(token: string, spreadsheetId: string) {
+async function ensureSheetsStructure(token: string, spreadsheetId: string, requiredNodeColumns = NODE_BASE_COLUMN_COUNT): Promise<number> {
   const verificationKey = `${spreadsheetId}_v2_settings`;
-  if (verifiedSpreadsheets.has(verificationKey)) return;
+  if (verifiedSpreadsheets.has(verificationKey) && (nodeSheetColumnCounts.get(spreadsheetId) || 0) >= requiredNodeColumns) return nodeSheetColumnCounts.get(spreadsheetId)!;
   try {
     const metaRes = await sheetsFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title,gridProperties))`,
@@ -301,19 +329,19 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
         addSheet: {
           properties: {
             title: 'Nodes',
-            gridProperties: { rowCount: 500, columnCount: 20, frozenRowCount: 1 },
+            gridProperties: { rowCount: 500, columnCount: requiredNodeColumns, frozenRowCount: 1 },
           },
         },
       });
     } else {
-      // If Nodes sheet exists but has fewer than 20 columns, auto-expand to accommodate columns N-S
+      // Expand for all snapshot chunks before writing their values.
       const nodesSheet = sheetsList.find(s => s.title === 'Nodes');
-      if (nodesSheet && typeof nodesSheet.columnCount === 'number' && nodesSheet.columnCount < 20) {
+      if (nodesSheet && typeof nodesSheet.columnCount === 'number' && nodesSheet.columnCount < requiredNodeColumns) {
         requests.push({
           updateSheetProperties: {
             properties: {
               sheetId: nodesSheet.sheetId,
-              gridProperties: { columnCount: 20 },
+              gridProperties: { columnCount: requiredNodeColumns },
             },
             fields: 'gridProperties.columnCount',
           },
@@ -358,9 +386,13 @@ async function ensureSheetsStructure(token: string, spreadsheetId: string) {
         body: JSON.stringify({ requests }),
       });
     }
+    const columnCount = Math.max(requiredNodeColumns, sheetsList.find(sheet => sheet.title === 'Nodes')?.columnCount || 0);
+    nodeSheetColumnCounts.set(spreadsheetId, columnCount);
     verifiedSpreadsheets.add(verificationKey);
+    return columnCount;
   } catch (err) {
     console.warn('Could not verify/add sheets structure:', err);
+    return requiredNodeColumns;
   }
 }
 
@@ -445,6 +477,7 @@ export async function saveGraphToSheet(
     'Status',
     'ErrorMessage',
     'SourceDetails',
+    'ImageEdits',
   ];
 
   const nodeRows: any[][] = [nodeHeaders];
@@ -456,12 +489,18 @@ export async function saveGraphToSheet(
     const driveFileId = mediaNode?.driveFileId || (isMedia ? node.content : '');
     const nodeBoardId = node.boardId || defaultBoardId;
 
-    if (isMedia && driveFileId) {
-      const existing = assetRefMap.get(driveFileId) || { count: 0, name: mediaNode?.originalFileName };
-      existing.count += 1;
-      assetRefMap.set(driveFileId, existing);
+    for (const asset of expandImageVariantNodes([node])) {
+      if (asset.type !== 'image' && asset.type !== 'video') continue;
+      const fileId = asset.driveFileId || asset.content;
+      if (!fileId) continue;
+      const existing = assetRefMap.get(fileId) || { count: 0, name: asset.originalFileName };
+      existing.count += 1; assetRefMap.set(fileId, existing);
     }
 
+    const snapshotChunks = splitSheetJson({ sourceDetails: node.generationSourceDetails, generationParams: node.generationParams,
+      generationModelId: node.generationModelId,
+      ...(node.type === 'image' ? { variants: node.variants?.length ? getImageVariants(node) : undefined,
+        activeVariantId: node.activeVariantId, variantError: node.variantError } : {}) });
     nodeRows.push([
       node.id,
       node.type,
@@ -481,7 +520,9 @@ export async function saveGraphToSheet(
       node.generationSourceIds ? JSON.stringify(node.generationSourceIds) : '',
       node.status || 'idle',
       node.errorMessage || '',
-      node.generationSourceDetails ? JSON.stringify(node.generationSourceDetails) : '',
+      snapshotChunks[0],
+      node.type === 'image' && node.imageEdits ? JSON.stringify(node.imageEdits) : '',
+      ...snapshotChunks.slice(1),
     ]);
   });
 
@@ -526,7 +567,13 @@ export async function saveGraphToSheet(
   }
 
   // Ensure sheets structure exists (cached in-memory, zero overhead on repeated saves)
-  await ensureSheetsStructure(token, spreadsheetId);
+  const requiredColumns = Math.max(NODE_BASE_COLUMN_COUNT, ...nodeRows.map(row => row.length));
+  const nodeColumnCount = await ensureSheetsStructure(token, spreadsheetId, requiredColumns);
+  const nodeLastColumn = sheetColumnName(nodeColumnCount);
+  // Explicit blanks clear old continuation chunks after references are removed or reset.
+  nodeRows.forEach((row, index) => {
+    while (row.length < nodeColumnCount) row.push(index === 0 ? `SourceDetailsPart${row.length - NODE_BASE_COLUMN_COUNT + 2}` : '');
+  });
 
   // 5. Write updated data FIRST in batchUpdate (Never clear beforehand to avoid data loss on failure)
   const updateData: any[] = [
@@ -535,7 +582,7 @@ export async function saveGraphToSheet(
       values: boardRows,
     },
     {
-      range: `Nodes!A1:S${nodeRows.length}`,
+      range: `Nodes!A1:${nodeLastColumn}${nodeRows.length}`,
       values: nodeRows,
     },
     {
@@ -581,7 +628,7 @@ export async function saveGraphToSheet(
       clearRanges.push(`Boards!A${boardRows.length + 1}:E${prev.boards}`);
     }
     if (nodeRows.length < prev.nodes) {
-      clearRanges.push(`Nodes!A${nodeRows.length + 1}:S${prev.nodes}`);
+      clearRanges.push(`Nodes!A${nodeRows.length + 1}:${nodeLastColumn}${prev.nodes}`);
     }
     if (viewportRows.length < prev.viewport) {
       clearRanges.push(`Viewport!A${viewportRows.length + 1}:F${prev.viewport}`);
@@ -633,13 +680,16 @@ export async function loadGraphFromSheet(
 }> {
   // Query metadata first to find existing sheet names
   let existingSheets: string[] = [];
+  let existingNodeColumns = NODE_BASE_COLUMN_COUNT;
   try {
     const metaRes = await sheetsFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title))`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title,gridProperties(columnCount)))`,
       token
     );
     const meta = await metaRes.json();
     existingSheets = (meta.sheets || []).map((s: any) => s.properties?.title || '');
+    existingNodeColumns = (meta.sheets || []).find((sheet: any) => sheet.properties?.title === 'Nodes')?.properties?.gridProperties?.columnCount || NODE_BASE_COLUMN_COUNT;
+    nodeSheetColumnCounts.set(spreadsheetId, existingNodeColumns);
   } catch (metaErr) {
     console.warn('Could not query sheet metadata, falling back to standard names:', metaErr);
   }
@@ -664,7 +714,7 @@ export async function loadGraphFromSheet(
   }
   if (nodesSheet) {
     nodesIdx = rangesToFetch.length;
-    rangesToFetch.push(`${nodesSheet}!A1:S3000`);
+    rangesToFetch.push(`${nodesSheet}!A1:${sheetColumnName(existingNodeColumns)}3000`);
   }
   if (hasViewport) {
     viewportIdx = rangesToFetch.length;
@@ -754,6 +804,7 @@ export async function loadGraphFromSheet(
         nodeStatus,
         nodeErrorMsg,
         sourceDetailsStr,
+        imageEditsStr,
       ] = row;
 
       const x = Number(xStr) || 0;
@@ -773,9 +824,13 @@ export async function loadGraphFromSheet(
       }
 
       let parsedSourceDetails: SourceDetail[] | undefined;
+      let nodeMetadata: Record<string, any> = {};
       if (sourceDetailsStr) {
         try {
-          parsedSourceDetails = JSON.parse(String(sourceDetailsStr));
+          const parsed = JSON.parse([sourceDetailsStr, ...row.slice(NODE_BASE_COLUMN_COUNT).map(part => String(part).startsWith(SHEET_JSON_CONTINUATION_PREFIX) ? String(part).slice(SHEET_JSON_CONTINUATION_PREFIX.length) : String(part))].join(''));
+          // Legacy projects stored a bare source array; newer rows carry all per-variant recipes too.
+          nodeMetadata = parsed && !Array.isArray(parsed) && typeof parsed === 'object' ? parsed : {};
+          parsedSourceDetails = Array.isArray(parsed) ? parsed : nodeMetadata.sourceDetails;
         } catch {
           parsedSourceDetails = undefined;
         }
@@ -812,7 +867,8 @@ export async function loadGraphFromSheet(
             createdAt: Number(createdAtStr) || undefined,
             generationPrompt: genPrompt ? String(genPrompt) : undefined,
             generationModel: genModel ? String(genModel) : undefined,
-            generationModelId: genModel ? String(genModel) : undefined,
+            generationModelId: nodeMetadata.generationModelId || (genModel ? String(genModel) : undefined),
+            generationParams: nodeMetadata.generationParams,
             generationSourceIds: parsedSourceIds,
             generationSourceDetails: parsedSourceDetails,
             status: statusVal,
@@ -821,6 +877,10 @@ export async function loadGraphFromSheet(
           nodes.push(videoNode);
         } else {
           const imageNode: ImageNode = {
+            imageEdits: parseImageEdits(imageEditsStr),
+            variants: parseImageVariants(nodeMetadata.variants),
+            activeVariantId: typeof nodeMetadata.activeVariantId === 'string' ? nodeMetadata.activeVariantId : undefined,
+            variantError: typeof nodeMetadata.variantError === 'string' ? nodeMetadata.variantError : undefined,
             id: String(id),
             type: 'image',
             x,
@@ -836,7 +896,8 @@ export async function loadGraphFromSheet(
             createdAt: Number(createdAtStr) || undefined,
             generationPrompt: genPrompt ? String(genPrompt) : undefined,
             generationModel: genModel ? String(genModel) : undefined,
-            generationModelId: genModel ? String(genModel) : undefined,
+            generationModelId: nodeMetadata.generationModelId || (genModel ? String(genModel) : undefined),
+            generationParams: nodeMetadata.generationParams,
             generationSourceIds: parsedSourceIds,
             generationSourceDetails: parsedSourceDetails,
             status: statusVal,
@@ -858,7 +919,8 @@ export async function loadGraphFromSheet(
           createdAt: Number(createdAtStr) || undefined,
           generationPrompt: genPrompt ? String(genPrompt) : undefined,
           generationModel: genModel ? String(genModel) : undefined,
-          generationModelId: genModel ? String(genModel) : undefined,
+          generationModelId: nodeMetadata.generationModelId || (genModel ? String(genModel) : undefined),
+          generationParams: nodeMetadata.generationParams,
           generationSourceIds: parsedSourceIds,
           generationSourceDetails: parsedSourceDetails,
           status: statusVal,

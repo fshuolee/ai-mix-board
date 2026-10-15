@@ -1,11 +1,10 @@
 import { GoogleGenAI, Modality } from '@google/genai';
 import { CanvasNode, ImageNode, TextNode } from '../types';
-import { getImage } from './dbService';
+import { prepareImageForGeneration } from './imageInputService';
 import { blobToBase64 } from '../utils/canvasUtils';
 import { getModelById, DEFAULT_MODEL_ID, fetchModelsFromApi } from './modelsConfig';
-import { getAssetBlobFromDrive } from './googleDriveService';
 import { getAccessToken } from './googleAuthService';
-import { generateWithAtlasCloud, isAtlasCloudModel } from './atlasCloudService';
+import { generateWithAtlasCloud, isAtlasCloudModel, fetchImageBlob } from './atlasCloudService';
 import { parseRawPayload, findClosestAspectRatio } from './modelParamsService';
 
 function getApiKey(): string {
@@ -93,28 +92,7 @@ export const generateFromNodes = async (
       .map(async (node, index) => {
         try {
           const imageNode = node as ImageNode;
-          const candidateIds = [imageNode.driveFileId, imageNode.content, node.id].filter(Boolean) as string[];
-          let blob: Blob | null = null;
-
-          // 1. Try local IndexedDB
-          for (const cid of candidateIds) {
-            blob = await getImage(cid);
-            if (blob) break;
-          }
-
-          // 2. Try Google Drive if driveFileId exists
-          if (!blob && token && imageNode.driveFileId) {
-            try {
-              blob = await getAssetBlobFromDrive(token, imageNode.driveFileId);
-            } catch (driveErr) {
-              console.warn('Failed to fetch asset from Google Drive:', imageNode.driveFileId, driveErr);
-            }
-          }
-
-          if (!blob) {
-            console.warn(`Could not load image blob for node ${node.id} across candidate IDs:`, candidateIds);
-            return null;
-          }
+          const blob = await prepareImageForGeneration(imageNode, token || undefined, fetchImageBlob);
 
           // Extract dimensions from primary reference image for aspect ratio auto-matching
           if (index === 0 || !refWidth) {
@@ -138,7 +116,8 @@ export const generateFromNodes = async (
           return base64ToPart(base64);
         } catch (e) {
           console.error(`Failed to load image ${node.id}`, e);
-          return null;
+          // Do not silently generate from text alone when a selected reference cannot be prepared.
+          throw e;
         }
       })
   );

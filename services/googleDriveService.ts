@@ -1,3 +1,4 @@
+import { expandImageVariantNodes, restoreImageVariantNodes } from '../utils/imageVariants';
 import { ProjectMetadata, CanvasNode, ImageNode, VideoNode } from '../types';
 import {
   getImage,
@@ -404,7 +405,16 @@ function getDriveSyncFailureMessage(error: any): string {
   return message || 'Google Drive 同步失敗，請確認 Google Drive 權限與可用空間。';
 }
 
+/** Sync every retained variant, including versions that are not currently shown on the board. */
 export async function syncUnuploadedImageNodes(
+  token: string, projectFolderId: string, assetsFolderId: string | undefined, nodes: CanvasNode[],
+  onProgress?: (synced: number, total: number) => void
+): Promise<{ updatedNodes: CanvasNode[]; syncedCount: number; resolvedAssetsFolderId: string }> {
+  const result = await syncUnuploadedMediaNodes(token, projectFolderId, assetsFolderId, expandImageVariantNodes(nodes), onProgress);
+  return { ...result, updatedNodes: restoreImageVariantNodes(nodes, result.updatedNodes) };
+}
+
+async function syncUnuploadedMediaNodes(
   token: string,
   projectFolderId: string,
   assetsFolderId: string | undefined,
@@ -678,6 +688,13 @@ export async function verifyDriveFileIds(token: string, fileIds: string[]): Prom
  * Matches nodes by originalFileName against existing Google Drive files.
  */
 export async function healProjectImageNodes(
+  token: string, projectFolderId?: string, spreadsheetId?: string, assetsFolderId?: string, nodes: CanvasNode[] = []
+): Promise<{ healedNodes: CanvasNode[]; healedCount: number }> {
+  const result = await healProjectMediaNodes(token, projectFolderId, spreadsheetId, assetsFolderId, expandImageVariantNodes(nodes));
+  return { ...result, healedNodes: restoreImageVariantNodes(nodes, result.healedNodes) };
+}
+
+async function healProjectMediaNodes(
   token: string,
   projectFolderId?: string,
   spreadsheetId?: string,

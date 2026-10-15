@@ -46,6 +46,351 @@ try {
     } finally { await page.close(); }
   }
 
+  async function clickText(page, text) {
+    await page.evaluate(text => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === text)?.click(), text);
+  }
+
+  await run('Info regenerates a successful image as a retained variant and switches its representative', async page => {
+    await page.evaluate(() => window.renderGeneratedImageApp());
+    await page.waitForSelector('button[title="檢視節點詳細資訊 (Info)"]');
+    await page.$eval('button[title="檢視節點詳細資訊 (Info)"]', button => button.click());
+    await page.evaluate(() => {
+      const id = document.querySelector('[role="dialog"] p.font-mono')?.textContent?.replace('ID: ', '');
+      // Legacy generated nodes cached the original image under their board ID.
+      const label = [...document.querySelectorAll('[role="dialog"] span')].find(el => el.textContent.startsWith('ID: '));
+      const nodeId = id || label?.textContent.slice(4);
+      if (nodeId) window.seedLegacyNodeCache(nodeId, document.querySelector('.node-renderer img').src);
+    });
+    await clickText(page, '重新生成');
+    await page.waitForFunction(() => window.generationRequests > 0, { timeout: 1500 });
+    await page.waitForFunction(() => document.querySelectorAll('[data-variant-id]').length === 2);
+    assert.equal(await page.$$eval('[data-variant-representative="true"]', items => items.length), 1);
+    const first = await page.$eval('[data-variant-representative="true"]', el => el.getAttribute('data-variant-id'));
+    await page.$$eval('[data-variant-id]', items => items[1].click());
+    await clickText(page, '設為代表圖片');
+    await page.waitForFunction(first => document.querySelector('[data-variant-representative="true"]')?.getAttribute('data-variant-id') !== first, {}, first);
+    await clickText(page, '關閉');
+    await page.waitForFunction(() => {
+      const image = document.querySelector('.node-renderer img');
+      if (!image || !image.complete || !image.naturalWidth) return false;
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0, 1, 1);
+      const pixel = ctx.getImageData(0, 0, 1, 1).data;
+      return pixel[0] === 255 && pixel[2] === 0;
+    });
+    await page.$eval('button[title="檢視節點詳細資訊 (Info)"]', button => button.click());
+    assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 2);
+    await page.$$eval('[data-variant-id]', items => items[0].click());
+    await clickText(page, '設為代表圖片');
+    await page.waitForFunction(first => document.querySelector('[data-variant-representative="true"]')?.getAttribute('data-variant-id') === first, {}, first);
+    await page.screenshot({ path: '/tmp/ai-mix-board-variants.png' });
+  });
+
+  await run('failed variant generation keeps the previous representative and shows an actionable error', async page => {
+    await page.evaluate(async () => { await window.renderGeneratedImageApp(); window.failVariantGeneration = true; });
+    await page.waitForSelector('button[title="檢視節點詳細資訊 (Info)"]');
+    await page.$eval('button[title="檢視節點詳細資訊 (Info)"]', button => button.click());
+    await clickText(page, '重新生成');
+    await page.waitForFunction(() => window.generationRequests > 0, { timeout: 1500 });
+    await page.waitForFunction(() => document.querySelector('[role="dialog"] [role="alert"]')?.textContent.includes('Fixture generation failed'));
+    assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 1);
+    assert.equal(await page.$eval('button[data-regenerate-image]', button => button.disabled), false);
+  });
+
+  await run('switching variants preserves each image overlay and retains all media asset references', async page => {
+    const result = await page.evaluate(async () => {
+      const { appendImageVariant, selectImageVariant, getImageVariants, expandImageVariantNodes } = await import('/utils/imageVariants.ts');
+      const edits = { strokes: [], crop: { x: .1, y: .1, width: .8, height: .8 } };
+      const original = { id: 'original', type: 'image', content: 'source-a', x: 1, y: 2, width: 100, height: 80, rotation: 0, imageEdits: edits };
+      const withNew = appendImageVariant(original, { id: 'variant-b', content: 'source-b', width: 200, height: 100, createdAt: 1000 });
+      const selected = selectImageVariant(withNew, 'variant-b');
+      const restored = selectImageVariant(selected, 'original');
+      return { count: getImageVariants(withNew).length, originalKept: withNew.content, selected: selected.content, noInheritedOverlay: !selected.imageEdits,
+        restored: restored.imageEdits, assets: expandImageVariantNodes([restored]).map(asset => asset.content), position: [restored.x, restored.y] };
+    });
+    assert.deepEqual(result, { count: 2, originalKept: 'source-a', selected: 'source-b', noInheritedOverlay: true, restored: { strokes: [], crop: { x: .1, y: .1, width: .8, height: .8 } }, assets: ['source-a', 'source-b'], position: [1, 2] });
+  });
+
+  await run('Drive sync uploads every retained variant and keeps newer selection and edits', async page => {
+    const result = await page.evaluate(async () => {
+      const { syncUnuploadedImageNodes } = await import('/services/googleDriveService.ts');
+      const { appendImageVariant, selectImageVariant, mergeSyncedImageAssets } = await import('/utils/imageVariants.ts');
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#00ffff'; ctx.fillRect(0, 0, 2, 2);
+      await window.storeImage('variant-cache-a', await new Promise(resolve => canvas.toBlob(resolve)));
+      ctx.fillStyle = '#ff00ff'; ctx.fillRect(0, 0, 2, 2);
+      await window.storeImage('variant-cache-b', await new Promise(resolve => canvas.toBlob(resolve)));
+      const initial = { id: 'root', type: 'image', content: 'variant-cache-a', width: 100, height: 100, x: 5, y: 10, rotation: 0 };
+      const root = appendImageVariant(initial, { id: 'variant-b', content: 'variant-cache-b', width: 100, height: 100, createdAt: 1000 });
+      const realFetch = window.fetch;
+      let uploads = 0;
+      window.fetch = async (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.startsWith('https://www.googleapis.com/upload/drive/v3/files')) {
+          uploads++;
+          const id = `drive_variant_${String(uploads).repeat(20)}`;
+          return new Response(JSON.stringify({ id, name: 'variant.png', webViewLink: `https://drive.google.com/file/d/${id}/view` }), { headers: { 'Content-Type': 'application/json' } });
+        }
+        return realFetch(input, init);
+      };
+      try {
+        const synced = await syncUnuploadedImageNodes('fixture-token', 'fixture-folder', 'fixture-assets-folder', [root]);
+        const later = { ...selectImageVariant(root, 'variant-b'), imageEdits: { strokes: [], crop: { x: 0, y: 0, width: .5, height: .5 } } };
+        const merged = mergeSyncedImageAssets([later], [root], synced.updatedNodes)[0];
+        return { uploads, count: merged.variants.length, active: merged.activeVariantId, content: merged.content, crop: merged.imageEdits.crop.width,
+          assets: merged.variants.map(variant => Boolean(variant.driveFileId)) };
+      } finally { window.fetch = realFetch; }
+    });
+    assert.deepEqual(result, { uploads: 2, count: 2, active: 'variant-b', content: `drive_variant_${'2'.repeat(20)}`, crop: .5, assets: [true, true] });
+  });
+
+  await run('Drive upload failure remains visible and does not trigger repeated background retries', async page => {
+    const result = await page.evaluate(async () => {
+      const { syncUnuploadedImageNodes } = await import('/services/googleDriveService.ts');
+      const { appendImageVariant, expandImageVariantNodes, mergeSyncedImageAssets } = await import('/utils/imageVariants.ts');
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
+      await window.storeImage('failed-variant-upload', await new Promise(resolve => canvas.toBlob(resolve)));
+      const root = appendImageVariant({ id: 'root-failed', type: 'image', content: '', width: 100, height: 100, x: 0, y: 0, rotation: 0 },
+        { id: 'failed-asset', content: 'failed-variant-upload', width: 100, height: 100, createdAt: 1000 });
+      const realFetch = window.fetch;
+      let requests = 0;
+      window.fetch = async (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.startsWith('https://www.googleapis.com/upload/drive/v3/files')) {
+          requests++;
+          return new Response(JSON.stringify({ error: { message: 'Storage quota exceeded' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        return realFetch(input, init);
+      };
+      try {
+        const first = await syncUnuploadedImageNodes('fixture-token', 'fixture-folder', 'fixture-assets-folder', [root]);
+        const merged = mergeSyncedImageAssets([root], [root], first.updatedNodes);
+        await syncUnuploadedImageNodes('fixture-token', 'fixture-folder', 'fixture-assets-folder', merged);
+        return { requests, error: Boolean(merged[0].variants[0].syncError), failedAssets: expandImageVariantNodes(merged).filter(asset => asset.status === 'error').length,
+          representative: merged[0].content, visible: merged[0].status };
+      } finally { window.fetch = realFetch; }
+    });
+    assert.deepEqual(result, { requests: 1, error: true, failedAssets: 1, representative: 'failed-variant-upload', visible: 'idle' });
+  });
+
+  await run('image edits can be applied, reopened, undone and cleared without replacing the original', async page => {
+    await page.evaluate(() => window.renderEditableImage());
+    await page.waitForSelector('button[aria-label="編輯圖片"]');
+    await page.click('button[aria-label="編輯圖片"]');
+    await page.waitForSelector('canvas[aria-label="圖片編輯畫布"]');
+    const bounds = await page.$eval('canvas[aria-label="圖片編輯畫布"]', canvas => {
+      const r = canvas.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    await page.mouse.move(bounds.x + bounds.width * .25, bounds.y + bounds.height * .5);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width * .75, bounds.y + bounds.height * .5, { steps: 10 });
+    await page.mouse.up();
+    await clickText(page, '復原');
+    assert.equal(await page.$eval('button[aria-label="復原"]', button => button.disabled), true);
+    await clickText(page, '重做');
+    await clickText(page, '套用修改');
+    await page.waitForFunction(() => window.editedImageNode.imageEdits?.strokes.length === 1);
+    assert.equal(await page.evaluate(() => window.editedImageNode.content), 'fixture-edit-image');
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    await page.click('button[aria-label="編輯圖片"]');
+    await page.waitForSelector('canvas[aria-label="圖片編輯畫布"]');
+    await clickText(page, '清除所有修改');
+    await clickText(page, '套用修改');
+    await page.waitForFunction(() => !window.editedImageNode.imageEdits);
+    assert.equal(await page.evaluate(() => window.editedImageNode.content), 'fixture-edit-image');
+  });
+
+  await run('locking a protected board closes the image editor without applying its draft', async page => {
+    await page.evaluate(() => window.renderEditableImage());
+    await page.waitForSelector('button[aria-label="編輯圖片"]');
+    await page.click('button[aria-label="編輯圖片"]');
+    await page.waitForSelector('canvas[aria-label="圖片編輯畫布"]');
+    await page.evaluate(() => window.setImageLocked(true));
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    assert.equal(await page.evaluate(() => window.editedImageNode.imageEdits), undefined);
+  });
+
+  await run('cropping keeps fixed proportions and cancellation preserves saved edits', async page => {
+    await page.evaluate(() => window.renderEditableImage());
+    await page.waitForSelector('button[aria-label="編輯圖片"]');
+    await page.click('button[aria-label="編輯圖片"]');
+    await page.waitForSelector('canvas[aria-label="圖片編輯畫布"]');
+    await clickText(page, '裁切');
+    await page.select('select[aria-label="裁切比例"]', '1:1');
+    const bounds = await page.$eval('canvas[aria-label="圖片編輯畫布"]', canvas => {
+      const r = canvas.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    await page.mouse.move(bounds.x + bounds.width * .1, bounds.y + bounds.height * .1);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width * .7, bounds.y + bounds.height * .8, { steps: 6 });
+    await page.mouse.up();
+    await page.screenshot({ path: '/tmp/ai-mix-board-image-editor.png' });
+    await clickText(page, '套用修改');
+    await page.waitForFunction(() => window.editedImageNode.imageEdits?.crop);
+    const saved = await page.evaluate(() => window.editedImageNode.imageEdits);
+    assert.ok(Math.abs(saved.crop.width * 160 - saved.crop.height * 120) < 1);
+    await page.click('button[aria-label="編輯圖片"]');
+    await page.waitForSelector('canvas[aria-label="圖片編輯畫布"]');
+    await clickText(page, '清除所有修改');
+    await clickText(page, '取消');
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    assert.deepEqual(await page.evaluate(() => window.editedImageNode.imageEdits), saved);
+  });
+
+  await run('compositing applies annotation, transparency and crop at source resolution without changing cached bytes', async page => {
+    const result = await page.evaluate(async () => {
+      const { getEditedImageBlob } = await import('/utils/imageEditing.ts');
+      const { getImage } = await import('/services/dbService.ts');
+      await window.renderEditableImage();
+      const source = await getImage('fixture-edit-image');
+      const original = Array.from(new Uint8Array(await source.arrayBuffer()));
+      const edited = await getEditedImageBlob(source, {
+        strokes: [
+          { tool: 'pen', color: '#ff0000', width: .1, points: [{ x: .25, y: .5 }, { x: .75, y: .5 }] },
+          { tool: 'eraser', color: '#000000', width: .1, points: [{ x: .5, y: .25 }, { x: .5, y: .75 }] },
+        ],
+        crop: { x: .25, y: .25, width: .5, height: .5 },
+      });
+      const bitmap = await createImageBitmap(edited);
+      const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(bitmap, 0, 0);
+      const pixel = (x, y) => Array.from(ctx.getImageData(x, y, 1, 1).data);
+      return { width: bitmap.width, height: bitmap.height, red: pixel(15, 30), erased: pixel(40, 30), blue: pixel(15, 10),
+        unchanged: JSON.stringify(original) === JSON.stringify(Array.from(new Uint8Array(await (await getImage('fixture-edit-image')).arrayBuffer()))),
+        resetIsOriginal: await getEditedImageBlob(source, undefined) === source };
+    });
+    assert.deepEqual(result, { width: 80, height: 60, red: [255, 0, 0, 255], erased: [0, 0, 0, 0], blue: [0, 0, 255, 255], unchanged: true, resetIsOriginal: true });
+  });
+
+  for (const provider of ['gemini', 'atlas', 'atlas-original']) {
+    await run(provider === 'atlas-original' ? 'Atlas uploads cached Drive image bytes instead of a Drive viewer URL' : `${provider} sends the cropped transparent composite and preserves the original asset`, async page => {
+      const result = await page.evaluate(async provider => {
+        const { generateFromNodes } = await import('/services/geminiService.ts');
+        const { generateWithAtlasCloud } = await import('/services/atlasCloudService.ts');
+        const { getImage } = await import('/services/dbService.ts');
+        await window.renderEditableImage();
+        const source = await getImage('fixture-edit-image');
+        const originalBytes = await source.arrayBuffer();
+        const originalData = await new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsDataURL(source); });
+        let sentBlob;
+        let payload;
+        const realFetch = window.fetch;
+        localStorage.setItem('ai_mix_board_api_key', 'fixture-gemini-key');
+        localStorage.setItem('ai_mix_board_atlascloud_api_key', 'fixture-atlas-key');
+        const json = body => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+        window.fetch = async (input, init) => {
+          const url = typeof input === 'string' ? input : input.url;
+          if (url.includes('generativelanguage.googleapis.com')) {
+            const request = new Request(input, init);
+            payload = await request.json();
+            const imagePart = payload.contents[0].parts.find(part => part.inlineData);
+            sentBlob = await (await realFetch(`data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`)).blob();
+            return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: originalData.split(',')[1] } }] } }] });
+          }
+          if (url.endsWith('/uploadMedia')) {
+            sentBlob = init.body.get('file');
+            return json({ data: { download_url: 'https://fixture.invalid/edited.png' } });
+          }
+          if (url.endsWith('/generateImage')) {
+            payload = JSON.parse(init.body);
+            return json({ outputs: [originalData] });
+          }
+          return realFetch(input, init);
+        };
+        const node = { ...window.editedImageNode, driveViewLink: 'https://drive.google.com/file/d/fixture-drive-id/view', imageEdits: provider === 'atlas-original' ? undefined : {
+          strokes: [{ tool: 'eraser', color: '#000000', width: .2, points: [{ x: .5, y: .5 }] }],
+          crop: { x: .25, y: .25, width: .5, height: .5 },
+        } };
+        try {
+          if (provider === 'gemini') await generateFromNodes([node], 'gemini-3.1-flash-image');
+          else await generateWithAtlasCloud([node], 'fixture-image-edit', { id: 'fixture-image-edit', capabilities: { supportsImageOutput: true } });
+          const bitmap = await createImageBitmap(sentBlob);
+          const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+          const ctx = canvas.getContext('2d'); ctx.drawImage(bitmap, 0, 0);
+          return { width: bitmap.width, height: bitmap.height, alpha: ctx.getImageData(40, 30, 1, 1).data[3],
+            unchanged: JSON.stringify([...new Uint8Array(originalBytes)]) === JSON.stringify([...new Uint8Array(await (await getImage('fixture-edit-image')).arrayBuffer())]),
+            referenceUsed: provider === 'gemini' ? true : payload.image === 'https://fixture.invalid/edited.png' };
+        } finally { window.fetch = realFetch; }
+      }, provider);
+      assert.deepEqual(result, { width: provider === 'atlas-original' ? 160 : 80, height: provider === 'atlas-original' ? 120 : 60, alpha: provider === 'atlas-original' ? 255 : 0, unchanged: true, referenceUsed: true });
+    });
+  }
+
+  await run('Atlas keeps unedited remote URL references usable when browser CORS prevents fetching', async page => {
+    const result = await page.evaluate(async () => {
+      const { generateWithAtlasCloud } = await import('/services/atlasCloudService.ts');
+      const realFetch = window.fetch;
+      const reference = 'https://fixture.invalid/cors-blocked.png';
+      const json = body => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+      let sent;
+      localStorage.setItem('ai_mix_board_atlascloud_api_key', 'fixture-atlas-key');
+      window.fetch = async (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url === reference) throw new TypeError('Failed to fetch');
+        if (url.endsWith('/generateImage')) { sent = JSON.parse(init.body); return json({ outputs: ['data:image/png;base64,AA=='] }); }
+        return realFetch(input, init);
+      };
+      try {
+        await generateWithAtlasCloud([{ id: 'remote', type: 'image', content: reference, width: 100, height: 100 }], 'fixture-image-edit', { id: 'fixture-image-edit', capabilities: { supportsImageOutput: true } });
+        return sent.image;
+      } finally { window.fetch = realFetch; }
+    });
+    assert.equal(result, 'https://fixture.invalid/cors-blocked.png');
+  });
+
+  await run('project sheet round trip preserves edits, clear removes them, and legacy rows still load', async page => {
+    const result = await page.evaluate(async () => {
+      const { saveGraphToSheet, loadGraphFromSheet } = await import('/services/googleSheetsService.ts');
+      await window.renderEditableImage();
+      const edits = { strokes: [{ tool: 'pen', color: '#ff0000', width: .1, points: [{ x: .2, y: .3 }] }], crop: { x: .1, y: .2, width: .8, height: .6 } };
+      const snapshot = [{ id: 'source-a', type: 'image', imageEdits: edits, content: 'x'.repeat(55000) }];
+      const node = { ...window.editedImageNode, imageEdits: edits, generationSourceDetails: snapshot, generationModelId: 'fixture-model-id', generationParams: { seed: 42 },
+        activeVariantId: 'variant-a', variants: [
+          { id: 'variant-a', content: 'fixture-edit-image', width: 320, height: 240, createdAt: 1000, imageEdits: edits },
+          { id: 'variant-b', content: 'variant-b-image', width: 240, height: 320, createdAt: 2000, generationModelId: 'other-model', generationParams: { seed: 99 } },
+        ] };
+      const tables = {};
+      const realFetch = window.fetch;
+      const json = body => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+      window.fetch = async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input.url);
+        if (url.hostname !== 'sheets.googleapis.com') return realFetch(input, init);
+        if (url.pathname.endsWith('/values:batchUpdate')) {
+          for (const entry of JSON.parse(init.body).data) {
+            const [sheet, range] = entry.range.split('!');
+            const endColumn = range.split(':')[1].replace(/\d/g, '');
+            // Model the API's range contract: values outside the requested columns are not stored.
+            const columnCount = [...endColumn].reduce((count, char) => count * 26 + char.charCodeAt(0) - 64, 0);
+            if (entry.values.some(row => row.some(cell => typeof cell === 'string' && cell.length > 50000))) throw new Error('Sheets cell exceeds 50000 characters');
+            tables[sheet] = entry.values.map(row => row.slice(0, columnCount));
+          }
+          return json({});
+        }
+        if (url.pathname.endsWith('/values:batchGet')) {
+          return json({ valueRanges: url.searchParams.getAll('ranges').map(range => {
+            const [sheet, cells] = range.split('!');
+            const endColumn = cells.split(':')[1].replace(/\d/g, '');
+            const columnCount = [...endColumn].reduce((count, char) => count * 26 + char.charCodeAt(0) - 64, 0);
+            return { values: (tables[sheet] || []).map(row => row.slice(0, columnCount)) };
+          }) });
+        }
+        return json({ sheets: ['Boards', 'Nodes', 'Viewport', 'AssetReferences', 'Settings'].map((title, sheetId) => ({ properties: { title, sheetId, gridProperties: { columnCount: 26 } } })) });
+      };
+      try {
+        const boards = [{ id: 'board_main', name: 'Main' }];
+        await saveGraphToSheet('fixture-token', 'fixture-sheet', [node], boards);
+        const loaded = (await loadGraphFromSheet('fixture-token', 'fixture-sheet')).nodes[0];
+        await saveGraphToSheet('fixture-token', 'fixture-sheet', [{ ...loaded, imageEdits: undefined, generationSourceDetails: undefined, variants: undefined, activeVariantId: undefined }], boards);
+        const cleared = (await loadGraphFromSheet('fixture-token', 'fixture-sheet')).nodes[0];
+        tables.Nodes = tables.Nodes.map(row => row.slice(0, 19));
+        const legacy = (await loadGraphFromSheet('fixture-token', 'fixture-sheet')).nodes[0];
+        return { variantsPreserved: loaded.variants?.length === 2 && loaded.activeVariantId === 'variant-a' && loaded.variants[1].generationParams.seed === 99 && !loaded.variants[1].imageEdits, recipePreserved: loaded.generationModelId === 'fixture-model-id' && loaded.generationParams.seed === 42, saved: loaded.imageEdits, snapshotPreserved: JSON.stringify(loaded.generationSourceDetails) === JSON.stringify(snapshot), cleared: !cleared.imageEdits && !cleared.generationSourceDetails, legacy: !legacy.imageEdits, content: legacy.content };
+      } finally { window.fetch = realFetch; }
+    });
+    assert.deepEqual(result, { variantsPreserved: true, recipePreserved: true, saved: { strokes: [{ tool: 'pen', color: '#ff0000', width: .1, points: [{ x: .2, y: .3 }] }], crop: { x: .1, y: .2, width: .8, height: .6 } }, snapshotPreserved: true, cleared: true, legacy: true, content: 'fixture-edit-image' });
+  });
+
   await run('video stays paused when mounted', async page => {
     await page.evaluate(() => window.renderVideo());
     await page.waitForSelector('video');

@@ -19,6 +19,9 @@ import {
   exportBoardToPng,
 } from './utils/canvasUtils';
 import { generateFromNodes } from './services/geminiService';
+import { saveGeneratedImage } from './services/generatedImageService';
+import { appendImageVariant, applyImageVariant, getImageVariants, selectImageVariant, expandImageVariantNodes, mergeSyncedImageAssets } from './utils/imageVariants';
+import { getGenerationSources } from './utils/generationSources';
 import { getImage, storeImage, isDriveFileId, deleteMultipleImages } from './services/dbService';
 import {
   subscribeAuth,
@@ -374,13 +377,14 @@ const App: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isRescueModalOpen, setIsRescueModalOpen] = useState(false);
   const [infoModalNode, setInfoModalNode] = useState<CanvasNode | null>(null);
+  const variantGenerationJobs = useRef(new Set<string>());
   const [isScanningRescue, setIsScanningRescue] = useState(false);
   const [rescuableAssets, setRescuableAssets] = useState<RescuableAsset[]>([]);
   const [isRescueBannerDismissed, setIsRescueBannerDismissed] = useState(false);
   const [isSyncingAssets, setIsSyncingAssets] = useState(false);
   const unuploadedAssetCount = useMemo(() => {
     if (isLoadingProjectData) return 0;
-    return allNodes.filter(
+    return expandImageVariantNodes(allNodes).filter(
       n =>
         (n.type === 'image' || n.type === 'video') &&
         n.status !== 'generating' &&
@@ -956,7 +960,7 @@ const App: React.FC = () => {
             setCurrentProject(prev => (prev ? { ...prev, assetsFolderId: resolvedAssetsFolderId } : prev));
           }
           // Update nodes state and trigger auto-save to Google Sheet
-          updateNodesAndSave(() => updatedNodes);
+          updateNodesAndSave(current => mergeSyncedImageAssets(current, nodesToSync, updatedNodes));
           if (syncedCount > 0) {
             showToast(`已成功將 ${syncedCount} 張畫布圖片同步上傳至 Google Drive 專案資料夾！`);
           }
@@ -978,7 +982,7 @@ const App: React.FC = () => {
       return;
     }
     const nodes = allNodesRef.current;
-    const pendingCount = nodes.filter(
+    const pendingCount = expandImageVariantNodes(nodes).filter(
       n =>
         (n.type === 'image' || n.type === 'video') &&
         n.status !== 'generating' &&
@@ -1312,12 +1316,12 @@ const App: React.FC = () => {
       setDeletingNodeIds(new Set(nodeIdsToDelete));
 
       // Find deleted media nodes (image or video)
-      const deletedMediaNodes = curAllNodes.filter(
-        n => deleteSet.has(n.id) && (n.type === 'image' || n.type === 'video') && (n as ImageNode | VideoNode).driveFileId
+      const deletedMediaNodes = expandImageVariantNodes(curAllNodes.filter(node => deleteSet.has(node.id))).filter(
+        n => (n.type === 'image' || n.type === 'video') && (n as ImageNode | VideoNode).driveFileId
       ) as (ImageNode | VideoNode)[];
 
       // Check which driveFileIds will have 0 references across ALL boards in the project
-      const remainingNodes = curAllNodes.filter(n => !deleteSet.has(n.id));
+      const remainingNodes = expandImageVariantNodes(curAllNodes.filter(n => !deleteSet.has(n.id)));
       const orphanMap = new Map<string, string>();
 
       deletedMediaNodes.forEach(media => {
@@ -2436,6 +2440,7 @@ const App: React.FC = () => {
       content: n.type === 'text' ? (n as TextNode).content : undefined,
       driveFileId: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).driveFileId || n.content : undefined,
       originalFileName: (n.type === 'image' || n.type === 'video') ? (n as ImageNode).originalFileName : undefined,
+      imageEdits: n.type === 'image' ? n.imageEdits : undefined,
     }));
 
     // 4. Create and place the placeholder node immediately
@@ -2626,123 +2631,9 @@ const App: React.FC = () => {
             })();
           }
         } else if (result.type === 'image') {
-          if (result.blob) {
-            const newImageBlob = result.blob;
-            await storeImage(jobId, newImageBlob);
-
-            let driveFileId = jobId;
-            let driveViewLink: string | undefined;
-
-            // Upload generated image asset to Google Drive project assets folder if connected
-            const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
-            const targetProj = currentProjectRef.current || currentProject;
-            const projFolderId =
-              targetProj?.folderId ||
-              (activeToken && targetProj?.spreadsheetId
-                ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
-                : null);
-
-            if (activeToken && projFolderId) {
-              try {
-                const assetsFolderId =
-                  targetProj?.assetsFolderId ||
-                  (await ensureAssetsFolder(activeToken, projFolderId));
-                const uploaded = await uploadAssetToDrive(
-                  activeToken,
-                  assetsFolderId,
-                  newImageBlob,
-                  `gemini_gen_${jobId}.png`
-                );
-                driveFileId = uploaded.fileId;
-                driveViewLink = uploaded.webViewLink;
-
-                if (driveFileId !== jobId) {
-                  await storeImage(driveFileId, newImageBlob, undefined, true);
-                  await storeImage(jobId, newImageBlob, undefined, true);
-                }
-              } catch (uploadErr) {
-                console.warn('Drive upload failed for generated image:', uploadErr);
-              }
-            }
-
-            // Pre-populate memory ObjectURL cache so image displays with zero delay/flicker
-            const objectUrl = URL.createObjectURL(newImageBlob);
-            nodeObjectUrlCache.set(driveFileId, objectUrl);
-            nodeObjectUrlCache.set(jobId, objectUrl);
-
-            const base64 = await blobToBase64(newImageBlob);
-            const img = new Image();
-            img.onload = () => {
-              const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
-              updateNodesAndSave(prev => {
-                const exists = prev.some(n => n.id === jobId);
-                if (!exists) return prev; // User deleted the node while generating
-                return prev.map(node => {
-                  if (node.id !== jobId) return node;
-                  return {
-                    ...node,
-                    width: fitted.width,
-                    height: fitted.height,
-                    content: driveFileId,
-                    driveFileId,
-                    originalFileName: `generated_${jobId}.png`,
-                    driveViewLink,
-                    status: 'idle',
-                    errorMessage: undefined,
-                    updatedAt: Date.now(),
-                  };
-                });
-              });
-            };
-            img.src = base64;
-          } else if (result.url) {
-            const targetUrl = result.url;
-            nodeObjectUrlCache.set(jobId, targetUrl);
-            const img = new Image();
-            img.referrerPolicy = 'no-referrer';
-            img.onload = () => {
-              const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
-              updateNodesAndSave(prev => {
-                const exists = prev.some(n => n.id === jobId);
-                if (!exists) return prev;
-                return prev.map(node => {
-                  if (node.id !== jobId) return node;
-                  return {
-                    ...node,
-                    width: fitted.width,
-                    height: fitted.height,
-                    content: targetUrl,
-                    driveFileId: undefined,
-                    originalFileName: `generated_${jobId}.png`,
-                    driveViewLink: targetUrl,
-                    status: 'idle',
-                    errorMessage: undefined,
-                    updatedAt: Date.now(),
-                  };
-                });
-              });
-            };
-            img.onerror = () => {
-              updateNodesAndSave(prev => {
-                const exists = prev.some(n => n.id === jobId);
-                if (!exists) return prev;
-                return prev.map(node => {
-                  if (node.id !== jobId) return node;
-                  return {
-                    ...node,
-                    content: targetUrl,
-                    driveFileId: undefined,
-                    originalFileName: `generated_${jobId}.png`,
-                    driveViewLink: targetUrl,
-                    status: 'idle',
-                    errorMessage: undefined,
-                    updatedAt: Date.now(),
-                  };
-                });
-              });
-            };
-            img.src = targetUrl;
-          }
+          const variant = await saveGeneratedImage(result, placeholderNode as ImageNode, currentProject);
+          updateNodesAndSave(previous => previous.map(node => node.id === jobId && node.type === 'image'
+            ? { ...appendImageVariant(node, variant), updatedAt: Date.now() } : node));
         } else {
           // Text output from reasoning model
           updateNodesAndSave(prev => {
@@ -2796,10 +2687,45 @@ const App: React.FC = () => {
     updateNodesAndSave,
   ]);
 
+  // Successful image regeneration is additive: the chosen representative stays visible throughout.
+  const handleRegenerateImageNode = useCallback(async (nodeId: string) => {
+    const target = allNodesRef.current.find(node => node.id === nodeId);
+    if (!target || target.type !== 'image' || isCurrentBoardLockedRef.current || target.status === 'generating' || variantGenerationJobs.current.has(nodeId)) return;
+    const sources = getGenerationSources(target, allNodesRef.current);
+    if (!sources.length) { showToast('找不到原始生成輸入或提示詞，請重新選取來源生成。'); return; }
+    const modelId = target.generationModelId || selectedModelId;
+    const params = target.generationParams || getModelParams(modelId);
+    const project = currentProjectRef.current;
+    variantGenerationJobs.current.add(nodeId);
+    setActiveJobCount(count => count + 1);
+    updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image' ? {
+      ...node, variants: getImageVariants(node), activeVariantId: node.activeVariantId || getImageVariants(node)[0]?.id,
+      variantStatus: 'generating', variantError: undefined, status: node.content ? 'idle' : 'generating', errorMessage: undefined,
+    } : node));
+    try {
+      const result = await generateFromNodes(sources, modelId, params);
+      if (result.type !== 'image') throw new Error('模型未回傳圖片，請選擇圖片生成模型。');
+      const variant = await saveGeneratedImage(result, { ...target, generationModelId: modelId, generationParams: params }, project);
+      updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
+        ? { ...appendImageVariant(node, variant), updatedAt: Date.now() } : node));
+      showToast('已保存新的 variant，可在 Info 選為代表圖片。', 'success');
+    } catch (error) {
+      const message = (error as Error).message || '重新生成失敗，請重試。';
+      updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
+        ? { ...node, variantStatus: undefined, variantError: message, status: node.content ? 'idle' : 'error',
+          errorMessage: node.content ? undefined : message } : node));
+      showToast(message, 'warning');
+    } finally {
+      variantGenerationJobs.current.delete(nodeId);
+      setActiveJobCount(count => Math.max(0, count - 1));
+    }
+  }, [selectedModelId, updateNodesAndSave, showToast]);
+
   // Retry a failed generation node
   const handleRetryNode = useCallback(
     async (nodeId: string) => {
       const targetNode = allNodesRef.current.find(n => n.id === nodeId);
+      if (targetNode?.type === 'image') { await handleRegenerateImageNode(nodeId); return; }
       if (!targetNode || targetNode.status !== 'error') return;
 
       setError(null);
@@ -2810,11 +2736,6 @@ const App: React.FC = () => {
       targetModelId = modelInfo?.id || targetModelId;
       const isTargetVideo = targetNode.type === 'video' || Boolean(modelInfo?.capabilities?.supportsVideoOutput || modelInfo?.category === 'video');
 
-      if (targetNode.type === 'image' && !modelInfo.capabilities.supportsImageOutput && !isTargetVideo) {
-        targetModelId = DEFAULT_MODEL_ID;
-        modelInfo = getModelById(targetModelId);
-        targetModelId = modelInfo?.id || DEFAULT_MODEL_ID;
-      }
 
       // 2. Identify source nodes
       const sourceIds = new Set(targetNode.generationSourceIds || []);
@@ -2839,6 +2760,7 @@ const App: React.FC = () => {
                 content: fileId,
                 driveFileId: fileId,
                 originalFileName: detail.originalFileName,
+                ...(detail.type === 'image' ? { imageEdits: detail.imageEdits } : {}),
                 createdAt: Date.now(),
               } as CanvasNode);
               foundIds.add(detail.id);
@@ -2860,6 +2782,11 @@ const App: React.FC = () => {
           }
         }
       }
+
+      sourceNodes = sourceNodes.map(source => {
+        const detail = targetNode.generationSourceDetails?.find(item => item.id === source.id);
+        return source.type === 'image' && detail ? { ...source, imageEdits: detail.imageEdits } : source;
+      });
 
       // If source nodes no longer exist, use the saved prompt snippet as fallback text input
       if (sourceNodes.length === 0 && targetNode.generationPrompt) {
@@ -3066,124 +2993,9 @@ const App: React.FC = () => {
               })();
             }
           } else if (result.type === 'image') {
-            if (result.blob) {
-              const newImageBlob = result.blob;
-              await storeImage(nodeId, newImageBlob);
-
-              let driveFileId = nodeId;
-              let driveViewLink: string | undefined;
-
-              const activeToken = (await getValidAccessToken()) || getAccessToken() || token;
-              const targetProj = currentProjectRef.current || currentProject;
-              const projFolderId =
-                targetProj?.folderId ||
-                (activeToken && targetProj?.spreadsheetId
-                  ? await getFileParentFolderId(activeToken, targetProj.spreadsheetId)
-                  : null);
-
-              if (activeToken && projFolderId) {
-                try {
-                  const assetsFolderId =
-                    targetProj?.assetsFolderId ||
-                    (await ensureAssetsFolder(activeToken, projFolderId));
-                  const uploaded = await uploadAssetToDrive(
-                    activeToken,
-                    assetsFolderId,
-                    newImageBlob,
-                    `gemini_gen_${nodeId}.png`
-                  );
-                  driveFileId = uploaded.fileId;
-                  driveViewLink = uploaded.webViewLink;
-
-                  if (driveFileId !== nodeId) {
-                    await storeImage(driveFileId, newImageBlob, undefined, true);
-                    await storeImage(nodeId, newImageBlob, undefined, true);
-                  }
-                } catch (uploadErr) {
-                  console.warn('Drive upload failed for retried image:', uploadErr);
-                }
-              }
-
-              const objectUrl = URL.createObjectURL(newImageBlob);
-              nodeObjectUrlCache.set(driveFileId, objectUrl);
-              nodeObjectUrlCache.set(nodeId, objectUrl);
-
-              const base64 = await blobToBase64(newImageBlob);
-              const img = new Image();
-              img.onload = () => {
-                const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
-                updateNodesAndSave(prev => {
-                  const exists = prev.some(n => n.id === nodeId);
-                  if (!exists) return prev;
-                  return prev.map(node => {
-                    if (node.id !== nodeId) return node;
-                    return {
-                      ...node,
-                      width: fitted.width,
-                      height: fitted.height,
-                      content: driveFileId,
-                      driveFileId,
-                      originalFileName: `generated_${nodeId}.png`,
-                      driveViewLink,
-                      status: 'idle',
-                      errorMessage: undefined,
-                      updatedAt: Date.now(),
-                    };
-                  });
-                });
-                showToast('節點重試生成成功！');
-              };
-              img.src = base64;
-            } else if (result.url) {
-              const targetUrl = result.url;
-              nodeObjectUrlCache.set(nodeId, targetUrl);
-              const img = new Image();
-              img.referrerPolicy = 'no-referrer';
-              img.onload = () => {
-                const fitted = fitDimensions(img.width, img.height, defaultSize.width, defaultSize.height, false);
-                updateNodesAndSave(prev => {
-                  const exists = prev.some(n => n.id === nodeId);
-                  if (!exists) return prev;
-                  return prev.map(node => {
-                    if (node.id !== nodeId) return node;
-                    return {
-                      ...node,
-                      width: fitted.width,
-                      height: fitted.height,
-                      content: targetUrl,
-                      driveFileId: undefined,
-                      originalFileName: `generated_${nodeId}.png`,
-                      driveViewLink: targetUrl,
-                      status: 'idle',
-                      errorMessage: undefined,
-                      updatedAt: Date.now(),
-                    };
-                  });
-                });
-                showToast('節點重試生成成功！');
-              };
-              img.onerror = () => {
-                updateNodesAndSave(prev => {
-                  const exists = prev.some(n => n.id === nodeId);
-                  if (!exists) return prev;
-                  return prev.map(node => {
-                    if (node.id !== nodeId) return node;
-                    return {
-                      ...node,
-                      content: targetUrl,
-                      driveFileId: undefined,
-                      originalFileName: `generated_${nodeId}.png`,
-                      driveViewLink: targetUrl,
-                      status: 'idle',
-                      errorMessage: undefined,
-                      updatedAt: Date.now(),
-                    };
-                  });
-                });
-                showToast('節點重試生成成功！');
-              };
-              img.src = targetUrl;
-            }
+            const variant = await saveGeneratedImage(result, { ...targetNode, type: 'image' } as ImageNode, currentProject);
+            updateNodesAndSave(previous => previous.map(node => node.id === nodeId
+              ? { ...applyImageVariant({ ...node, type: 'image', variants: [variant] } as ImageNode, variant), updatedAt: Date.now() } : node));
           } else {
             // Text output
             updateNodesAndSave(prev => {
@@ -3225,7 +3037,7 @@ const App: React.FC = () => {
         }
       })();
     },
-    [selectedModelId, currentProject, updateNodesAndSave, showToast]
+    [selectedModelId, currentProject, updateNodesAndSave, showToast, handleRegenerateImageNode]
   );
 
   // Retry all selected nodes that are in error state
@@ -4251,6 +4063,7 @@ const App: React.FC = () => {
               isCut={cutNodeIds.has(node.id)}
               isMultiSelecting={selectedNodeIds.size > 1}
               isSpacePressed={isSpacePressed}
+              isLocked={isCurrentBoardLocked}
               onNodeUpdate={updateNode}
               onSelect={handleSelectNode}
               onDragStart={handleNodeDragStart}
@@ -4663,11 +4476,19 @@ const App: React.FC = () => {
       {/* Node Info & Metadata Inspection Modal */}
       <NodeInfoModal
         isOpen={Boolean(infoModalNode)}
-        node={infoModalNode}
+        node={infoModalNode ? allNodes.find(node => node.id === infoModalNode.id) || null : null}
         onClose={() => setInfoModalNode(null)}
-        onRetryNode={nodeId => {
-          setInfoModalNode(null);
-          handleRetryNode(nodeId);
+        onRetryNode={nodeId => { void handleRetryNode(nodeId); }}
+        onRetryVariantSync={(nodeId, variantId) => {
+          if (isCurrentBoardLockedRef.current) return;
+          if (!getAccessToken() || !currentProjectRef.current) { showToast('請先登入並選擇專案以同步圖片。', 'warning'); return; }
+          updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
+            ? { ...node, variants: getImageVariants(node).map(variant => variant.id === variantId ? { ...variant, syncError: undefined } : variant) } : node));
+        }}
+        onSelectVariant={(nodeId, variantId) => {
+          if (isCurrentBoardLockedRef.current) return;
+          updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
+            ? { ...selectImageVariant(node, variantId), updatedAt: Date.now() } : node));
         }}
         onSelectSources={sourceIds => {
           setSelectedNodeIds(new Set(sourceIds));

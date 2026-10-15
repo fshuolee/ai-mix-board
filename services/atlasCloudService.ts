@@ -1,8 +1,8 @@
 import { CanvasNode, ImageNode, TextNode, ModelInfo } from '../types';
-import { getImage } from './dbService';
+import { prepareImageForGeneration } from './imageInputService';
+import { hasImageEdits } from '../utils/imageEditing';
 import { blobToBase64 } from '../utils/canvasUtils';
 import { getAccessToken } from './googleAuthService';
-import { getAssetBlobFromDrive } from './googleDriveService';
 import { parseRawPayload, findClosestAspectRatio } from './modelParamsService';
 import { getModelById } from './modelsConfig';
 
@@ -1172,38 +1172,27 @@ export async function generateWithAtlasCloud(
 
   for (const node of imageNodes) {
     try {
-      const candidateIds = [node.driveFileId, node.content, node.id].filter(Boolean) as string[];
-      let blob: Blob | null = null;
-
-      for (const cid of candidateIds) {
-        blob = await getImage(cid);
-        if (blob) break;
+      // Drive's webViewLink is an HTML viewer, not image bytes. Authenticated/cached
+      // Drive references must still be uploaded; only standalone remote assets use URL input.
+      const directUrl = /^https?:/.test(node.content) && !node.driveFileId ? node.content : undefined;
+      if (directUrl && !hasImageEdits(node.imageEdits)) {
+        imageParts.push({ mimeType: node.mimeType || 'image/png', data: '', url: directUrl });
+        continue;
       }
-
-      if (!blob && token && node.driveFileId) {
-        try {
-          blob = await getAssetBlobFromDrive(token, node.driveFileId);
-        } catch (driveErr) {
-          console.warn('Failed to fetch image from Google Drive for Atlas:', node.driveFileId, driveErr);
-        }
-      }
-
-      if (blob) {
-        const base64 = await blobToBase64(blob);
-        const match = base64.match(/^data:(image\/\w+);base64,(.*)$/);
-        if (match) {
-          imageParts.push({ mimeType: match[1], data: match[2], blob });
-        }
-      } else {
-        const directHttpUrl =
-          (node.content && (node.content.startsWith('http://') || node.content.startsWith('https://')) ? node.content : null) ||
-          (node.driveViewLink && (node.driveViewLink.startsWith('http://') || node.driveViewLink.startsWith('https://')) ? node.driveViewLink : null);
-        if (directHttpUrl) {
-          imageParts.push({ mimeType: 'image/png', data: '', url: directHttpUrl });
-        }
+      const blob = await prepareImageForGeneration(node, token || undefined, fetchImageBlob);
+      const base64 = await blobToBase64(blob);
+      const match = base64.match(/^data:(image\/[^;]+);base64,(.*)$/);
+      if (!match) throw new Error('無法準備參考圖片');
+      imageParts.push({ mimeType: match[1], data: match[2], blob });
+      // Auto aspect ratio must follow the exported crop, not the board's display dimensions.
+      if (node.imageEdits?.crop) {
+        const bitmap = await createImageBitmap(blob);
+        imageNodes[imageNodes.indexOf(node)] = { ...node, width: bitmap.width, height: bitmap.height };
+        bitmap.close();
       }
     } catch (err) {
       console.warn('Failed to prepare image for Atlas generation:', err);
+      throw err;
     }
   }
 
