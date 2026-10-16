@@ -13,6 +13,7 @@ import { NodeInfoModal } from '../../components/NodeInfoModal';
 import BoardTabs from '../../components/BoardTabs';
 import AssetRescueModal from '../../components/AssetRescueModal';
 import type { ImageNode } from '../../types';
+import { getVariantOrphanFiles, trashVariantFiles } from '../../services/variantDeletionService';
 import { appendImageVariant, getImageVariants, selectImageVariant, removeImageVariant } from '../../utils/imageVariants';
 import { type RescuableAsset } from '../../services/assetRescueService';
 
@@ -85,6 +86,17 @@ function VariantsPreviewFixture() {
   </main>;
 }
 
+function CloudVariantFixture({ initialNode }: { initialNode: ImageNode }) {
+  const [image, setImage] = React.useState(initialNode);
+  Object.assign(window, { cloudVariantNode: image });
+  return <NodeInfoModal isOpen node={image} onClose={noop}
+    getVariantDeleteFiles={(_, variantId) => getVariantOrphanFiles([image], image.id, variantId)}
+    onDeleteVariant={async (_, variantId, choice) => {
+      if (choice === 'trash') await trashVariantFiles([image], image.id, variantId, 'fixture-token');
+      setImage(previous => removeImageVariant(previous, variantId));
+    }} />;
+}
+
 function EditableImageFixture() {
   const [isLocked, setLocked] = React.useState(false);
   Object.assign(window, { setImageLocked: setLocked });
@@ -100,6 +112,28 @@ const noop = () => {};
 
 // Expose real components and services to browser tests without Google account access.
 Object.assign(window, {
+  renderCloudVariants: async () => {
+    await import('../../index.css');
+    const sample = makePreviewNode();
+    const firstId = 'drive_variant_' + 'q'.repeat(24);
+    const secondId = 'drive_variant_' + 'r'.repeat(24);
+    const variants = sample.variants!.slice(0, 2).map((variant, index) => ({ ...variant, content: index ? secondId : firstId, driveFileId: index ? secondId : firstId }));
+    for (let index = 0; index < variants.length; index++) {
+      await storeImage(variants[index].driveFileId!, await (await fetch(sample.variants![index].content)).blob());
+    }
+    Object.assign(window, { cloudVariantRequests: [], failCloudVariantDelete: false });
+    const realFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/drive/v3/files/') && init?.method === 'PATCH') {
+        (window as any).cloudVariantRequests.push({ url, body: JSON.parse(init.body as string) });
+        return new Response((window as any).failCloudVariantDelete ? JSON.stringify({ error: { message: 'Fixture trash refused' } }) : '{}',
+          { status: (window as any).failCloudVariantDelete ? 403 : 200 });
+      }
+      return realFetch(input, init);
+    };
+    root.render(<CloudVariantFixture key={crypto.randomUUID()} initialNode={{ ...sample, ...variants[0], id: 'cloud-fixture', variants, activeVariantId: variants[0].id }} />);
+  },
   renderVariantsPreview: async () => {
     await import('../../index.css');
     root.render(<VariantsPreviewFixture />);
@@ -141,7 +175,7 @@ Object.assign(window, {
     const ctx = canvas.getContext('2d')!;
     ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     await storeImage('fixture-edit-image', await new Promise<Blob>(resolve => canvas.toBlob(blob => resolve(blob!))));
-    root.render(<EditableImageFixture />);
+    flushSync(() => root.render(<EditableImageFixture />));
     await new Promise(resolve => requestAnimationFrame(resolve));
   },
   seedLegacyNodeCache: (id: string, url: string) => nodeObjectUrlCache.set(id, url),

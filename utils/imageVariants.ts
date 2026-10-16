@@ -50,7 +50,7 @@ export function appendImageVariant(node: ImageNode, variant: ImageVariant): Imag
 /** Flatten only for asset operations; variants remain one visible board node. */
 export function expandImageVariantNodes(nodes: CanvasNode[]): CanvasNode[] {
   return nodes.flatMap(node => node.type === 'image' && node.variants?.length
-    ? getImageVariants(node).map(variant => ({ ...node, ...variant, type: 'image' as const, variants: undefined, activeVariantId: undefined,
+    ? getImageVariants(node).map(variant => ({ ...node, ...snapshotImageVariant(variant as ImageNode, variant.id, variant.createdAt), type: 'image' as const, variants: undefined, activeVariantId: undefined,
       variantStatus: undefined, variantError: undefined, status: variant.syncError ? 'error' as const : 'idle' as const, errorMessage: variant.syncError })) : [node]);
 }
 

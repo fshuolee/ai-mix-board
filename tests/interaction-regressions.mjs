@@ -206,12 +206,14 @@ try {
     await page.click('button[aria-label="刪除此版本"]');
     await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
     assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 2);
+    assert.ok(await page.$('button[data-asset-delete-choice="keep"]'));
+    assert.ok(await page.$('button[data-asset-delete-choice="trash"]'));
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 1);
     assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 2);
     await page.click('button[aria-label="刪除此版本"]');
     await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
-    await clickText(page, '刪除');
+    await clickText(page, '只移除版本');
     await page.waitForFunction(() => document.querySelectorAll('[data-variant-id]').length === 1);
     assert.equal(await page.$('button[aria-label="刪除此版本"]'), null);
     assert.equal(await page.$$eval('[data-variant-representative="true"]', items => items.length), 1);
@@ -230,7 +232,7 @@ try {
     await page.waitForSelector('[data-variant-id="preview-variant-1"][aria-pressed="true"]');
     await page.click('button[aria-label="刪除此版本"]');
     await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
-    await clickText(page, '刪除');
+    await clickText(page, '只移除版本');
     await page.waitForFunction(count => document.querySelectorAll('[data-variant-id]').length === count - 1, {}, count);
     assert.equal(await page.$('[data-variant-id="preview-variant-1"]'), null);
     assert.ok(await page.$('[data-variant-id="preview-variant-0"][data-variant-representative="true"]'));
@@ -240,6 +242,76 @@ try {
     const bounds = await page.$eval('button[aria-label="刪除此版本"]', button => button.getBoundingClientRect().toJSON());
     assert.ok(bounds.left >= 0 && bounds.right <= 390);
     await page.screenshot({ path: '/tmp/ai-mix-board-variants-mobile.png' });
+  });
+
+  for (const choice of ['keep', 'trash']) {
+    await run(`variant ${choice} uses the original storage choices and only trashes when selected`, async page => {
+      await page.evaluate(() => window.renderCloudVariants());
+      await page.waitForSelector('button[aria-label="刪除此版本"]');
+      await page.click('button[aria-label="刪除此版本"]');
+      await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+      assert.equal(await page.$eval('[data-asset-delete-choice="trash"]', button => button.disabled), false);
+      assert.deepEqual(await page.evaluate(() => window.cloudVariantRequests), []);
+      await page.click(`[data-asset-delete-choice="${choice}"]`);
+      await page.waitForFunction(() => document.querySelectorAll('[data-variant-id]').length === 1);
+      assert.equal(await page.evaluate(() => window.cloudVariantRequests.length), choice === 'trash' ? 1 : 0);
+      assert.equal(await page.evaluate(() => window.cloudVariantNode.variants.length), 1);
+    });
+  }
+
+  await run('variant trash failure keeps the version and allows retrying or removing only the reference', async page => {
+    await page.evaluate(async () => { await window.renderCloudVariants(); window.failCloudVariantDelete = true; });
+    await page.waitForSelector('button[aria-label="刪除此版本"]');
+    await page.click('button[aria-label="刪除此版本"]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    await page.click('[data-asset-delete-choice="trash"]');
+    await page.waitForFunction(() => document.querySelector('[role="alert"]')?.textContent.includes('Fixture trash refused'));
+    assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 2);
+    await page.click('[data-asset-delete-choice="keep"]');
+    await page.waitForFunction(() => document.querySelectorAll('[data-variant-id]').length === 1);
+    assert.equal(await page.evaluate(() => window.cloudVariantRequests.length), 1);
+  });
+
+  await run('variant cloud deletion honors keep, trash, shared references and Drive failures', async page => {
+    const result = await page.evaluate(async () => {
+      const { getVariantOrphanFiles, trashVariantFiles } = await import('/services/variantDeletionService.ts');
+      const fileId = 'drive_variant_' + 'a'.repeat(24);
+      const first = { id: 'first', content: fileId, driveFileId: fileId, width: 100, height: 100, createdAt: 1 };
+      const second = { id: 'second', content: 'local-second', width: 100, height: 100, createdAt: 2 };
+      const node = { ...first, id: 'node', type: 'image', x: 0, y: 0, rotation: 0, variants: [first, second], activeVariantId: 'first' };
+      const realFetch = window.fetch;
+      let fail = false;
+      const calls = [];
+      window.fetch = async (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/drive/v3/files/')) {
+          calls.push({ url, body: JSON.parse(init.body) });
+          return new Response(fail ? JSON.stringify({ error: { message: 'Permission denied' } }) : '{}', { status: fail ? 403 : 200 });
+        }
+        return realFetch(input, init);
+      };
+      try {
+        const eligible = getVariantOrphanFiles([node], node.id, first.id).length;
+        const fileB = 'drive_variant_' + 'b'.repeat(24);
+        const switched = { ...node, content: fileB, driveFileId: fileB, activeVariantId: 'second',
+          variants: [{ ...first, id: node.id }, { ...second, content: fileB, driveFileId: fileB }] };
+        const activeDeletable = getVariantOrphanFiles([switched], node.id, 'second').length;
+        const shared = getVariantOrphanFiles([node, { ...node, id: 'shared', variants: undefined }], node.id, first.id).length;
+        const aliasRecipe = getVariantOrphanFiles([node, { id: 'old-derived', type: 'text', content: 'description', generationSourceDetails: [{ id: 'old-source', type: 'image', driveFileId: 'first' }] }], node.id, first.id).length;
+        const recipe = getVariantOrphanFiles([node, { id: 'derived', type: 'text', content: 'description', generationSourceDetails: [{ id: 'source', type: 'image', driveFileId: fileId }] }], node.id, first.id).length;
+        let noToken = false;
+        try { await trashVariantFiles([node], node.id, first.id, null); } catch { noToken = true; }
+        await trashVariantFiles([node], node.id, first.id, 'fixture-token');
+        const successCalls = calls.length;
+        await trashVariantFiles([node, { ...node, id: 'shared', variants: undefined }], node.id, first.id, 'fixture-token');
+        const sharedCalls = calls.length;
+        fail = true;
+        let failed = false;
+        try { await trashVariantFiles([node], node.id, first.id, 'fixture-token'); } catch (error) { failed = error.message.includes('Permission denied'); }
+        return { eligible, activeDeletable, shared, recipe, aliasRecipe, noToken, successCalls, sharedCalls, failed, body: calls[0].body };
+      } finally { window.fetch = realFetch; }
+    });
+    assert.deepEqual(result, { eligible: 1, activeDeletable: 1, shared: 0, recipe: 0, aliasRecipe: 0, noToken: true, successCalls: 1, sharedCalls: 1, failed: true, body: { trashed: true } });
   });
 
   await run('removing a variant preserves independent edits and cannot remove the final image', async page => {

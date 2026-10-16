@@ -12,6 +12,7 @@ import { t, getLocale } from '../../services/i18n';
 
 export interface ConfirmAction {
   key: string;
+  disabled?: boolean;
   label: React.ReactNode;
   variant?: ButtonVariant;
   icon?: React.ReactNode;
@@ -96,7 +97,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             <span>{busyLabel}</span>
           </div>
         )}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
           <ModalButton ref={cancelRef} variant="ghost" onClick={cancel} disabled={busy}>
             {cancelLabel ?? t('common.cancel', locale)}
           </ModalButton>
@@ -106,7 +107,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               variant={action.variant ?? 'secondary'}
               icon={action.icon}
               onClick={() => onChoose(action.key)}
-              disabled={busy}
+              disabled={busy || action.disabled}
+              data-asset-delete-choice={action.key}
             >
               {action.label}
             </ModalButton>

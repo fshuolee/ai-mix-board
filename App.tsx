@@ -69,6 +69,8 @@ import type { ModalityType } from './types';
 type OrphanAssetChoice = 'keep' | 'trash' | null;
 
 import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
+import { AssetDeletionDialog } from './components/AssetDeletionDialog';
+import { getVariantOrphanFiles, trashVariantFiles } from './services/variantDeletionService';
 import { ConfirmDialog, useConfirm } from './components/ui/ConfirmDialog';
 import { isAnyModalOpen as isAnySharedModalOpen } from './components/ui/Modal';
 import TopNavigation from './components/TopNavigation';
@@ -4199,22 +4201,14 @@ const App: React.FC = () => {
 
       {/* Orphan-asset step of node deletion: cancel keeps everything, or remove nodes with / without trashing files */}
       {orphanAssetModal && (
-        <ConfirmDialog
+        <AssetDeletionDialog
           isOpen
-          title={t('asset.orphanTitle', locale)}
-          icon={<Trash2 />}
-          tone="amber"
-          message={t('asset.orphanMessage', locale).replace('{count}', String(orphanAssetModal.orphanFiles.length))}
-          details={orphanAssetModal.orphanFiles.map(f => f.fileName)}
-          actions={[
-            { key: 'keep', label: t('asset.keepInDrive', locale), variant: 'primary' },
-            { key: 'trash', label: t('asset.trashInDrive', locale), variant: 'destructive', icon: <Trash2 /> },
-          ]}
+          files={orphanAssetModal.orphanFiles}
           busy={orphanAssetModal.deletingIndex !== null}
           busyLabel={t('asset.trashing', locale)
             .replace('{current}', String((orphanAssetModal.deletingIndex ?? 0) + 1))
             .replace('{total}', String(orphanAssetModal.orphanFiles.length))}
-          onChoose={key => orphanAssetModal.onChoose(key as OrphanAssetChoice)}
+          onChoose={key => orphanAssetModal.onChoose(key)}
         />
       )}
 
@@ -4424,8 +4418,14 @@ const App: React.FC = () => {
           updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
             ? { ...node, variants: getImageVariants(node).map(variant => variant.id === variantId ? { ...variant, syncError: undefined } : variant) } : node));
         }}
-        onDeleteVariant={(nodeId, variantId) => {
-          if (isCurrentBoardLockedRef.current) return;
+        getVariantDeleteFiles={(nodeId, variantId) => getVariantOrphanFiles(allNodesRef.current, nodeId, variantId)}
+        onDeleteVariant={async (nodeId, variantId, choice) => {
+          if (isCurrentBoardLockedRef.current) throw new Error('畫布已鎖定，請解鎖後再試。');
+          const projectId = currentProjectRef.current?.id;
+          if (choice === 'trash') {
+            await trashVariantFiles(allNodesRef.current, nodeId, variantId, (await getValidAccessToken()) || getAccessToken());
+          }
+          if (currentProjectRef.current?.id !== projectId || isCurrentBoardLockedRef.current) return;
           updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
             ? { ...removeImageVariant(node, variantId), updatedAt: Date.now() } : node));
         }}

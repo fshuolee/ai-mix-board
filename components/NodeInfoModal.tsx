@@ -16,10 +16,10 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
-import { CanvasNode, ImageNode, TextNode } from '../types';
+import { CanvasNode, ImageNode, TextNode, AssetDeletionChoice, AssetDeletionFile } from '../types';
 import { getImageVariants } from '../utils/imageVariants';
 import { ImageVariantPreview } from './ImageVariantPreview';
-import { ConfirmDialog } from './ui/ConfirmDialog';
+import { AssetDeletionDialog } from './AssetDeletionDialog';
 import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton } from './ui/Modal';
 
 interface NodeInfoModalProps {
@@ -28,7 +28,8 @@ interface NodeInfoModalProps {
   onClose: () => void;
   onRetryNode?: (nodeId: string) => void;
   onRetryVariantSync?: (nodeId: string, variantId: string) => void;
-  onDeleteVariant?: (nodeId: string, variantId: string) => void;
+  onDeleteVariant?: (nodeId: string, variantId: string, choice: Exclude<AssetDeletionChoice, null>) => void | Promise<void>;
+  getVariantDeleteFiles?: (nodeId: string, variantId: string) => AssetDeletionFile[];
   onSelectVariant?: (nodeId: string, variantId: string) => void;
   onSelectSources?: (sourceIds: string[]) => void;
   onApplyNodeParams?: (params: Record<string, any>) => void;
@@ -42,15 +43,18 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
   onSelectSources,
   onSelectVariant,
   onDeleteVariant,
+  getVariantDeleteFiles,
   onRetryVariantSync,
   onApplyNodeParams,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [isDeletingVariant, setIsDeletingVariant] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const thumbnailRefs = React.useRef(new Map<string, HTMLButtonElement>());
-  useEffect(() => { setPreviewId(null); setDeleteId(null); }, [boardNode?.id, isOpen]);
+  useEffect(() => { setPreviewId(null); setDeleteId(null); setDeleteError(''); }, [boardNode?.id, isOpen]);
   useEffect(() => { if (previewId) thumbnailRefs.current.get(previewId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [previewId]);
   if (!isOpen || !boardNode) return null;
   const variants = boardNode.type === 'image' ? getImageVariants(boardNode) : [];
@@ -148,7 +152,7 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
               {isVariantGenerating && <span role="status" className="text-xs text-blue-300">生成中…</span>}
             </div>
             {onDeleteVariant && preview && variants.length > 1 && <button type="button" aria-label="刪除此版本" title="刪除此版本"
-              onClick={() => setDeleteId(preview.id)} className="p-2 rounded-lg text-gray-400 hover:text-red-300 hover:bg-red-500/10 focus-visible:outline focus-visible:outline-red-400"><Trash2 className="w-4 h-4" /></button>}
+              onClick={() => { setDeleteError(''); setDeleteId(preview.id); }} className="p-2 rounded-lg text-gray-400 hover:text-red-300 hover:bg-red-500/10 focus-visible:outline focus-visible:outline-red-400"><Trash2 className="w-4 h-4" /></button>}
           </div>
           {preview?.syncError && <div className="text-xs text-amber-300 space-y-2" role="alert">
             <p>{preview.syncError}</p>
@@ -416,13 +420,18 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
         </ModalButton>
       </ModalFooter>
     </Modal>
-    <ConfirmDialog isOpen={Boolean(deleteId && variants.some(variant => variant.id === deleteId))} title="刪除此版本？"
-      destructive confirmLabel="刪除" cancelLabel="取消" onChoose={choice => {
+    <AssetDeletionDialog isOpen={Boolean(deleteId && variants.some(variant => variant.id === deleteId))} variant
+      files={deleteId ? getVariantDeleteFiles?.(boardNode.id, deleteId) || [] : []}
+      busy={isDeletingVariant} busyLabel="正在移至垃圾桶…" error={deleteError}
+      onChoose={async choice => {
         const id = deleteId;
-        setDeleteId(null);
-        if (choice !== 'confirm' || !id) return;
-        onDeleteVariant?.(boardNode.id, id);
-        setPreviewId(null);
+        if (!choice || !id) { setDeleteId(null); setDeleteError(''); return; }
+        setIsDeletingVariant(true); setDeleteError('');
+        try {
+          await onDeleteVariant?.(boardNode.id, id, choice);
+          setDeleteId(null); setPreviewId(null);
+        } catch (error) { setDeleteError((error as Error).message || '刪除失敗，請重試。'); }
+        finally { setIsDeletingVariant(false); }
       }} />
     </>
   );

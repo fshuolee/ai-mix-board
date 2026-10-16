@@ -239,3 +239,7 @@ export interface ModelParamPreset {
   modality: 'image' | 'video' | 'text' | 'audio' | 'all';
   params: Record<string, any>;
 }
+
+/** Shared by node and variant deletion dialogs. */
+export interface AssetDeletionFile { fileId: string; fileName: string }
+export type AssetDeletionChoice = 'keep' | 'trash' | null;
