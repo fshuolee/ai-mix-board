@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState, useEffect } from 'react';
 import { AlertTriangle, Trash2, Loader2 } from 'lucide-react';
 import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton, ModalTone, ButtonVariant } from './Modal';
 import { t, getLocale } from '../../services/i18n';
@@ -126,6 +126,11 @@ const ConfirmContext = createContext<ConfirmFn | null>(null);
 /** Mount once near the root; `useConfirm()` anywhere below returns the promise-based confirm. */
 export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [request, setRequest] = useState<{ options: ConfirmOptions; resolve: (key: string | null) => void } | null>(null);
+
+  const pendingRequest = useRef(request);
+  pendingRequest.current = request;
+  // Scoped providers can be removed on lock; resolve pending actions as cancellation.
+  useEffect(() => () => { pendingRequest.current?.resolve(null); }, []);
 
   const confirm = useCallback<ConfirmFn>(options => {
     return new Promise(resolve => {

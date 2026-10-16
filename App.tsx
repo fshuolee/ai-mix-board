@@ -81,7 +81,7 @@ import { CensoredUnlockModal, CensoredLockedIndicator, PasswordManageModal } fro
 import ModelSelectorModal from './components/ModelSelectorModal';
 import ProjectModal from './components/ProjectModal';
 import AuthSettingsModal from './components/AuthSettingsModal';
-import AssetRescueModal from './components/AssetRescueModal';
+import ProtectedAssetRescueModal from './components/ProtectedAssetRescueModal';
 import { NodeInfoModal } from './components/NodeInfoModal';
 import { InspectorPanel } from './components/InspectorPanel';
 import {
@@ -445,6 +445,10 @@ const App: React.FC = () => {
   const isCurrentBoardLocked = isCurrentBoardCensored && !isCensoredUnlocked;
   const isCurrentBoardLockedRef = useRef(isCurrentBoardLocked);
   isCurrentBoardLockedRef.current = isCurrentBoardLocked;
+  // Rescue lists are project-wide and can include protected boards' assets even on a safe tab.
+  const isRescueLocked = boards.some(board => board.isCensored) && !isCensoredUnlocked;
+  const isRescueLockedRef = useRef(isRescueLocked);
+  isRescueLockedRef.current = isRescueLocked;
 
   // Ensure no nodes remain selected when the canvas enters locked read-only state
   useEffect(() => {
@@ -1227,10 +1231,12 @@ const App: React.FC = () => {
     censoredLockVersionRef.current += 1;
     isCensoredUnlockedRef.current = false;
     isCurrentBoardLockedRef.current = isCurrentBoardCensored;
+    isRescueLockedRef.current = boardsRef.current.some(board => board.isCensored);
     setIsCensoredUnlocked(false);
     setIsUnlockModalOpen(false);
     setIsPasswordModalOpen(false);
     setInfoModalNode(null);
+    setIsRescueModalOpen(false);
   }, [isCurrentBoardCensored]);
 
   useEffect(() => {
@@ -3689,10 +3695,23 @@ const App: React.FC = () => {
     }
   }, [currentBoardNodes, showToast]);
 
+  // Async rescue work belongs to the exact unlocked board/session that started it.
+  // A lock followed by an unlock must not revive results or dialogs from the old session.
+  const captureRescueSession = useCallback(() => {
+    const lockVersion = censoredLockVersionRef.current;
+    const projectId = currentProjectRef.current?.id;
+    const boardId = currentBoardIdRef.current;
+    return () => !isRescueLockedRef.current && lockVersion === censoredLockVersionRef.current &&
+      projectId === currentProjectRef.current?.id && boardId === currentBoardIdRef.current;
+  }, []);
+
   // Scan for lost/unreferenced assets from Local IndexedDB and Google Drive
   const handleScanLostAssets = useCallback(
     async (silent: boolean = false) => {
+      if (isRescueLockedRef.current) return;
+      const isCurrent = captureRescueSession();
       const activeToken = (await getValidAccessToken()) || getAccessToken();
+      if (!isCurrent()) return;
       const proj = currentProjectRef.current;
       setIsScanningRescue(true);
 
@@ -3704,6 +3723,7 @@ const App: React.FC = () => {
           proj?.spreadsheetId,
           proj?.assetsFolderId
         );
+        if (!isCurrent()) return;
         setRescuableAssets(discovered);
 
         if (!silent) {
@@ -3714,21 +3734,23 @@ const App: React.FC = () => {
         }
       } catch (err: any) {
         console.warn('Scan lost assets failed:', err);
-        if (!silent) {
+        if (!silent && isCurrent()) {
           showToast('掃描遺失資源時發生錯誤');
         }
       } finally {
         setIsScanningRescue(false);
       }
     },
-    [showToast]
+    [showToast, captureRescueSession]
   );
 
   // Restore selected rescued assets onto canvas
   const handleRestoreRescuedAssets = useCallback(
     async (selectedAssets: RescuableAsset[]) => {
-      if (selectedAssets.length === 0) return;
+      if (selectedAssets.length === 0 || isRescueLockedRef.current) return;
+      const isCurrent = captureRescueSession();
       const activeToken = (await getValidAccessToken()) || getAccessToken();
+      if (!isCurrent()) return;
       const proj = currentProjectRef.current;
       const boardId = currentBoardIdRef.current;
 
@@ -3744,6 +3766,7 @@ const App: React.FC = () => {
         proj?.assetsFolderId
       );
 
+      if (!isCurrent()) return;
       if (restoredNodes.length > 0) {
         updateNodesAndSave(prev => [...prev, ...restoredNodes]);
         setSelectedNodeIds(new Set(restoredNodes.map(n => n.id)));
@@ -3753,32 +3776,35 @@ const App: React.FC = () => {
         showToast(`已成功救回 ${restoredNodes.length} 個圖片節點至畫布！`);
       }
     },
-    [currentBoardNodes, getCanvasCoords, updateNodesAndSave, showToast]
+    [currentBoardNodes, getCanvasCoords, updateNodesAndSave, showToast, captureRescueSession]
   );
 
   const handleDiscardRescuedAssets = useCallback(async (selectedAssets: RescuableAsset[]) => {
+    if (isRescueLockedRef.current) throw new Error('畫布已鎖定，請先解鎖。');
+    const isCurrent = captureRescueSession();
     const projectId = currentProjectRef.current?.id;
     const activeToken = selectedAssets.some(asset => asset.source === 'drive')
       ? (await getValidAccessToken()) || getAccessToken()
       : null;
+    if (!isCurrent()) throw new Error('畫布已鎖定或切換，請重新開啟救援視窗。');
     const result = await discardRescuableAssets(selectedAssets, activeToken, allNodesRef.current);
     // A project switch must not remove rows from a different project's rescue list.
-    if (currentProjectRef.current?.id === projectId) {
+    if (isCurrent() && currentProjectRef.current?.id === projectId) {
       const discardedIds = new Set(result.discardedIds);
       setRescuableAssets(previous => previous.filter(asset => !discardedIds.has(asset.id)));
       if (result.discardedIds.length > 0) showToast(`已捨棄 ${result.discardedIds.length} 個圖片資源並清除本機快取`);
     }
     return result;
-  }, [showToast]);
+  }, [showToast, captureRescueSession]);
 
   // Proactive lost asset check (scan only, non-destructive)
   useEffect(() => {
-    if (isLoadingProjectData || !currentProject?.id) return;
+    if (isRescueLocked || isLoadingProjectData || !currentProject?.id) return;
     const timer = setTimeout(async () => {
       handleScanLostAssets(true);
     }, 2000);
     return () => clearTimeout(timer);
-  }, [currentProject?.id, isLoadingProjectData, handleScanLostAssets]);
+  }, [currentProject?.id, isLoadingProjectData, isRescueLocked, handleScanLostAssets]);
 
   return (
     <div className="w-screen h-screen relative select-none overflow-hidden bg-gray-950 font-sans text-gray-100">
@@ -3804,8 +3830,8 @@ const App: React.FC = () => {
         isSyncingAssets={isSyncingAssets}
         onSyncAssetsToDrive={handleSyncAssetsToDrive}
         unuploadedAssetCount={unuploadedAssetCount}
-        onOpenRescueModal={() => handleScanLostAssets(false)}
-        rescuableAssetCount={rescuableAssets.length}
+        onOpenRescueModal={isRescueLocked ? undefined : () => handleScanLostAssets(false)}
+        rescuableAssetCount={isRescueLocked ? 0 : rescuableAssets.length}
         projectPassword={projectPassword}
         onOpenPasswordModal={() => setIsPasswordModalOpen(true)}
         isCurrentBoardLocked={isCurrentBoardLocked}
@@ -4146,13 +4172,14 @@ const App: React.FC = () => {
         </div>
 
         <CanvasNotices
+          isLocked={isCurrentBoardLocked}
           deletingCount={deletingNodeIds.size}
           error={error}
           toast={toast}
-          rescueCount={!isProjectBusy && !isRescueModalOpen && !isRescueBannerDismissed ? rescuableAssets.length : 0}
+          rescueCount={!isRescueLocked && !isProjectBusy && !isRescueModalOpen && !isRescueBannerDismissed ? rescuableAssets.length : 0}
           isBoardEmpty={currentBoardNodes.length === 0}
           onDismissError={() => setError(null)}
-          onRescue={() => setIsRescueModalOpen(true)}
+          onRescue={() => { if (!isRescueLockedRef.current) setIsRescueModalOpen(true); }}
           onDismissRescue={() => setIsRescueBannerDismissed(true)}
         />
       </CanvasOverlayStack>
@@ -4372,7 +4399,8 @@ const App: React.FC = () => {
       />
 
       {/* Asset Rescue Modal */}
-      <AssetRescueModal
+      <ProtectedAssetRescueModal
+        isLocked={isRescueLocked}
         isOpen={isRescueModalOpen}
         onClose={() => setIsRescueModalOpen(false)}
         assets={rescuableAssets}

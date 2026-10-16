@@ -50,6 +50,23 @@ try {
     await page.evaluate(text => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === text)?.click(), text);
   }
 
+  await run('locking removes rescue hints, images and pending discard confirmation immediately', async page => {
+    await page.evaluate(() => window.renderProtectedRescue());
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === '立即救回'));
+    await clickText(page, '立即救回');
+    await page.waitForSelector('[data-rescue-asset]');
+    await page.click('[data-discard-selected]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    await page.evaluate(() => window.setRescueLocked(true));
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 0);
+    assert.equal(await page.$('[data-rescue-asset]'), null);
+    assert.ok(await page.evaluate(() => !document.body.textContent.includes('立即救回') && !document.body.textContent.includes('keep-choice.png')));
+    await page.evaluate(() => window.setRescueLocked(false));
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === '立即救回'));
+    assert.equal(await page.$$eval('[role="dialog"]', items => items.length), 0);
+    assert.equal(await page.evaluate(() => Boolean(window.protectedDiscardCalled)), false);
+  });
+
   await run('rescue discard confirms, trashes Drive files, clears cache and retains failures for retry', async page => {
     await page.evaluate(() => window.renderAssetRescue());
     await page.waitForSelector('[data-discard-selected]');

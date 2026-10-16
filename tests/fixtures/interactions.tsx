@@ -12,6 +12,7 @@ import { ConfirmProvider } from '../../components/ui/ConfirmDialog';
 import { NodeInfoModal } from '../../components/NodeInfoModal';
 import BoardTabs from '../../components/BoardTabs';
 import AssetRescueModal from '../../components/AssetRescueModal';
+import ProtectedAssetRescueModal from '../../components/ProtectedAssetRescueModal';
 import type { ImageNode } from '../../types';
 import { getVariantOrphanFiles, trashVariantFiles } from '../../services/variantDeletionService';
 import { appendImageVariant, getImageVariants, selectImageVariant, removeImageVariant } from '../../utils/imageVariants';
@@ -22,6 +23,19 @@ const rescueFixtureAssets: RescuableAsset[] = [
   { id: 'drive_bad', source: 'drive', name: 'retry-choice.png', driveFileId: 'fixture-drive-bad' },
   { id: 'local-only', source: 'local', name: 'local-choice.png' },
 ];
+
+function ProtectedRescueFixture() {
+  const [locked, setLocked] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+  Object.assign(window, { setRescueLocked: setLocked });
+  return <>
+    <CanvasNotices isLocked={locked} deletingCount={0} error={null} toast={null} rescueCount={3} isBoardEmpty
+      onRescue={() => setOpen(true)} onDismissError={noop} onDismissRescue={noop} />
+    <ProtectedAssetRescueModal isLocked={locked} isOpen={open} onClose={() => setOpen(false)} assets={rescueFixtureAssets}
+      isLoading={false} onRescan={async () => {}} onRestore={async () => {}}
+      onDiscardAssets={async () => { Object.assign(window, { protectedDiscardCalled: true }); return { discardedIds: [], failures: [] }; }} />
+  </>;
+}
 
 function AssetRescueFixture() {
   const [assets, setAssets] = React.useState(rescueFixtureAssets);
@@ -179,6 +193,10 @@ Object.assign(window, {
     await new Promise(resolve => requestAnimationFrame(resolve));
   },
   seedLegacyNodeCache: (id: string, url: string) => nodeObjectUrlCache.set(id, url),
+  renderProtectedRescue: async () => {
+    await import('../../index.css');
+    root.render(<ProtectedRescueFixture />);
+  },
   renderAssetRescue: async () => {
     await import('../../index.css');
     for (const asset of rescueFixtureAssets) await storeImage(asset.driveFileId || asset.id, new Blob(['fixture-image']));

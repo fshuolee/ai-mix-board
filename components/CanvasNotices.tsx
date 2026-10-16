@@ -9,6 +9,7 @@ const TOAST_TONE_CLASSES = {
 export type ToastTone = keyof typeof TOAST_TONE_CLASSES;
 
 interface CanvasNoticesProps {
+  isLocked?: boolean;
   deletingCount: number;
   error: string | null;
   toast: { message: string; tone: ToastTone } | null;
@@ -21,9 +22,9 @@ interface CanvasNoticesProps {
 
 /** Render inside CanvasOverlayStack to share flow and wrapping with the model selector. */
 const CanvasNotices: React.FC<CanvasNoticesProps> = ({
-  deletingCount, error, toast, rescueCount, isBoardEmpty,
+  isLocked = false, deletingCount, error, toast, rescueCount, isBoardEmpty,
   onDismissError, onRescue, onDismissRescue,
-}) => (
+}) => isLocked ? null : (
   <>
     {/* Floating Deletion In-Progress Banner */}
     {deletingCount > 0 && (
