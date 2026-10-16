@@ -11,10 +11,15 @@ import {
   Layers,
   HardDrive,
   RotateCw,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import { CanvasNode, ImageNode, TextNode } from '../types';
 import { getImageVariants } from '../utils/imageVariants';
 import { ImageVariantPreview } from './ImageVariantPreview';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton } from './ui/Modal';
 
 interface NodeInfoModalProps {
@@ -23,6 +28,7 @@ interface NodeInfoModalProps {
   onClose: () => void;
   onRetryNode?: (nodeId: string) => void;
   onRetryVariantSync?: (nodeId: string, variantId: string) => void;
+  onDeleteVariant?: (nodeId: string, variantId: string) => void;
   onSelectVariant?: (nodeId: string, variantId: string) => void;
   onSelectSources?: (sourceIds: string[]) => void;
   onApplyNodeParams?: (params: Record<string, any>) => void;
@@ -35,17 +41,23 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
   onRetryNode,
   onSelectSources,
   onSelectVariant,
+  onDeleteVariant,
   onRetryVariantSync,
   onApplyNodeParams,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const [previewId, setPreviewId] = useState<string | null>(null);
-  useEffect(() => { setPreviewId(null); }, [boardNode?.id, isOpen]);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const thumbnailRefs = React.useRef(new Map<string, HTMLButtonElement>());
+  useEffect(() => { setPreviewId(null); setDeleteId(null); }, [boardNode?.id, isOpen]);
+  useEffect(() => { if (previewId) thumbnailRefs.current.get(previewId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [previewId]);
   if (!isOpen || !boardNode) return null;
   const variants = boardNode.type === 'image' ? getImageVariants(boardNode) : [];
   const activeId = boardNode.type === 'image' ? boardNode.activeVariantId || variants[0]?.id : undefined;
   const preview = variants.find(variant => variant.id === (previewId || activeId)) || variants[0];
+  const previewIndex = Math.max(0, variants.findIndex(variant => variant.id === preview?.id));
+  const changePreview = (offset: number) => setPreviewId(variants[(previewIndex + offset + variants.length) % variants.length].id);
   const node = preview ? { ...boardNode, ...preview, id: boardNode.id, createdAt: preview.createdAt } as CanvasNode : boardNode;
   const isVariantGenerating = boardNode.type === 'image' && boardNode.variantStatus === 'generating';
 
@@ -80,13 +92,14 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
   );
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+    <>
+    <Modal isOpen={isOpen} onClose={onClose} size={isImage ? '2xl' : 'lg'} tall>
       <ModalHeader
         icon={isImage ? <ImageIcon /> : <Type />}
         tone="blue"
         title={
           <span className="flex items-center gap-2">
-            <span>{isImage ? '圖片節點詳細資訊' : '文字節點詳細資訊'}</span>
+            <span>{isImage ? '圖片版本' : '文字資訊'}</span>
             {node.status === 'generating' && (
               <span className="px-2 py-0.5 text-[10px] font-medium bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30">
                 生成中
@@ -99,40 +112,56 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
             )}
           </span>
         }
-        subtitle={<span className="font-mono">ID: {node.id}</span>}
       />
 
       <ModalBody className="p-5 space-y-4">
-        {isImage && variants.length > 0 && <section className="bg-gray-950/60 rounded-xl p-3.5 border border-gray-800 space-y-3" aria-label="圖片 variants">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-gray-200">Variants ({variants.length})</span>
-            <span className="text-[11px] text-gray-400">生成會保留所有版本</span>
-          </div>
-          {preview && <div className="flex items-center justify-center h-48 rounded-lg bg-gray-900 overflow-hidden">
+        {isImage && variants.length > 0 && <section className="space-y-4" aria-label="圖片 variants">
+          {preview && <div className="relative flex items-center justify-center h-[min(42vh,360px)] min-h-40 rounded-xl bg-gray-950 overflow-hidden border border-gray-800/60">
             <ImageVariantPreview variant={preview} className="w-full h-full" />
+            {variants.length > 1 && <>
+              <button type="button" aria-label="上一版本" onClick={() => changePreview(-1)} className="absolute left-2 p-2 rounded-full bg-gray-950/80 text-gray-200 hover:bg-gray-800 focus-visible:outline focus-visible:outline-blue-400"><ChevronLeft className="w-4 h-4" /></button>
+              <button type="button" aria-label="下一版本" onClick={() => changePreview(1)} className="absolute right-2 p-2 rounded-full bg-gray-950/80 text-gray-200 hover:bg-gray-800 focus-visible:outline focus-visible:outline-blue-400"><ChevronRight className="w-4 h-4" /></button>
+            </>}
+            <span className="absolute bottom-3 left-3 px-2 py-1 rounded-md bg-gray-950/80 text-[11px] tabular-nums text-gray-300">{previewIndex + 1} / {variants.length}</span>
           </div>}
-          <div className="grid grid-cols-4 gap-2 max-h-48 overflow-auto">
+          <div className="flex gap-2 overflow-x-auto py-1 px-0.5" aria-label="版本縮圖" onKeyDown={event => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              const nextIndex = (previewIndex + (event.key === 'ArrowLeft' ? -1 : 1) + variants.length) % variants.length;
+              setPreviewId(variants[nextIndex].id); thumbnailRefs.current.get(variants[nextIndex].id)?.focus();
+            }
+          }}>
             {variants.map((variant, index) => <button key={variant.id} type="button" data-variant-id={variant.id}
-              data-variant-representative={variant.id === activeId} aria-label={`預覽版本 ${index + 1}`} aria-pressed={variant.id === preview?.id}
-              onClick={() => setPreviewId(variant.id)} className={`rounded-lg border overflow-hidden text-left ${variant.id === preview?.id ? 'border-blue-400 bg-blue-950/40' : 'border-gray-700 bg-gray-900'}`}>
-              <div className="h-16 flex items-center justify-center overflow-hidden"><ImageVariantPreview variant={variant} className="w-full h-full" /></div>
-              <div className="px-2 py-1 text-[10px] text-gray-300">{variant.id === activeId ? '代表圖片' : `版本 ${index + 1}`}</div>
+              ref={element => { if (element) thumbnailRefs.current.set(variant.id, element); else thumbnailRefs.current.delete(variant.id); }}
+              data-variant-representative={variant.id === activeId} aria-label={`預覽版本 ${index + 1}${variant.id === activeId ? '，代表圖片' : ''}`} aria-pressed={variant.id === preview?.id}
+              onClick={() => setPreviewId(variant.id)} className={`relative shrink-0 w-20 h-16 rounded-lg border-2 overflow-hidden transition-colors focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-blue-300 ${variant.id === preview?.id ? 'border-blue-400' : 'border-transparent hover:border-gray-600'}`}>
+              <ImageVariantPreview variant={variant} className="w-full h-full" />
+              {variant.id === activeId && <span className="absolute bottom-1 right-1 p-0.5 rounded-full bg-blue-500 text-white"><Check className="w-3 h-3" /></span>}
             </button>)}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              {onSelectVariant && preview && <button type="button" disabled={preview.id === activeId} onClick={() => onSelectVariant(boardNode.id, preview.id)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-400">
+                {preview.id === activeId && <Check className="w-3.5 h-3.5" />}{preview.id === activeId ? '代表圖片' : '設為代表圖片'}
+              </button>}
+              {isVariantGenerating && <span role="status" className="text-xs text-blue-300">生成中…</span>}
+            </div>
+            {onDeleteVariant && preview && variants.length > 1 && <button type="button" aria-label="刪除此版本" title="刪除此版本"
+              onClick={() => setDeleteId(preview.id)} className="p-2 rounded-lg text-gray-400 hover:text-red-300 hover:bg-red-500/10 focus-visible:outline focus-visible:outline-red-400"><Trash2 className="w-4 h-4" /></button>}
           </div>
           {preview?.syncError && <div className="text-xs text-amber-300 space-y-2" role="alert">
             <p>{preview.syncError}</p>
-            {onRetryVariantSync && <button type="button" className="underline" onClick={() => onRetryVariantSync(boardNode.id, preview.id)}>重試此版本同步</button>}
+            {onRetryVariantSync && <button type="button" className="underline" onClick={() => onRetryVariantSync(boardNode.id, preview.id)}>重試同步</button>}
           </div>}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[10px] text-gray-400">{preview ? formatDate(preview.createdAt) : ''}</span>
-            {onSelectVariant && preview && <button type="button" disabled={preview.id === activeId} onClick={() => onSelectVariant(boardNode.id, preview.id)}
-              className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500">
-              {preview.id === activeId ? '目前代表圖片' : '設為代表圖片'}
-            </button>}
-          </div>
         </section>}
-        {isVariantGenerating && <p role="status" className="text-xs text-blue-300">正在生成新的 variant，目前代表圖片會保留。</p>}
         {boardNode.type === 'image' && boardNode.variantError && <p role="alert" className="text-xs text-red-300">{boardNode.variantError}</p>}
+        <details className="group/details border-t border-gray-800 pt-3" open={!isImage}>
+          <summary className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 cursor-pointer list-none py-1">
+            <ChevronDown className="w-3.5 h-3.5 transition-transform group-open/details:rotate-180" />詳細資訊
+          </summary>
+          <div className="pt-3 space-y-4">
+            <p className="text-[10px] text-gray-500 font-mono break-all">ID: {node.id}</p>
         {/* 1. Basic Properties */}
         <div className="bg-gray-950/60 rounded-xl p-3.5 border border-gray-800 space-y-2.5">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-300">
@@ -364,6 +393,8 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
             </p>
           </div>
         )}
+          </div>
+        </details>
       </ModalBody>
 
       <ModalFooter className="justify-between">
@@ -385,5 +416,14 @@ export const NodeInfoModal: React.FC<NodeInfoModalProps> = ({
         </ModalButton>
       </ModalFooter>
     </Modal>
+    <ConfirmDialog isOpen={Boolean(deleteId && variants.some(variant => variant.id === deleteId))} title="刪除此版本？"
+      destructive confirmLabel="刪除" cancelLabel="取消" onChoose={choice => {
+        const id = deleteId;
+        setDeleteId(null);
+        if (choice !== 'confirm' || !id) return;
+        onDeleteVariant?.(boardNode.id, id);
+        setPreviewId(null);
+      }} />
+    </>
   );
 };

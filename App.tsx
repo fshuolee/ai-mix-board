@@ -20,7 +20,7 @@ import {
 } from './utils/canvasUtils';
 import { generateFromNodes } from './services/geminiService';
 import { saveGeneratedImage } from './services/generatedImageService';
-import { appendImageVariant, applyImageVariant, getImageVariants, selectImageVariant, expandImageVariantNodes, mergeSyncedImageAssets } from './utils/imageVariants';
+import { appendImageVariant, applyImageVariant, getImageVariants, selectImageVariant, removeImageVariant, expandImageVariantNodes, mergeSyncedImageAssets } from './utils/imageVariants';
 import { getGenerationSources } from './utils/generationSources';
 import { getImage, storeImage, isDriveFileId } from './services/dbService';
 import {
@@ -4423,6 +4423,11 @@ const App: React.FC = () => {
           if (!getAccessToken() || !currentProjectRef.current) { showToast('請先登入並選擇專案以同步圖片。', 'warning'); return; }
           updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
             ? { ...node, variants: getImageVariants(node).map(variant => variant.id === variantId ? { ...variant, syncError: undefined } : variant) } : node));
+        }}
+        onDeleteVariant={(nodeId, variantId) => {
+          if (isCurrentBoardLockedRef.current) return;
+          updateNodesAndSave(previous => previous.map(node => node.id === nodeId && node.type === 'image'
+            ? { ...removeImageVariant(node, variantId), updatedAt: Date.now() } : node));
         }}
         onSelectVariant={(nodeId, variantId) => {
           if (isCurrentBoardLockedRef.current) return;

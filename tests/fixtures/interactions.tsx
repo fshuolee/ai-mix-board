@@ -12,6 +12,8 @@ import { ConfirmProvider } from '../../components/ui/ConfirmDialog';
 import { NodeInfoModal } from '../../components/NodeInfoModal';
 import BoardTabs from '../../components/BoardTabs';
 import AssetRescueModal from '../../components/AssetRescueModal';
+import type { ImageNode } from '../../types';
+import { appendImageVariant, getImageVariants, selectImageVariant, removeImageVariant } from '../../utils/imageVariants';
 import { type RescuableAsset } from '../../services/assetRescueService';
 
 const rescueFixtureAssets: RescuableAsset[] = [
@@ -40,6 +42,49 @@ function BoardTabsFixture() {
     onDeleteBoard={noop} allNodes={[]} /></ConfirmProvider>;
 }
 
+// Local preview uses generated landscape swatches; all controls are the real Info component.
+function makePreviewNode(): ImageNode {
+  const palettes = [
+    ['#bdd7dc', '#f9d9a0', '#849eaa', '#466879', '#233f50'],
+    ['#cbabc6', '#f0d2b4', '#967a9e', '#605b80', '#353a59'],
+    ['#95b8ba', '#e8d9ac', '#6b9992', '#3b706e', '#204949'],
+    ['#e2bda5', '#ffe4aa', '#be8e87', '#855e70', '#4b405c'],
+    ['#a2bdde', '#e7dbce', '#8199bf', '#526a9c', '#2e4672'],
+    ['#c3c9b5', '#f4dfb3', '#98a28b', '#667969', '#3b554b'],
+  ];
+  const variants = palettes.map((colors, index) => {
+    const canvas = document.createElement('canvas'); canvas.width = 960; canvas.height = 640;
+    const ctx = canvas.getContext('2d')!;
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, colors[0]); gradient.addColorStop(1, colors[1]);
+    ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = colors[1]; ctx.beginPath(); ctx.arc(700 - index * 30, 170 + index * 8, 42, 0, Math.PI * 2); ctx.fill();
+    for (let layer = 0; layer < 3; layer++) {
+      ctx.fillStyle = colors[layer + 2]; ctx.beginPath(); ctx.moveTo(0, 640);
+      for (let x = 0; x <= 960; x += 60) ctx.lineTo(x, 330 + layer * 90 + Math.sin(x / 150 + index + layer * 2) * (90 - layer * 15));
+      ctx.lineTo(960, 640); ctx.closePath(); ctx.fill();
+    }
+    return { id: `preview-variant-${index}`, content: canvas.toDataURL('image/png'), width: 480, height: 320,
+      createdAt: Date.now() - (palettes.length - index) * 60000, originalFileName: `landscape-${index + 1}.png`,
+      generationModel: 'Gemini 3.1 Flash Image', generationModelId: 'gemini-3.1-flash-image', generationPrompt: '層疊山巒、晨光與寧靜的色彩。', generationParams: { aspectRatio: '3:2' } };
+  });
+  return { ...variants[0], id: 'variants-preview', type: 'image', x: 0, y: 0, rotation: 0, activeVariantId: variants[0].id, variants };
+}
+function VariantsPreviewFixture() {
+  const [node, setNode] = React.useState(makePreviewNode);
+  const [open, setOpen] = React.useState(true);
+  return <main className="min-h-screen bg-gray-950 flex items-center justify-center">
+    <button className="px-5 py-3 rounded-xl border border-gray-700 text-sm text-gray-300" onClick={() => setOpen(true)}>開啟圖片版本</button>
+    <NodeInfoModal isOpen={open} node={node} onClose={() => setOpen(false)}
+      onSelectVariant={(_, id) => setNode(previous => selectImageVariant(previous, id))}
+      onDeleteVariant={(_, id) => setNode(previous => removeImageVariant(previous, id))}
+      onRetryNode={() => setNode(previous => {
+        const versions = getImageVariants(previous);
+        return appendImageVariant(previous, { ...versions[versions.length - 1], id: crypto.randomUUID(), createdAt: Date.now() });
+      })} />
+  </main>;
+}
+
 function EditableImageFixture() {
   const [isLocked, setLocked] = React.useState(false);
   Object.assign(window, { setImageLocked: setLocked });
@@ -55,6 +100,10 @@ const noop = () => {};
 
 // Expose real components and services to browser tests without Google account access.
 Object.assign(window, {
+  renderVariantsPreview: async () => {
+    await import('../../index.css');
+    root.render(<VariantsPreviewFixture />);
+  },
   renderGeneratedImageApp: async () => {
     await import('../../index.css');
     const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 120;
@@ -147,3 +196,5 @@ Object.assign(window, {
     <CensoredUnlockModal isOpen={isOpen} projectPassword={projectPassword} boardName="Fixture" onClose={noop} onUnlock={() => true} onSetProjectPassword={async () => {}} />
   ),
 });
+
+if (new URLSearchParams(window.location.search).has('variants-preview')) (window as any).renderVariantsPreview();

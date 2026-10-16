@@ -196,6 +196,67 @@ try {
     assert.equal(result.menuOnTop, true, 'toolbar dropdown must receive clicks above the model selector');
   });
 
+  await run('variant deletion asks first, supports cancel, updates the representative and keeps the final image', async page => {
+    await page.evaluate(() => window.renderGeneratedImageApp());
+    await page.waitForSelector('button[title="檢視節點詳細資訊 (Info)"]');
+    await page.$eval('button[title="檢視節點詳細資訊 (Info)"]', button => button.click());
+    await clickText(page, '重新生成');
+    await page.waitForFunction(() => document.querySelectorAll('[data-variant-id]').length === 2);
+    await page.waitForSelector('button[aria-label="刪除此版本"]');
+    await page.click('button[aria-label="刪除此版本"]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 2);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 1);
+    assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 2);
+    await page.click('button[aria-label="刪除此版本"]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    await clickText(page, '刪除');
+    await page.waitForFunction(() => document.querySelectorAll('[data-variant-id]').length === 1);
+    assert.equal(await page.$('button[aria-label="刪除此版本"]'), null);
+    assert.equal(await page.$$eval('[data-variant-representative="true"]', items => items.length), 1);
+    await clickText(page, '關閉');
+    await page.$eval('button[title="檢視節點詳細資訊 (Info)"]', button => button.click());
+    assert.equal(await page.$$eval('[data-variant-id]', items => items.length), 1);
+  });
+
+  await run('compact variants preview supports narrow screens, keyboard selection and deleting an inactive version', async page => {
+    await page.setViewport({ width: 390, height: 740 });
+    await page.evaluate(() => window.renderVariantsPreview());
+    await page.waitForSelector('[data-variant-id]');
+    assert.equal(await page.$eval('details', element => element.open), false);
+    const count = await page.$$eval('[data-variant-id]', items => items.length);
+    await page.click('button[aria-label="下一版本"]');
+    await page.waitForSelector('[data-variant-id="preview-variant-1"][aria-pressed="true"]');
+    await page.click('button[aria-label="刪除此版本"]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    await clickText(page, '刪除');
+    await page.waitForFunction(count => document.querySelectorAll('[data-variant-id]').length === count - 1, {}, count);
+    assert.equal(await page.$('[data-variant-id="preview-variant-1"]'), null);
+    assert.ok(await page.$('[data-variant-id="preview-variant-0"][data-variant-representative="true"]'));
+    await page.focus('[data-variant-id="preview-variant-0"]');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('data-variant-id')), 'preview-variant-2');
+    const bounds = await page.$eval('button[aria-label="刪除此版本"]', button => button.getBoundingClientRect().toJSON());
+    assert.ok(bounds.left >= 0 && bounds.right <= 390);
+    await page.screenshot({ path: '/tmp/ai-mix-board-variants-mobile.png' });
+  });
+
+  await run('removing a variant preserves independent edits and cannot remove the final image', async page => {
+    const result = await page.evaluate(async () => {
+      const { removeImageVariant, appendImageVariant } = await import('/utils/imageVariants.ts');
+      const first = { id: 'first', type: 'image', content: 'first-image', x: 5, y: 10, width: 100, height: 80, rotation: 0,
+        imageEdits: { strokes: [], crop: { x: .1, y: .1, width: .8, height: .8 } } };
+      const two = appendImageVariant(first, { id: 'second', content: 'second-image', width: 100, height: 80, createdAt: 2000 });
+      const deleteInactive = removeImageVariant(two, 'second');
+      const deleteActive = removeImageVariant(two, 'first');
+      return { inactiveContent: deleteInactive.content, editsKept: Boolean(deleteInactive.imageEdits), activeContent: deleteActive.content,
+        overlayCleared: !deleteActive.imageEdits, count: deleteActive.variants.length,
+        finalKept: removeImageVariant(deleteActive, 'second') === deleteActive, unknownKept: removeImageVariant(two, 'missing') === two };
+    });
+    assert.deepEqual(result, { inactiveContent: 'first-image', editsKept: true, activeContent: 'second-image', overlayCleared: true, count: 1, finalKept: true, unknownKept: true });
+  });
+
   await run('Info regenerates a successful image as a retained variant and switches its representative', async page => {
     await page.evaluate(() => window.renderGeneratedImageApp());
     await page.waitForSelector('button[title="檢視節點詳細資訊 (Info)"]');

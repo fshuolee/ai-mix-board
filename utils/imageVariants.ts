@@ -28,6 +28,17 @@ export function selectImageVariant(node: ImageNode, id: string): ImageNode {
   return variant ? applyImageVariant({ ...node, variants }, variant) : node;
 }
 
+/** Remove the version reference only; original assets may still serve another node or generation recipe. */
+export function removeImageVariant(node: ImageNode, id: string): ImageNode {
+  const variants = getImageVariants(node);
+  if (variants.length <= 1 || !variants.some(variant => variant.id === id)) return node;
+  const remaining = variants.filter(variant => variant.id !== id);
+  const activeId = node.activeVariantId || variants[0].id;
+  if (activeId !== id) return { ...node, variants: remaining, activeVariantId: activeId };
+  const next = remaining[remaining.length - 1];
+  return applyImageVariant({ ...node, variants: remaining }, next);
+}
+
 export function appendImageVariant(node: ImageNode, variant: ImageVariant): ImageNode {
   const variants = getImageVariants(node);
   if (variants.some(item => item.id === variant.id)) return node;
