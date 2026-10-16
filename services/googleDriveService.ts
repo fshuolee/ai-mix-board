@@ -527,16 +527,12 @@ async function syncUnuploadedMediaNodes(
  * Preserves local IndexedDB cache so that files can be restored without data loss.
  */
 export async function deleteAssetFromDrive(token: string, fileId: string): Promise<void> {
-  try {
-    // Soft-delete to Google Drive Trash via PATCH trashed: true
-    await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, token, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trashed: true }),
-    });
-  } catch (err: any) {
-    console.warn(`Failed to move asset ${fileId} to Google Drive Trash:`, err.message);
-  }
+  // Propagate failures so callers never report a successful discard or clear the cache after a failed trash request.
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trashed: true }),
+  });
 
   // NOTE: We intentionally DO NOT delete from IndexedDB cache.
   // Keeping the local blob guarantees that if the user undoes or restores from Drive trash,

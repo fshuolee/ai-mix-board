@@ -50,6 +50,152 @@ try {
     await page.evaluate(text => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === text)?.click(), text);
   }
 
+  await run('rescue discard confirms, trashes Drive files, clears cache and retains failures for retry', async page => {
+    await page.evaluate(() => window.renderAssetRescue());
+    await page.waitForSelector('[data-discard-selected]');
+    await page.click('[data-discard-selected]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    assert.deepEqual(await page.evaluate(() => window.rescueTrashRequests), []);
+    await clickText(page, '捨棄 3 個');
+    await page.waitForFunction(() => document.querySelector('[role="dialog"] [role="alert"]')?.textContent.includes('Fixture permission denied'));
+    const result = await page.evaluate(async () => {
+      const { getImage } = await import('/services/dbService.ts');
+      return { requests: window.rescueTrashRequests, goodCached: Boolean(await getImage('fixture-drive-good')), badCached: Boolean(await getImage('fixture-drive-bad')), localCached: Boolean(await getImage('local-only')),
+        cards: [...document.querySelectorAll('[data-rescue-asset]')].map(el => el.getAttribute('data-rescue-asset')) };
+    });
+    assert.deepEqual(result, { requests: [
+      { url: 'https://www.googleapis.com/drive/v3/files/fixture-drive-good', method: 'PATCH', body: { trashed: true } },
+      { url: 'https://www.googleapis.com/drive/v3/files/fixture-drive-bad', method: 'PATCH', body: { trashed: true } },
+    ], goodCached: false, badCached: true, localCached: false, cards: ['drive_bad'] });
+    await page.evaluate(() => { window.allowFailedRescue = true; });
+    await page.click('[data-discard-selected]');
+    await clickText(page, '捨棄 1 個');
+    await page.waitForFunction(() => document.querySelectorAll('[data-rescue-asset]').length === 0);
+    assert.equal(await page.evaluate(async () => Boolean(await (await import('/services/dbService.ts')).getImage('fixture-drive-bad'))), false);
+    assert.equal(await page.evaluate(() => window.rescueTrashRequests.length), 3);
+  });
+
+  await run('rescue discard cancellation keeps files and filtered discard excludes hidden selections', async page => {
+    await page.evaluate(() => window.renderAssetRescue());
+    await page.waitForSelector('[data-discard-selected]');
+    await page.click('[data-discard-selected]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 2);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 1);
+    assert.deepEqual(await page.evaluate(() => window.rescueTrashRequests), []);
+    await page.type('input[placeholder="搜尋檔案名稱..."]', 'keep-choice');
+    await page.click('[data-discard-selected]');
+    await clickText(page, '捨棄 1 個');
+    await page.waitForFunction(() => document.querySelectorAll('[data-rescue-asset]').length === 0);
+    assert.equal(await page.evaluate(() => window.rescueTrashRequests.length), 1);
+    const remaining = await page.evaluate(async () => {
+      const { getImage } = await import('/services/dbService.ts');
+      return [Boolean(await getImage('fixture-drive-bad')), Boolean(await getImage('local-only'))];
+    });
+    assert.deepEqual(remaining, [true, true]);
+  });
+
+  await run('rescue discard respects individual selection and prevents competing actions while pending', async page => {
+    await page.setViewport({ width: 390, height: 740 });
+    await page.evaluate(async () => { await window.renderAssetRescue(); window.holdRescueTrash = true; });
+    await page.waitForSelector('[data-rescue-asset="drive_bad"]');
+    await page.click('[data-rescue-asset="drive_bad"]');
+    await page.click('[data-rescue-asset="local-only"]');
+    const actionBounds = await page.$eval('[data-discard-selected]', button => button.getBoundingClientRect().toJSON());
+    assert.ok(actionBounds.left >= 0 && actionBounds.right <= 390, 'discard stays usable on narrow screens');
+    await page.click('[data-discard-selected]');
+    await clickText(page, '捨棄 1 個');
+    await page.waitForFunction(() => typeof window.releaseRescueTrash === 'function');
+    assert.equal(await page.$eval('[data-discard-selected]', button => button.disabled), true);
+    assert.equal(await page.$eval('button[title="重新掃描本地與雲端硬碟"]', button => button.disabled), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.$$eval('[role="dialog"]', dialogs => dialogs.length), 1);
+    await page.evaluate(() => window.releaseRescueTrash());
+    await page.waitForFunction(() => !document.querySelector('[data-rescue-asset="drive_good"]'));
+    assert.equal(await page.$eval('[data-discard-selected]', button => button.disabled), true, 'unselected remaining items must stay unselected');
+    assert.equal(await page.evaluate(() => window.rescueTrashRequests.length), 1);
+    await page.screenshot({ path: '/tmp/ai-mix-board-rescue-discard-mobile.png' });
+  });
+
+  await run('rescue discard without login or with a referenced asset never deletes its cache', async page => {
+    const result = await page.evaluate(async () => {
+      const { discardRescuableAssets } = await import('/services/assetRescueService.ts');
+      const { getImage } = await import('/services/dbService.ts');
+      await window.storeImage('guarded-drive', new Blob(['guarded']));
+      const asset = { id: 'drive_guarded', source: 'drive', name: 'guarded.png', driveFileId: 'guarded-drive' };
+      const loggedOut = await discardRescuableAssets([asset], null);
+      const referenced = await discardRescuableAssets([asset], 'fixture-token', [{ id: 'node', type: 'image', content: 'guarded-drive', x: 0, y: 0, width: 1, height: 1, rotation: 0 }]);
+      return { loggedOut: loggedOut.discardedIds, loginFailure: loggedOut.failures.length, referenced: referenced.discardedIds, referencedFailure: referenced.failures.length, cached: Boolean(await getImage('guarded-drive')) };
+    });
+    assert.deepEqual(result, { loggedOut: [], loginFailure: 1, referenced: [], referencedFailure: 1, cached: true });
+  });
+
+  await run('canvas notices stay below tools and model selection, including narrow screens', async page => {
+    for (const width of [1280, 390]) {
+      await page.setViewport({ width, height: 740 });
+      await page.evaluate(async () => {
+        await import('/index.css');
+        window.renderApp();
+      });
+      await page.waitForSelector('button[title="清空畫布"]');
+      await page.$eval('button[title="清空畫布"]', button => button.click());
+      await page.waitForSelector('[role="status"]');
+      const layout = await page.evaluate(() => {
+        const notice = document.querySelector('[role="status"]');
+        const tools = document.querySelector('button[title="清空畫布"]').closest('.fixed');
+        const model = document.querySelector('.canvas-overlay-stack > div button');
+        return { notice: notice.getBoundingClientRect().toJSON(), tools: tools.getBoundingClientRect().toJSON(), model: model?.getBoundingClientRect().toJSON(), height: innerHeight, width: innerWidth };
+      });
+      assert.ok(layout.notice.top >= layout.tools.bottom, 'notice must clear the toolbar');
+      assert.ok(layout.model && layout.notice.top >= layout.model.bottom, 'notice must clear the model selector');
+      assert.ok(layout.notice.bottom < layout.height / 2, 'notice should share the top notification area, clear of bottom tabs');
+      assert.ok(layout.notice.left >= 0 && layout.notice.right <= layout.width, 'notice stays within viewport');
+    }
+  });
+
+  await run('simultaneous rescue and status notices wrap without overlap and keep actions clickable', async page => {
+    for (const width of [1280, 390]) {
+      await page.setViewport({ width, height: 740 });
+      await page.evaluate(() => window.renderCanvasNotices());
+      await page.waitForSelector('button[title="關閉提示"]');
+      const layout = await page.evaluate(() => {
+        const stack = document.querySelector('.canvas-overlay-stack');
+        const rectangles = [...stack.children].map(element => element.getBoundingClientRect().toJSON());
+        const rescue = [...stack.querySelectorAll('button')].find(button => button.textContent.trim() === '立即救回');
+        const r = rescue.getBoundingClientRect();
+        return { rectangles, overflow: stack.scrollWidth > stack.clientWidth, rescueHit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === rescue };
+      });
+      assert.equal(layout.overflow, false, 'long errors and rescue text must not overflow horizontally');
+      for (let index = 1; index < layout.rectangles.length; index++) {
+        assert.ok(layout.rectangles[index].top >= layout.rectangles[index - 1].bottom, 'notices must not overlap');
+      }
+      assert.equal(layout.rescueHit, true, 'rescue action must be unobstructed');
+      await clickText(page, '立即救回');
+      await page.click('button[title="關閉提示"]');
+      await page.click('button[aria-label="關閉錯誤提示"]');
+      assert.deepEqual(await page.evaluate(() => [window.rescueClicked, window.rescueDismissed, window.errorDismissed]), [true, true, true]);
+      if (width === 390) await page.screenshot({ path: '/tmp/ai-mix-board-notices-mobile.png' });
+    }
+  });
+
+  await run('toolbar dropdowns stay above model selection on narrow screens', async page => {
+    await page.setViewport({ width: 390, height: 740 });
+    await page.evaluate(async () => { await import('/index.css'); window.renderApp(); });
+    await page.waitForSelector('button .lucide-ruler');
+    await page.$eval('button .lucide-ruler', icon => icon.closest('button').click());
+    await page.waitForFunction(() => [...document.querySelectorAll('span')].some(span => span.textContent === 'Preset'));
+    const result = await page.evaluate(() => {
+      const menu = [...document.querySelectorAll('span')].find(span => span.textContent === 'Preset').parentElement.parentElement;
+      const model = document.querySelector('.canvas-overlay-stack > div');
+      const a = menu.getBoundingClientRect(), b = model.getBoundingClientRect();
+      const left = Math.max(a.left, b.left), right = Math.min(a.right, b.right);
+      const top = Math.max(a.top, b.top), bottom = Math.min(a.bottom, b.bottom);
+      return { overlaps: right > left && bottom > top, menuOnTop: menu.contains(document.elementFromPoint((left + right) / 2, (top + bottom) / 2)) };
+    });
+    assert.equal(result.overlaps, true, 'fixture should exercise intersecting dropdown and model geometry');
+    assert.equal(result.menuOnTop, true, 'toolbar dropdown must receive clicks above the model selector');
+  });
+
   await run('Info regenerates a successful image as a retained variant and switches its representative', async page => {
     await page.evaluate(() => window.renderGeneratedImageApp());
     await page.waitForSelector('button[title="檢視節點詳細資訊 (Info)"]');

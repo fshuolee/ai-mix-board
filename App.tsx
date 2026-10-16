@@ -22,7 +22,7 @@ import { generateFromNodes } from './services/geminiService';
 import { saveGeneratedImage } from './services/generatedImageService';
 import { appendImageVariant, applyImageVariant, getImageVariants, selectImageVariant, expandImageVariantNodes, mergeSyncedImageAssets } from './utils/imageVariants';
 import { getGenerationSources } from './utils/generationSources';
-import { getImage, storeImage, isDriveFileId, deleteMultipleImages } from './services/dbService';
+import { getImage, storeImage, isDriveFileId } from './services/dbService';
 import {
   subscribeAuth,
   getCurrentUser,
@@ -72,6 +72,8 @@ import NodeRenderer, { nodeObjectUrlCache } from './components/NodeRenderer';
 import { ConfirmDialog, useConfirm } from './components/ui/ConfirmDialog';
 import { isAnyModalOpen as isAnySharedModalOpen } from './components/ui/Modal';
 import TopNavigation from './components/TopNavigation';
+import CanvasOverlayStack from './components/CanvasOverlayStack';
+import CanvasNotices, { type ToastTone } from './components/CanvasNotices';
 import BoardTabs from './components/BoardTabs';
 import { CensoredUnlockModal, CensoredLockedIndicator, PasswordManageModal } from './components/CensoredOverlay';
 import ModelSelectorModal from './components/ModelSelectorModal';
@@ -115,19 +117,18 @@ import {
   RescuableAsset,
   scanForLostAssets,
   restoreAssetsToCanvas,
+  discardRescuableAssets,
 } from './services/assetRescueService';
 import {
   Sparkles,
   Loader2,
   UploadCloud,
   Trash2,
-  ClipboardCheck,
   Folder,
   AlertCircle,
   RotateCw,
   LogIn,
   ExternalLink,
-  ShieldCheck,
   X,
   ChevronDown,
   ChevronLeft,
@@ -195,13 +196,7 @@ const DEFAULT_BOARD_ID = 'board_main';
 
 const TOAST_CONFIG = {
   durationMs: 2200,
-  toneClasses: {
-    info: 'border-blue-500/40 text-blue-200',
-    success: 'border-emerald-500/40 text-emerald-200',
-    warning: 'border-amber-500/40 text-amber-200',
-  },
 } as const;
-type ToastTone = keyof typeof TOAST_CONFIG.toneClasses;
 
 const App: React.FC = () => {
   // Auth state
@@ -3759,22 +3754,20 @@ const App: React.FC = () => {
     [currentBoardNodes, getCanvasCoords, updateNodesAndSave, showToast]
   );
 
-  // Delete local cached assets from IndexedDB
-  const handleDeleteLocalAssets = useCallback(
-    async (assetIds: string[]) => {
-      if (assetIds.length === 0) return;
-      try {
-        await deleteMultipleImages(assetIds);
-        const deletedSet = new Set(assetIds);
-        setRescuableAssets(prev => prev.filter(a => !deletedSet.has(a.id)));
-        showToast(`已成功清理 ${assetIds.length} 個本機暫存快取！`);
-      } catch (err) {
-        console.error('Failed to delete local assets:', err);
-        showToast('清理本機快取時發生錯誤');
-      }
-    },
-    [showToast]
-  );
+  const handleDiscardRescuedAssets = useCallback(async (selectedAssets: RescuableAsset[]) => {
+    const projectId = currentProjectRef.current?.id;
+    const activeToken = selectedAssets.some(asset => asset.source === 'drive')
+      ? (await getValidAccessToken()) || getAccessToken()
+      : null;
+    const result = await discardRescuableAssets(selectedAssets, activeToken, allNodesRef.current);
+    // A project switch must not remove rows from a different project's rescue list.
+    if (currentProjectRef.current?.id === projectId) {
+      const discardedIds = new Set(result.discardedIds);
+      setRescuableAssets(previous => previous.filter(asset => !discardedIds.has(asset.id)));
+      if (result.discardedIds.length > 0) showToast(`已捨棄 ${result.discardedIds.length} 個圖片資源並清除本機快取`);
+    }
+    return result;
+  }, [showToast]);
 
   // Proactive lost asset check (scan only, non-destructive)
   useEffect(() => {
@@ -4131,23 +4124,36 @@ const App: React.FC = () => {
         />
       </div>
 
-      {/* Floating Canvas Top Model Selector */}
-      <div className="fixed top-[98px] left-1/2 -translate-x-1/2 z-20 pointer-events-auto select-none">
-        <button
-          onClick={() => setIsModelModalOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-gray-900/90 hover:bg-gray-850 border border-gray-700/80 hover:border-gray-600 text-gray-200 hover:text-white shadow-xl backdrop-blur-xl text-xs font-medium transition-all group active:scale-95 cursor-pointer"
-          title={currentModel.description || currentModel.name}
-        >
-          <Sparkles className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform shrink-0" />
-          <span className="font-semibold text-white tracking-wide truncate max-w-[160px] sm:max-w-[240px]">
-            {currentModel.name}
-          </span>
-          <span className="text-[10px] font-mono text-gray-400 px-1.5 py-0.5 rounded bg-gray-800/80 border border-gray-700/50">
-            {currentModel.provider === 'atlascloud' ? 'Atlas' : 'Gemini'}
-          </span>
-          <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-gray-200 transition-colors shrink-0" />
-        </button>
-      </div>
+      <CanvasOverlayStack>
+        {/* Floating Canvas Top Model Selector */}
+        <div className="pointer-events-auto select-none">
+          <button
+            onClick={() => setIsModelModalOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-gray-900/90 hover:bg-gray-850 border border-gray-700/80 hover:border-gray-600 text-gray-200 hover:text-white shadow-xl backdrop-blur-xl text-xs font-medium transition-all group active:scale-95 cursor-pointer"
+            title={currentModel.description || currentModel.name}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform shrink-0" />
+            <span className="font-semibold text-white tracking-wide truncate max-w-[160px] sm:max-w-[240px]">
+              {currentModel.name}
+            </span>
+            <span className="text-[10px] font-mono text-gray-400 px-1.5 py-0.5 rounded bg-gray-800/80 border border-gray-700/50">
+              {currentModel.provider === 'atlascloud' ? 'Atlas' : 'Gemini'}
+            </span>
+            <ChevronDown className="w-3 h-3 text-gray-400 group-hover:text-gray-200 transition-colors shrink-0" />
+          </button>
+        </div>
+
+        <CanvasNotices
+          deletingCount={deletingNodeIds.size}
+          error={error}
+          toast={toast}
+          rescueCount={!isProjectBusy && !isRescueModalOpen && !isRescueBannerDismissed ? rescuableAssets.length : 0}
+          isBoardEmpty={currentBoardNodes.length === 0}
+          onDismissError={() => setError(null)}
+          onRescue={() => setIsRescueModalOpen(true)}
+          onDismissRescue={() => setIsRescueBannerDismissed(true)}
+        />
+      </CanvasOverlayStack>
 
       {/* Floating Bottom Right Action Bar */}
       {!isCurrentBoardLocked && (
@@ -4187,33 +4193,6 @@ const App: React.FC = () => {
                 <span>{activeJobCount} 處理中</span>
               </span>
             )}
-          </button>
-        </div>
-      )}
-
-      {/* Floating Deletion In-Progress Banner */}
-      {deletingNodeIds.size > 0 && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2 rounded-full bg-gray-950/95 border border-red-500/50 text-red-300 shadow-2xl backdrop-blur-md animate-fadeIn select-none pointer-events-none">
-          <Loader2 className="w-4 h-4 animate-spin text-red-400" />
-          <span className="text-xs font-semibold tracking-wide text-white">
-            正在刪除 {deletingNodeIds.size} 個節點...
-          </span>
-        </div>
-      )}
-
-      {/* Error Alert Banner */}
-      {error && (
-        <div
-          role="alert"
-          className="absolute top-16 left-1/2 -translate-x-1/2 bg-red-600/90 backdrop-blur-md text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-2xl z-40 border border-red-400 flex items-center gap-2 animate-fadeIn"
-          onPointerDown={e => e.stopPropagation()}
-        >
-          <span>{error}</span>
-          <button
-            onClick={() => setError(null)}
-            className="ml-2 text-white/80 hover:text-white font-bold"
-          >
-            ✕
           </button>
         </div>
       )}
@@ -4342,17 +4321,6 @@ const App: React.FC = () => {
         className={`transition-all duration-300 ${isInspectorOpen ? 'right-[332px] sm:right-[396px]' : 'right-4'}`}
       />
 
-      {/* Floating Status / Toast notification */}
-      {toast && (
-        <div
-          role={toast.tone === 'warning' ? 'alert' : 'status'}
-          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-gray-900/90 backdrop-blur-xl border text-xs font-medium rounded-full shadow-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none ${TOAST_CONFIG.toneClasses[toast.tone]}`}
-        >
-          <ClipboardCheck className="w-4 h-4 shrink-0" />
-          <span>{toast.message}</span>
-        </div>
-      )}
-
       {/* Hidden File Input for Canvas Context Menu */}
       <input
         ref={canvasFileInputRef}
@@ -4409,35 +4377,6 @@ const App: React.FC = () => {
         onToggleLocale={toggleLocale}
       />
 
-      {/* Proactive Lost Assets Detected Pill/Banner */}
-      {rescuableAssets.length > 0 && !isProjectBusy && !isRescueModalOpen && !isRescueBannerDismissed && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-gray-900/95 backdrop-blur-xl border border-amber-500/50 hover:border-amber-400 text-amber-200 text-xs font-medium rounded-2xl shadow-2xl transition-all">
-          <div className="p-1 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 shrink-0">
-            <ShieldCheck className="w-4 h-4" />
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-white">
-              {currentBoardNodes.length === 0
-                ? `畫布為空，但發現 ${rescuableAssets.length} 個可救回的圖片資源`
-                : `發現 ${rescuableAssets.length} 個未放置的專案圖片`}
-            </span>
-          </div>
-          <button
-            onClick={() => setIsRescueModalOpen(true)}
-            className="ml-1 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-          >
-            立即救回
-          </button>
-          <button
-            onClick={() => setIsRescueBannerDismissed(true)}
-            className="p-1 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors ml-1"
-            title="關閉提示"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
       {/* Asset Rescue Modal */}
       <AssetRescueModal
         isOpen={isRescueModalOpen}
@@ -4446,7 +4385,7 @@ const App: React.FC = () => {
         onRestore={handleRestoreRescuedAssets}
         isLoading={isScanningRescue}
         onRescan={() => handleScanLostAssets(false)}
-        onDeleteLocalAssets={handleDeleteLocalAssets}
+        onDiscardAssets={handleDiscardRescuedAssets}
       />
 
       {/* Project Password Configuration Modal */}

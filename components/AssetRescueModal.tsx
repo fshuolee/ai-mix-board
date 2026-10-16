@@ -3,6 +3,7 @@ import {
   RotateCw,
   HardDrive,
   Database,
+  Check,
   CheckSquare,
   Square,
   Sparkles,
@@ -12,7 +13,7 @@ import {
   AlertCircle,
   Trash2,
 } from 'lucide-react';
-import { RescuableAsset } from '../services/assetRescueService';
+import { RescuableAsset, type DiscardAssetsResult } from '../services/assetRescueService';
 import { useConfirm } from './ui/ConfirmDialog';
 import { Modal, ModalHeader, ModalBody, ModalFooter, ModalButton } from './ui/Modal';
 
@@ -23,7 +24,7 @@ interface AssetRescueModalProps {
   onRestore: (selectedAssets: RescuableAsset[]) => Promise<void>;
   isLoading: boolean;
   onRescan: () => Promise<void>;
-  onDeleteLocalAssets?: (assetIds: string[]) => Promise<void>;
+  onDiscardAssets: (selectedAssets: RescuableAsset[]) => Promise<DiscardAssetsResult>;
 }
 
 const formatFileSize = (bytes?: number) => {
@@ -40,18 +41,28 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
   onRestore,
   isLoading,
   onRescan,
-  onDeleteLocalAssets,
+  onDiscardAssets,
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(assets.map(a => a.id)));
   const [filterSource, setFilterSource] = useState<'all' | 'local' | 'drive'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
-  const [isDeletingLocal, setIsDeletingLocal] = useState(false);
+  const [isDiscarding, setIsDiscarding] = useState(false);
   const confirm = useConfirm();
 
-  // Sync selectedIds when assets list changes
+  const [discardError, setDiscardError] = useState<string | null>(null);
+  const isBusy = isRestoring || isDiscarding;
+
+  // Select all on opening, but never reselect unrelated items after a partial discard.
   React.useEffect(() => {
-    setSelectedIds(new Set(assets.map(a => a.id)));
+    if (isOpen) {
+      setSelectedIds(new Set(assets.map(asset => asset.id)));
+      setDiscardError(null);
+    }
+  }, [isOpen]);
+  React.useEffect(() => {
+    const availableIds = new Set(assets.map(asset => asset.id));
+    setSelectedIds(previous => new Set([...previous].filter(id => availableIds.has(id))));
   }, [assets]);
 
   const filteredAssets = useMemo(() => {
@@ -68,14 +79,15 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
   const localCount = useMemo(() => assets.filter(a => a.source === 'local').length, [assets]);
   const driveCount = useMemo(() => assets.filter(a => a.source === 'drive').length, [assets]);
 
-  const selectedLocalAssets = useMemo(
-    () => filteredAssets.filter(a => a.source === 'local' && selectedIds.has(a.id)),
-    [filteredAssets, selectedIds]
-  );
+  // Batch actions only affect visible selected cards, including after a source/search filter.
+  const selectedAssets = filteredAssets.filter(asset => selectedIds.has(asset.id));
+  const selectedLocalAssets = selectedAssets.filter(asset => asset.source === 'local');
+  const isAllSelected = filteredAssets.length > 0 && filteredAssets.every(asset => selectedIds.has(asset.id));
 
   if (!isOpen) return null;
 
   const handleToggleSelect = (id: string) => {
+    if (isBusy || isLoading) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -88,15 +100,17 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
   };
 
   const handleSelectAll = () => {
-    if (selectedIds.size === filteredAssets.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredAssets.map(a => a.id)));
-    }
+    if (isBusy || isLoading) return;
+    setSelectedIds(previous => {
+      const next = new Set(previous);
+      filteredAssets.forEach(asset => isAllSelected ? next.delete(asset.id) : next.add(asset.id));
+      return next;
+    });
   };
 
   const handleExecuteRestore = async () => {
-    const toRestore = assets.filter(a => selectedIds.has(a.id));
+    if (isBusy || isLoading) return;
+    const toRestore = selectedAssets;
     if (toRestore.length === 0) return;
 
     setIsRestoring(true);
@@ -110,61 +124,35 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
     }
   };
 
-  const handleDeleteSelectedLocal = async () => {
-    if (!onDeleteLocalAssets || selectedLocalAssets.length === 0) return;
-    const count = selectedLocalAssets.length;
-    const choice = await confirm({
-      title: '刪除本機快取圖片',
-      message: `確定要從本機快取中永久刪除所選取的 ${count} 個圖片嗎？此操作不會影響雲端硬碟，但刪除後的本機快取無法直接復原。`,
-      confirmLabel: `刪除 ${count} 個`,
-      destructive: true,
-    });
-    if (!choice) return;
-
-    setIsDeletingLocal(true);
+  const handleDiscard = async (toDiscard: RescuableAsset[]) => {
+    if (isBusy || isLoading || toDiscard.length === 0) return;
+    setIsDiscarding(true);
+    setDiscardError(null);
     try {
-      const idsToDelete = selectedLocalAssets.map(a => a.id);
-      await onDeleteLocalAssets(idsToDelete);
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        idsToDelete.forEach(id => next.delete(id));
-        return next;
+      const driveCount = toDiscard.filter(asset => asset.source === 'drive').length;
+      const choice = await confirm({
+        title: '捨棄所選圖片',
+        message: `確定要捨棄 ${toDiscard.length} 個圖片嗎？${driveCount > 0 ? `其中 ${driveCount} 個 Google Drive 圖片將移至垃圾桶，可從 Google Drive 垃圾桶還原。` : ''}所選圖片的本機快取會永久清除。`,
+        details: toDiscard.map(asset => asset.name),
+        confirmLabel: `捨棄 ${toDiscard.length} 個`,
+        destructive: true,
       });
-    } catch (e) {
-      console.error('Error deleting local assets:', e);
+      if (!choice) return;
+      const result = await onDiscardAssets(toDiscard);
+      const discardedIds = new Set(result.discardedIds);
+      setSelectedIds(previous => new Set([...previous].filter(id => !discardedIds.has(id))));
+      if (result.failures.length > 0) {
+        setDiscardError(`有 ${result.failures.length} 個項目未能捨棄，已保留供重試。\n${result.failures.map(failure => `${failure.name}：${failure.message}`).join('\n')}`);
+      }
+    } catch (error) {
+      setDiscardError(`捨棄失敗：${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      setIsDeletingLocal(false);
+      setIsDiscarding(false);
     }
   };
-
-  const handleDeleteSingleLocal = async (asset: RescuableAsset) => {
-    if (!onDeleteLocalAssets) return;
-    const choice = await confirm({
-      title: '刪除本機快取圖片',
-      message: `確定要從本機快取刪除圖片「${asset.name}」嗎？此操作不會影響雲端硬碟。`,
-      destructive: true,
-    });
-    if (!choice) return;
-
-    setIsDeletingLocal(true);
-    try {
-      await onDeleteLocalAssets([asset.id]);
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        next.delete(asset.id);
-        return next;
-      });
-    } catch (e) {
-      console.error('Error deleting single local asset:', e);
-    } finally {
-      setIsDeletingLocal(false);
-    }
-  };
-
-  const isAllSelected = filteredAssets.length > 0 && selectedIds.size === filteredAssets.length;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="4xl" tall busy={isRestoring || isDeletingLocal} className="select-none">
+    <Modal isOpen={isOpen} onClose={onClose} size="4xl" tall busy={isBusy} className="select-none">
       <ModalHeader
         icon={<ShieldCheck />}
         tone="indigo"
@@ -176,16 +164,17 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
             </span>
           </span>
         }
-        subtitle="自動掃描本地 IndexedDB 與 Google Drive 專案資料夾，將遺失或未呈現在畫布上的圖片救回"
+        subtitle="掃描 Google Drive 專案資料夾，勾選未放置的圖片以救回或捨棄"
       />
 
       {/* Filter & Action Toolbar */}
       <div className="px-6 py-3 border-b border-gray-800 bg-gray-900/50 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Filter Tabs */}
           <div className="flex bg-gray-950/70 p-0.5 rounded-lg border border-gray-800 text-xs">
             <button
               onClick={() => setFilterSource('all')}
+              disabled={isBusy || isLoading}
               className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
                 filterSource === 'all'
                   ? 'bg-indigo-600 text-white shadow-sm'
@@ -196,6 +185,7 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
             </button>
             <button
               onClick={() => setFilterSource('local')}
+              disabled={isBusy || isLoading}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-md font-medium transition-colors ${
                 filterSource === 'local'
                   ? 'bg-emerald-600 text-white shadow-sm'
@@ -207,6 +197,7 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
             </button>
             <button
               onClick={() => setFilterSource('drive')}
+              disabled={isBusy || isLoading}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-md font-medium transition-colors ${
                 filterSource === 'drive'
                   ? 'bg-blue-600 text-white shadow-sm'
@@ -222,6 +213,7 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
           {filteredAssets.length > 0 && (
             <button
               onClick={handleSelectAll}
+              disabled={isBusy || isLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-200 font-medium transition-colors"
             >
               {isAllSelected ? (
@@ -239,17 +231,18 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             type="text"
             placeholder="搜尋檔案名稱..."
+            disabled={isBusy}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="bg-gray-950/70 border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 w-44 placeholder-gray-500"
           />
           <button
             onClick={onRescan}
-            disabled={isLoading || isRestoring}
+            disabled={isLoading || isBusy}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 transition-colors disabled:opacity-50"
             title="重新掃描本地與雲端硬碟"
           >
@@ -261,10 +254,12 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
 
       {/* Content Area: Asset Cards Grid */}
       <ModalBody className="p-6">
+        {discardError && <div role="alert" className="mb-3 max-h-32 overflow-y-auto p-3 text-xs text-red-200 bg-red-950/50 border border-red-800 rounded-xl whitespace-pre-wrap [overflow-wrap:anywhere]">{discardError}</div>}
+
         {isLoading ? (
           <div className="h-64 flex flex-col items-center justify-center gap-3 text-gray-400">
             <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-            <p className="text-sm font-medium">正在深度掃描本地 IndexedDB 與 Google Drive 資料夾...</p>
+            <p className="text-sm font-medium">正在掃描 Google Drive 專案資料夾...</p>
           </div>
         ) : filteredAssets.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center gap-3 text-gray-400 border border-dashed border-gray-800 rounded-2xl bg-gray-950/30">
@@ -289,6 +284,18 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
               return (
                 <div
                   key={asset.id}
+                  data-rescue-asset={asset.id}
+                  role="checkbox"
+                  aria-label={asset.name}
+                  aria-checked={isSelected}
+                  aria-disabled={isBusy || isLoading}
+                  tabIndex={isBusy || isLoading ? -1 : 0}
+                  onKeyDown={event => {
+                    if (event.target === event.currentTarget && (event.key === ' ' || event.key === 'Enter')) {
+                      event.preventDefault();
+                      handleToggleSelect(asset.id);
+                    }
+                  }}
                   onClick={() => handleToggleSelect(asset.id)}
                   className={`group relative rounded-xl border overflow-hidden cursor-pointer transition-all flex flex-col bg-gray-950/60 ${
                     isSelected
@@ -325,7 +332,7 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
                             : 'bg-black/60 border border-gray-600 text-transparent hover:border-gray-400'
                         }`}
                       >
-                        {isSelected && <span className="text-xs font-bold">✓</span>}
+                        {isSelected && <Check className="w-3.5 h-3.5" />}
                       </div>
                     </div>
 
@@ -353,19 +360,18 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
                     <div className="flex items-center justify-between text-[11px] text-gray-500 mt-1">
                       <span>{formatFileSize(asset.size)}</span>
                       <div className="flex items-center gap-1.5">
-                        {asset.source === 'local' && onDeleteLocalAssets && (
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleDeleteSingleLocal(asset);
-                            }}
-                            className="p-1 rounded hover:bg-red-500/20 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                            title="從本機快取刪除此圖片"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            void handleDiscard([asset]);
+                          }}
+                          className="p-1 rounded hover:bg-red-500/20 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          disabled={isBusy || isLoading}
+                          title="捨棄此圖片並清除快取"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                         {asset.driveViewLink && (
                           <a
                             href={asset.driveViewLink}
@@ -388,38 +394,33 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
         )}
       </ModalBody>
 
-      <ModalFooter className="justify-between">
+      <ModalFooter className="justify-between flex-wrap">
         <div className="text-xs text-gray-400">
-          已選取 <span className="font-semibold text-white">{selectedIds.size}</span> / {filteredAssets.length} 個項目
+          已選取 <span className="font-semibold text-white">{selectedAssets.length}</span> / {filteredAssets.length} 個項目
           {selectedLocalAssets.length > 0 && (
             <span className="text-emerald-400 ml-2 font-mono">
               (包含 {selectedLocalAssets.length} 個本機快取)
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2.5">
-          {selectedLocalAssets.length > 0 && onDeleteLocalAssets && (
-            <button
-              type="button"
-              onClick={handleDeleteSelectedLocal}
-              disabled={isRestoring || isDeletingLocal}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-red-400 bg-red-950/60 hover:bg-red-900 border border-red-800/60 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
-              title="從本機 IndexedDB 快取中永久刪除所選取的圖片"
-            >
-              {isDeletingLocal ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="w-3.5 h-3.5" />
-              )}
-              <span>清理所選本機快取 ({selectedLocalAssets.length})</span>
-            </button>
-          )}
-          <ModalButton variant="ghost" onClick={onClose} disabled={isRestoring || isDeletingLocal}>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            data-discard-selected
+            onClick={() => void handleDiscard(selectedAssets)}
+            disabled={isBusy || isLoading || selectedAssets.length === 0}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-red-400 bg-red-950/60 hover:bg-red-900 border border-red-800/60 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            title="將所選雲端圖片移到垃圾桶，並清除所選圖片的本機快取"
+          >
+            {isDiscarding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            <span>{isDiscarding ? '正在捨棄...' : `捨棄所選 (${selectedAssets.length})`}</span>
+          </button>
+          <ModalButton variant="ghost" onClick={onClose} disabled={isBusy}>
             取消
           </ModalButton>
           <button
             onClick={handleExecuteRestore}
-            disabled={isRestoring || isDeletingLocal || selectedIds.size === 0}
+            disabled={isBusy || isLoading || selectedAssets.length === 0}
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
           >
             {isRestoring ? (
@@ -430,7 +431,7 @@ const AssetRescueModal: React.FC<AssetRescueModalProps> = ({
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>一鍵救回所選項目至畫布 ({selectedIds.size})</span>
+                <span>一鍵救回所選項目至畫布 ({selectedAssets.length})</span>
               </>
             )}
           </button>

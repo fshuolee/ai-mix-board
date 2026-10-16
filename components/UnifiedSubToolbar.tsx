@@ -134,7 +134,7 @@ export const UnifiedSubToolbar: React.FC<UnifiedSubToolbarProps> = ({
 
   return (
     <div
-      className="fixed top-12 left-0 right-0 z-30 h-10 px-4 bg-gray-950/85 backdrop-blur-xl border-b border-gray-800/80 shadow-sm flex items-center justify-between select-none pointer-events-auto overflow-visible"
+      className="fixed top-[var(--navigation-height)] left-0 right-0 z-30 h-[var(--subtoolbar-height)] px-4 bg-gray-950/85 backdrop-blur-xl border-b border-gray-800/80 shadow-sm flex items-center justify-between select-none pointer-events-auto overflow-visible"
       onPointerDown={e => e.stopPropagation()}
     >
       {/* Left side: Main Unified Toolbar Grouping */}

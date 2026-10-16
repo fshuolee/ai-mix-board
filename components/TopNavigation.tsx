@@ -98,7 +98,7 @@ const TopNavigation: React.FC<TopNavigationProps> = ({
   };
 
   return (
-    <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 py-2.5 bg-gray-950/80 backdrop-blur-md border-b border-gray-800/80 shadow-lg select-none">
+    <header className="absolute top-0 left-0 right-0 z-30 h-[var(--navigation-height)] flex items-center justify-between px-4 py-2.5 bg-gray-950/80 backdrop-blur-md border-b border-gray-800/80 shadow-lg select-none">
       {/* Left Section: Logo & Project Switcher */}
       <div className="flex items-center gap-3">
         {/* Brand Logo */}

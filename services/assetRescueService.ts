@@ -1,7 +1,8 @@
 import { expandImageVariantNodes } from '../utils/imageVariants';
 import { CanvasNode, ImageNode } from '../types';
-import { getAllLocalImages, storeImage, isDriveFileId } from './dbService';
+import { getAllLocalImages, storeImage, isDriveFileId, deleteMultipleImages } from './dbService';
 import {
+  deleteAssetFromDrive,
   listAllDriveProjectAssets,
   getAssetBlobFromDrive,
   uploadAssetToDrive,
@@ -21,6 +22,40 @@ export interface RescuableAsset {
   driveViewLink?: string;
   size?: number;
   createdAt?: number;
+}
+
+export interface DiscardAssetsResult {
+  discardedIds: string[];
+  failures: { assetId: string; name: string; message: string }[];
+}
+
+/** Trash unused Drive assets before clearing their cache; preserve failures for an explicit retry. */
+export async function discardRescuableAssets(
+  assets: RescuableAsset[],
+  token?: string | null,
+  currentNodes: CanvasNode[] = [],
+): Promise<DiscardAssetsResult> {
+  const usedIdentifiers = new Set(expandImageVariantNodes(currentNodes).flatMap(node =>
+    node.type === 'image' || node.type === 'video' ? [node.id, node.content, node.driveFileId].filter(Boolean) : []
+  ));
+  const result: DiscardAssetsResult = { discardedIds: [], failures: [] };
+  for (const asset of assets) {
+    try {
+      const cacheIds = [...new Set([asset.id, asset.driveFileId].filter((id): id is string => Boolean(id)))];
+      if (cacheIds.some(id => usedIdentifiers.has(id))) throw new Error('圖片已被畫布使用，請重新掃描。');
+      if (asset.source === 'drive') {
+        if (!token) throw new Error('請先登入 Google，再捨棄雲端圖片。');
+        if (!asset.driveFileId) throw new Error('缺少 Google Drive 檔案識別碼，請重新掃描。');
+        await deleteAssetFromDrive(token, asset.driveFileId);
+      }
+      await deleteMultipleImages(cacheIds);
+      cacheIds.forEach(id => nodeObjectUrlCache.delete(id));
+      result.discardedIds.push(asset.id);
+    } catch (error) {
+      result.failures.push({ assetId: asset.id, name: asset.name, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return result;
 }
 
 /**

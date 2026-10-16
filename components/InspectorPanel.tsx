@@ -198,7 +198,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   return (
     <aside
-      className="fixed top-[88px] right-0 bottom-0 w-80 sm:w-96 z-40 bg-gray-900/95 backdrop-blur-2xl border-l border-gray-800 shadow-2xl flex flex-col select-none text-gray-200 transition-all duration-300 animate-in slide-in-from-right-8 pointer-events-auto"
+      className="fixed top-[var(--canvas-chrome-height)] right-0 bottom-0 w-80 sm:w-96 z-40 bg-gray-900/95 backdrop-blur-2xl border-l border-gray-800 shadow-2xl flex flex-col select-none text-gray-200 transition-all duration-300 animate-in slide-in-from-right-8 pointer-events-auto"
       onPointerDown={e => e.stopPropagation()}
     >
       {/* 1. Header with Model Info & Tabs */}

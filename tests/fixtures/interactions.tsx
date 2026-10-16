@@ -2,6 +2,8 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import App from '../../App';
+import CanvasOverlayStack from '../../components/CanvasOverlayStack';
+import CanvasNotices from '../../components/CanvasNotices';
 import NodeRenderer, { nodeObjectUrlCache } from '../../components/NodeRenderer';
 import { CensoredUnlockModal } from '../../components/CensoredOverlay';
 import * as clipboard from '../../services/clipboardService';
@@ -9,6 +11,26 @@ import { storeImage } from '../../services/dbService';
 import { ConfirmProvider } from '../../components/ui/ConfirmDialog';
 import { NodeInfoModal } from '../../components/NodeInfoModal';
 import BoardTabs from '../../components/BoardTabs';
+import AssetRescueModal from '../../components/AssetRescueModal';
+import { type RescuableAsset } from '../../services/assetRescueService';
+
+const rescueFixtureAssets: RescuableAsset[] = [
+  { id: 'drive_good', source: 'drive', name: 'keep-choice.png', driveFileId: 'fixture-drive-good' },
+  { id: 'drive_bad', source: 'drive', name: 'retry-choice.png', driveFileId: 'fixture-drive-bad' },
+  { id: 'local-only', source: 'local', name: 'local-choice.png' },
+];
+
+function AssetRescueFixture() {
+  const [assets, setAssets] = React.useState(rescueFixtureAssets);
+  return <ConfirmProvider><AssetRescueModal isOpen onClose={noop} assets={assets} isLoading={false} onRescan={async () => {}}
+    onRestore={async () => {}}
+    onDiscardAssets={async selected => {
+      const { discardRescuableAssets } = await import('../../services/assetRescueService');
+      const result = await discardRescuableAssets(selected, 'fixture-token');
+      setAssets(previous => previous.filter(asset => !result.discardedIds.includes(asset.id)));
+      return result;
+    }} /></ConfirmProvider>;
+}
 
 function BoardTabsFixture() {
   const [boards, setBoards] = React.useState(() => Array.from({ length: 30 }, (_, index) => ({ id: `fixture-board-${index}`, name: `Board ${index + 1}`, createdAt: new Date().toISOString() })));
@@ -74,6 +96,34 @@ Object.assign(window, {
     await new Promise(resolve => requestAnimationFrame(resolve));
   },
   seedLegacyNodeCache: (id: string, url: string) => nodeObjectUrlCache.set(id, url),
+  renderAssetRescue: async () => {
+    await import('../../index.css');
+    for (const asset of rescueFixtureAssets) await storeImage(asset.driveFileId || asset.id, new Blob(['fixture-image']));
+    Object.assign(window, { rescueTrashRequests: [] });
+    const realFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith('https://www.googleapis.com/drive/v3/files/')) {
+        (window as any).rescueTrashRequests.push({ url, method: init?.method, body: JSON.parse(String(init?.body)) });
+        if ((window as any).holdRescueTrash) await new Promise(resolve => Object.assign(window, { releaseRescueTrash: resolve }));
+        if (url.endsWith('fixture-drive-bad') && !(window as any).allowFailedRescue) return new Response(JSON.stringify({ error: { message: 'Fixture permission denied' } }), { status: 403 });
+        return new Response('{}');
+      }
+      return realFetch(input, init);
+    };
+    root.render(<AssetRescueFixture />);
+  },
+  renderCanvasNotices: async () => {
+    await import('../../index.css');
+    root.render(<CanvasOverlayStack>
+      <button className="pointer-events-auto px-3 py-2" data-model-selector>Model selection</button>
+      <CanvasNotices deletingCount={3} error={'LongErrorWithoutSpaces'.repeat(12)}
+        toast={{ tone: 'success', message: '已成功救回圖片節點至畫布！'.repeat(4) }} rescueCount={42} isBoardEmpty
+        onRescue={() => Object.assign(window, { rescueClicked: true })}
+        onDismissRescue={() => Object.assign(window, { rescueDismissed: true })}
+        onDismissError={() => Object.assign(window, { errorDismissed: true })} />
+    </CanvasOverlayStack>);
+  },
   clipboard,
   storeImage,
   renderBoardTabs: async () => {
