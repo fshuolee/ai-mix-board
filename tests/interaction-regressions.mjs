@@ -346,6 +346,35 @@ try {
     assert.deepEqual(result, { inactiveContent: 'first-image', editsKept: true, activeContent: 'second-image', overlayCleared: true, count: 1, finalKept: true, unknownKept: true });
   });
 
+  await run('drawing on a selected image then generating sends the actual annotation pixels from the App', async page => {
+    await page.evaluate(() => window.renderGeneratedImageApp());
+    await page.waitForSelector('button[aria-label="編輯圖片"]');
+    await page.click('button[aria-label="編輯圖片"]');
+    await page.waitForFunction(() => document.querySelector('canvas[aria-label="圖片編輯畫布"]')?.width === 160);
+    const bounds = await page.$eval('canvas[aria-label="圖片編輯畫布"]', canvas => {
+      const rect = canvas.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    await page.mouse.move(bounds.x + bounds.width * .25, bounds.y + bounds.height * .3);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width * .75, bounds.y + bounds.height * .3, { steps: 10 });
+    await page.mouse.up();
+    await clickText(page, '套用修改');
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    await page.keyboard.down('Shift'); await page.keyboard.press('Enter'); await page.keyboard.up('Shift');
+    await page.waitForFunction(() => window.lastGenerationPayload);
+    const result = await page.evaluate(async () => {
+      const imagePart = window.lastGenerationPayload.contents[0].parts.find(part => part.inlineData);
+      if (!imagePart) return { hasImage: false };
+      const blob = await (await fetch(`data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`)).blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(bitmap, 0, 0);
+      return { hasImage: true, width: bitmap.width, height: bitmap.height, markedPixel: Array.from(ctx.getImageData(80, 36, 1, 1).data),
+        originalPixel: Array.from(ctx.getImageData(80, 90, 1, 1).data) };
+    });
+    assert.deepEqual(result, { hasImage: true, width: 160, height: 120, markedPixel: [239, 68, 68, 255], originalPixel: [0, 0, 255, 255] });
+  });
+
   await run('Info regenerates a successful image as a retained variant and switches its representative', async page => {
     await page.evaluate(() => window.renderGeneratedImageApp());
     await page.waitForSelector('button[title="檢視節點詳細資訊 (Info)"]');
@@ -595,7 +624,10 @@ try {
           return realFetch(input, init);
         };
         const node = { ...window.editedImageNode, driveViewLink: 'https://drive.google.com/file/d/fixture-drive-id/view', imageEdits: provider === 'atlas-original' ? undefined : {
-          strokes: [{ tool: 'eraser', color: '#000000', width: .2, points: [{ x: .5, y: .5 }] }],
+          strokes: [
+            { tool: 'pen', color: '#ff0000', width: .1, points: [{ x: .3, y: .4 }, { x: .7, y: .4 }] },
+            { tool: 'eraser', color: '#000000', width: .2, points: [{ x: .5, y: .5 }] },
+          ],
           crop: { x: .25, y: .25, width: .5, height: .5 },
         } };
         try {
@@ -604,12 +636,12 @@ try {
           const bitmap = await createImageBitmap(sentBlob);
           const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
           const ctx = canvas.getContext('2d'); ctx.drawImage(bitmap, 0, 0);
-          return { width: bitmap.width, height: bitmap.height, alpha: ctx.getImageData(40, 30, 1, 1).data[3],
+          return { width: bitmap.width, height: bitmap.height, annotationPixel: Array.from(ctx.getImageData(24, 18, 1, 1).data), alpha: ctx.getImageData(40, 30, 1, 1).data[3],
             unchanged: JSON.stringify([...new Uint8Array(originalBytes)]) === JSON.stringify([...new Uint8Array(await (await getImage('fixture-edit-image')).arrayBuffer())]),
             referenceUsed: provider === 'gemini' ? true : payload.image === 'https://fixture.invalid/edited.png' };
         } finally { window.fetch = realFetch; }
       }, provider);
-      assert.deepEqual(result, { width: provider === 'atlas-original' ? 160 : 80, height: provider === 'atlas-original' ? 120 : 60, alpha: provider === 'atlas-original' ? 255 : 0, unchanged: true, referenceUsed: true });
+      assert.deepEqual(result, { width: provider === 'atlas-original' ? 160 : 80, height: provider === 'atlas-original' ? 120 : 60, annotationPixel: provider === 'atlas-original' ? [0, 0, 255, 255] : [255, 0, 0, 255], alpha: provider === 'atlas-original' ? 255 : 0, unchanged: true, referenceUsed: true });
     });
   }
 

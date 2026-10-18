@@ -166,6 +166,7 @@ Object.assign(window, {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('generativelanguage.googleapis.com') && url.includes('generateContent')) {
         (window as any).generationRequests++;
+        Object.assign(window, { lastGenerationPayload: await new Request(input, init).json() });
         if ((window as any).failVariantGeneration) return new Response(JSON.stringify({ error: { message: 'Fixture generation failed' } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: canvas.toDataURL('image/png').split(',')[1] } }] } }] }), { headers: { 'Content-Type': 'application/json' } });
       }
